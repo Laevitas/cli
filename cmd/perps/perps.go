@@ -23,6 +23,8 @@ Examples:
 var catalogCmd = &cobra.Command{
 	Use:   "catalog",
 	Short: "List all available perpetual instruments",
+	Example: `  laevitas perps catalog
+  laevitas perps catalog --exchange binance`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := &api.RequestParams{Exchange: cmdutil.Exchange}
@@ -38,6 +40,8 @@ var snapshotFlags struct {
 var snapshotCmd = &cobra.Command{
 	Use:   "snapshot",
 	Short: "Market snapshot of ALL perpetuals at a point in time",
+	Example: `  laevitas perps snapshot --currency BTC
+  laevitas perps snapshot --currency ETH`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := &api.RequestParams{
@@ -74,6 +78,13 @@ var ohlcvCmd = &cobra.Command{
 	Aliases: []string{"ohlcv"},
 	Short:   "OHLCVT candle data from trades",
 	Args:    cobra.ExactArgs(1),
+	Example: `  # Deribit (default exchange)
+  laevitas perps ohlcvt BTC-PERPETUAL -p 24h
+  laevitas perps ohlcvt ETH-PERPETUAL -p 3d -r 1h
+
+  # Binance (requires --exchange flag)
+  laevitas perps ohlcvt BTCUSDT --exchange binance -p 24h
+  laevitas perps ohlcvt ETHUSDT --exchange binance -p 7d -r 4h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := ohlcvFlags.ToParams()
@@ -89,6 +100,8 @@ var oiCmd = &cobra.Command{
 	Aliases: []string{"open-interest"},
 	Short:   "Open interest data over time",
 	Args:    cobra.ExactArgs(1),
+	Example: `  laevitas perps oi BTC-PERPETUAL -p 7d
+  laevitas perps oi BTCUSDT --exchange binance -p 30d -r 1d`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := oiFlags.ToParams()
@@ -103,6 +116,8 @@ var tradesCmd = &cobra.Command{
 	Use:   "trades <instrument>",
 	Short: "Individual trade records",
 	Args:  cobra.ExactArgs(1),
+	Example: `  laevitas perps trades BTC-PERPETUAL -p 24h
+  laevitas perps trades BTCUSDT --exchange binance -p 1h -n 20`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := tradesFlags.ToParams()
@@ -117,6 +132,8 @@ var volumeCmd = &cobra.Command{
 	Use:   "volume <instrument>",
 	Short: "24h rolling volume data",
 	Args:  cobra.ExactArgs(1),
+	Example: `  laevitas perps volume BTC-PERPETUAL -p 24h
+  laevitas perps volume BTCUSDT --exchange binance -p 7d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := volumeFlags.ToParams()
@@ -131,6 +148,8 @@ var level1Cmd = &cobra.Command{
 	Use:   "level1 <instrument>",
 	Short: "Best bid/ask data over time",
 	Args:  cobra.ExactArgs(1),
+	Example: `  laevitas perps level1 BTC-PERPETUAL -p 24h
+  laevitas perps level1 BTCUSDT --exchange binance -p 3d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := level1Flags.ToParams()
@@ -145,6 +164,8 @@ var orderbookCmd = &cobra.Command{
 	Use:   "orderbook <instrument>",
 	Short: "L2 orderbook depth metrics",
 	Args:  cobra.ExactArgs(1),
+	Example: `  laevitas perps orderbook BTC-PERPETUAL -p 24h
+  laevitas perps orderbook BTCUSDT --exchange binance -p 7d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := orderbookFlags.ToParams()
@@ -159,6 +180,8 @@ var tickerCmd = &cobra.Command{
 	Use:   "ticker <instrument>",
 	Short: "Historical ticker snapshots",
 	Args:  cobra.ExactArgs(1),
+	Example: `  laevitas perps ticker BTC-PERPETUAL -p 24h
+  laevitas perps ticker BTCUSDT --exchange binance -p 7d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := tickerFlags.ToParams()
@@ -173,6 +196,8 @@ var refPriceCmd = &cobra.Command{
 	Use:   "ref-price <instrument>",
 	Short: "Mark price and index price OHLC",
 	Args:  cobra.ExactArgs(1),
+	Example: `  laevitas perps ref-price BTC-PERPETUAL -p 24h
+  laevitas perps ref-price BTCUSDT --exchange binance -p 7d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := refPriceFlags.ToParams()
@@ -185,6 +210,8 @@ var metadataCmd = &cobra.Command{
 	Use:   "metadata <instrument>",
 	Short: "Data availability info",
 	Args:  cobra.ExactArgs(1),
+	Example: `  laevitas perps metadata BTC-PERPETUAL
+  laevitas perps metadata BTCUSDT --exchange binance`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := &api.RequestParams{
