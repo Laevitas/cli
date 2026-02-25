@@ -60,9 +60,6 @@ API Reference:  https://apiv2.laevitas.ch/redoc`,
 		cmdutil.OutputFormat = outputFormat
 		if exchange != "" {
 			cmdutil.Exchange = exchange
-		} else if cmdutil.Exchange == "" {
-			// Fall back to config default so API always gets an exchange param
-			cmdutil.Exchange = internalConfig.DefaultExchange
 		}
 		cmdutil.Verbose = verbose
 		cmdutil.NoChart = noChart
