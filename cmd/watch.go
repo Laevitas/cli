@@ -331,9 +331,9 @@ func watchEndpointForCommand(cmd *cobra.Command) (string, error) {
 		"options volatility": api.OptionsVolatility,
 		"options metadata":   api.OptionsMetadata,
 		// Vol surface (under options)
-		"options vol-surface snapshot":       api.VolSurfaceSnapshot,
-		"options vol-surface term-structure": api.VolSurfaceTermStructure,
-		"options vol-surface history":        api.VolSurfaceHistory,
+		"options vol-surface by-expiry": api.VolSurfaceByExpiry,
+		"options vol-surface by-tenor":  api.VolSurfaceByTenor,
+		"options vol-surface by-time":   api.VolSurfaceByTime,
 		// Predictions
 		"predictions catalog":    api.PredictionsCatalog,
 		"predictions categories": api.PredictionsCategories,

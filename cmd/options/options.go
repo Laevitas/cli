@@ -271,7 +271,7 @@ var vsSnapshotCmd = &cobra.Command{
 			Date:       vsSnapshotFlags.Date,
 			Resolution: vsSnapshotFlags.Resolution,
 		}
-		cmdutil.RunAndPrint(client, api.VolSurfaceSnapshot, params)
+		cmdutil.RunAndPrint(client, api.VolSurfaceByExpiry, params)
 	},
 }
 
@@ -293,7 +293,7 @@ var vsTSCmd = &cobra.Command{
 			Date:       vsTSFlags.Date,
 			Resolution: vsTSFlags.Resolution,
 		}
-		cmdutil.RunAndPrint(client, api.VolSurfaceTermStructure, params)
+		cmdutil.RunAndPrint(client, api.VolSurfaceByTenor, params)
 	},
 }
 
@@ -309,7 +309,7 @@ var vsHistCmd = &cobra.Command{
 		client, _ := cmdutil.MustClient()
 		params := vsHistFlags.CommonFlags.ToParams()
 		params.Maturity = vsHistFlags.Maturity
-		cmdutil.RunAndPrint(client, api.VolSurfaceHistory, params)
+		cmdutil.RunAndPrint(client, api.VolSurfaceByTime, params)
 	},
 }
 
