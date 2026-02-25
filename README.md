@@ -25,7 +25,7 @@ curl -sSL https://cli.laevitas.ch/install.sh | sh
 ### Windows (PowerShell)
 
 ```powershell
-iwr https://cli.laevitas.ch/install.ps1 -UseBasicParsing | iex
+irm https://cli.laevitas.ch/install.ps1 | iex
 ```
 
 ### Homebrew (macOS / Linux)

@@ -1,5 +1,5 @@
 # Laevitas CLI installer for Windows
-# Usage: iwr https://cli.laevitas.ch/install.ps1 -UseBasicParsing | iex
+# Usage: irm https://cli.laevitas.ch/install.ps1 | iex
 #
 # Detects architecture, downloads the latest release, installs to LOCALAPPDATA
 
@@ -30,7 +30,7 @@ function Main {
     # Get latest release tag
     Write-Info "Fetching latest version..."
     try {
-        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest"
         $tag = $release.tag_name
     } catch {
         Write-Err "Could not determine latest version. Check your internet connection."
