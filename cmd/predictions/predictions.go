@@ -75,7 +75,7 @@ var ohlcvtFlags cmdutil.CommonFlags
 
 var ohlcvtCmd = &cobra.Command{
 	Use:   "ohlcvt <instrument>",
-	Short: "Probability OHLCV candle data (prices = 0.0-1.0)",
+	Short: "Probability OHLCVT candle data (prices = 0.0-1.0)",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()

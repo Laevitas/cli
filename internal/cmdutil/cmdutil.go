@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/briandowns/spinner"
 	"github.com/spf13/cobra"
@@ -38,6 +39,7 @@ var (
 
 // CommonFlags holds flags shared across data commands.
 type CommonFlags struct {
+	Period     string
 	Start      string
 	End        string
 	Resolution string
@@ -48,7 +50,8 @@ type CommonFlags struct {
 
 // AddCommonFlags registers the shared flags on a command.
 func AddCommonFlags(cmd *cobra.Command, f *CommonFlags) {
-	cmd.Flags().StringVar(&f.Start, "start", "", "Start datetime (ISO 8601, e.g. 2025-01-15T00:00:00Z)")
+	cmd.Flags().StringVarP(&f.Period, "period", "p", "", "Lookback period: 1h, 6h, 24h, 3d, 7d, 30d (default 7d)")
+	cmd.Flags().StringVar(&f.Start, "start", "", "Start datetime (ISO 8601)")
 	cmd.Flags().StringVar(&f.End, "end", "", "End datetime (ISO 8601)")
 	cmd.Flags().StringVarP(&f.Resolution, "resolution", "r", "", "Candle resolution: 1m, 5m, 15m, 1h, 4h, 1d")
 	cmd.Flags().IntVarP(&f.Limit, "limit", "n", 0, "Number of records (1-1000)")
@@ -56,11 +59,72 @@ func AddCommonFlags(cmd *cobra.Command, f *CommonFlags) {
 	cmd.Flags().StringVar(&f.Currency, "currency", "", "Base currency filter (BTC, ETH)")
 }
 
+// parsePeriod converts a shorthand like "24h", "3d", "30d" into a time.Duration.
+// Supports: Nh (hours), Nd (days), Nw (weeks).
+func parsePeriod(s string) (time.Duration, bool) {
+	if len(s) < 2 {
+		return 0, false
+	}
+	unit := s[len(s)-1]
+	n, err := fmt.Sscanf(s[:len(s)-1], "%d", new(int))
+	if err != nil || n != 1 {
+		return 0, false
+	}
+	var val int
+	fmt.Sscanf(s[:len(s)-1], "%d", &val)
+	if val <= 0 {
+		return 0, false
+	}
+	switch unit {
+	case 'h':
+		return time.Duration(val) * time.Hour, true
+	case 'd':
+		return time.Duration(val) * 24 * time.Hour, true
+	case 'w':
+		return time.Duration(val) * 7 * 24 * time.Hour, true
+	}
+	return 0, false
+}
+
 // ToParams converts common flags into API request params.
+// Time range priority: --start/--end > --period > default 7d.
+// Some API endpoints return 500 without a time range, so we always send one.
 func (f *CommonFlags) ToParams() *api.RequestParams {
+	const layout = "2006-01-02T15:04:05Z"
+	const defaultWindow = 7 * 24 * time.Hour
+
+	now := time.Now().UTC()
+	start := f.Start
+	end := f.End
+
+	// --start/--end take priority if both provided
+	if start == "" || end == "" {
+		// Determine the window from --period or fallback to default
+		window := defaultWindow
+		if f.Period != "" {
+			if d, ok := parsePeriod(f.Period); ok {
+				window = d
+			}
+		}
+
+		switch {
+		case start == "" && end == "":
+			end = now.Format(layout)
+			start = now.Add(-window).Format(layout)
+		case start != "" && end == "":
+			if t, err := time.Parse(time.RFC3339, start); err == nil {
+				end = t.Add(window).Format(layout)
+			}
+		case start == "" && end != "":
+			if t, err := time.Parse(time.RFC3339, end); err == nil {
+				start = t.Add(-window).Format(layout)
+			}
+		}
+	}
+
 	p := &api.RequestParams{
-		Start:      f.Start,
-		End:        f.End,
+		Start:      start,
+		End:        end,
 		Resolution: f.Resolution,
 		Limit:      f.Limit,
 		Cursor:     f.Cursor,

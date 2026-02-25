@@ -17,7 +17,8 @@ Examples:
   laevitas options snapshot --currency BTC
   laevitas options flow --currency BTC --min-premium 5000
   laevitas options trades --currency ETH --direction buy --block-only
-  laevitas options volatility BTC-28MAR25-100000-C
+  laevitas options volatility BTC-27MAR26-70000-C -p 24h
+  laevitas options ohlcvt BTC-27MAR26-70000-C -p 3d -r 1h
   laevitas options vol-surface snapshot --currency BTC`,
 }
 

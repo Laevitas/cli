@@ -9,15 +9,16 @@ import (
 
 var Cmd = &cobra.Command{
 	Use:   "futures",
-	Short: "Dated futures data — catalog, OHLCV, OI, carry, trades",
+	Short: "Dated futures data — catalog, OHLCVT, OI, carry, trades",
 	Long: `Access dated futures data from Deribit and Binance.
 
 Examples:
   laevitas futures catalog
   laevitas futures snapshot --currency BTC
-  laevitas futures ohlcvt BTC-28MAR25 --resolution 1h
-  laevitas futures carry BTC-28MAR25 --start 2025-01-01T00:00:00Z
-  laevitas futures oi BTC-28MAR25 -r 1d -n 30`,
+  laevitas futures ohlcvt BTC-27MAR26 -p 24h
+  laevitas futures ohlcvt BTC-27MAR26 -p 3d -r 1h
+  laevitas futures carry BTC-27MAR26 -p 7d
+  laevitas futures oi BTC-27MAR26 -r 1d -n 30`,
 }
 
 // ─── catalog ────────────────────────────────────────────────────────────────
@@ -64,8 +65,8 @@ var ohlcvCmd = &cobra.Command{
 	Aliases: []string{"ohlcv"},
 	Short:   "OHLCVT candle data from trades",
 	Args:    cobra.ExactArgs(1),
-	Example: `  laevitas futures ohlcvt BTC-28MAR25
-  laevitas futures ohlcvt BTC-28MAR25 -r 1d --start 2025-01-01T00:00:00Z -n 30`,
+	Example: `  laevitas futures ohlcvt BTC-27MAR26 -p 24h
+  laevitas futures ohlcvt BTC-27MAR26 -p 3d -r 1h -n 50`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := ohlcvFlags.ToParams()

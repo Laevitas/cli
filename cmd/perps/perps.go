@@ -9,13 +9,14 @@ import (
 
 var Cmd = &cobra.Command{
 	Use:   "perps",
-	Short: "Perpetual swap data — carry, OHLCV, OI, trades",
+	Short: "Perpetual swap data — carry, OHLCVT, OI, trades",
 	Long: `Access perpetual swap data from Deribit and Binance.
 
 Examples:
   laevitas perps catalog
-  laevitas perps carry BTC-PERPETUAL
-  laevitas perps carry BTCUSDT --exchange binance -r 1d
+  laevitas perps carry BTC-PERPETUAL -p 24h
+  laevitas perps ohlcvt BTCUSDT --exchange binance -p 3d -r 1h
+  laevitas perps oi BTC-PERPETUAL -p 7d
   laevitas perps snapshot --currency BTC`,
 }
 
@@ -55,9 +56,9 @@ var carryCmd = &cobra.Command{
 	Aliases: []string{"funding"},
 	Short:   "Funding rate, basis, and annualized carry",
 	Args:    cobra.ExactArgs(1),
-	Example: `  laevitas perps carry BTC-PERPETUAL
-  laevitas perps carry BTCUSDT --exchange binance -r 1d -n 30
-  laevitas perps carry ETH-PERPETUAL -o json | jq '.[].funding_rate_close'`,
+	Example: `  laevitas perps carry BTC-PERPETUAL -p 24h
+  laevitas perps carry BTCUSDT --exchange binance -p 7d -r 1d
+  laevitas perps carry ETH-PERPETUAL -p 1h -o json | jq '.[].funding_rate_close'`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := carryFlags.ToParams()
