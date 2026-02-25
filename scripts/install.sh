@@ -7,7 +7,6 @@
 set -e
 
 REPO="laevitas/cli"
-INSTALL_DIR="/usr/local/bin"
 BINARY_NAME="laevitas"
 
 # Colors
@@ -39,9 +38,21 @@ detect_arch() {
     esac
 }
 
+# Pick install directory based on OS
+detect_install_dir() {
+    case "$1" in
+        windows)
+            # Git Bash / MINGW — use ~/bin which is typically in PATH
+            echo "$HOME/bin" ;;
+        *)
+            echo "/usr/local/bin" ;;
+    esac
+}
+
 main() {
     OS=$(detect_os)
     ARCH=$(detect_arch)
+    INSTALL_DIR=$(detect_install_dir "$OS")
 
     info "Detected: ${OS}/${ARCH}"
 
@@ -69,18 +80,29 @@ main() {
 
     # Install
     chmod +x "$TMP_FILE"
+    mkdir -p "$INSTALL_DIR"
 
     if [ -w "$INSTALL_DIR" ]; then
-        mv "$TMP_FILE" "${INSTALL_DIR}/${BINARY_NAME}"
+        mv "$TMP_FILE" "${INSTALL_DIR}/${BINARY_NAME}${SUFFIX}"
     else
         info "Requesting sudo to install to ${INSTALL_DIR}..."
-        sudo mv "$TMP_FILE" "${INSTALL_DIR}/${BINARY_NAME}"
+        sudo mv "$TMP_FILE" "${INSTALL_DIR}/${BINARY_NAME}${SUFFIX}"
     fi
 
     rm -rf "$TMP_DIR"
 
-    info "Installed ${BINARY_NAME} ${LATEST} to ${INSTALL_DIR}/${BINARY_NAME}"
+    info "Installed ${BINARY_NAME} ${LATEST} to ${INSTALL_DIR}/${BINARY_NAME}${SUFFIX}"
     echo ""
+
+    # Check if install dir is in PATH
+    case ":$PATH:" in
+        *":${INSTALL_DIR}:"*) ;;
+        *)
+            warn "${INSTALL_DIR} is not in your PATH."
+            warn "Add it with:  export PATH=\"${INSTALL_DIR}:\$PATH\""
+            echo "" ;;
+    esac
+
     info "Get started:"
     echo "  ${BINARY_NAME} config init          # Set up your API key"
     echo "  ${BINARY_NAME} futures snapshot      # Your first query"
