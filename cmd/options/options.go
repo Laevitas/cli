@@ -9,7 +9,7 @@ import (
 
 var Cmd = &cobra.Command{
 	Use:   "options",
-	Short: "Options data — flow, trades, volatility, Greeks, OI",
+	Short: "Options data — flow, trades, volatility, Greeks, OI, vol-surface",
 	Long: `Access options data from Deribit and Binance.
 
 Examples:
@@ -17,7 +17,8 @@ Examples:
   laevitas options snapshot --currency BTC
   laevitas options flow --currency BTC --min-premium 5000
   laevitas options trades --currency ETH --direction buy --block-only
-  laevitas options volatility BTC-28MAR25-100000-C`,
+  laevitas options volatility BTC-28MAR25-100000-C
+  laevitas options vol-surface snapshot --currency BTC`,
 }
 
 var catalogCmd = &cobra.Command{
@@ -237,6 +238,80 @@ var metadataCmd = &cobra.Command{
 	},
 }
 
+// ─── Vol-Surface subcommand group (under options) ───────────────────────────
+
+var VolSurfaceCmd = &cobra.Command{
+	Use:     "vol-surface",
+	Aliases: []string{"vol-surf", "vs"},
+	Short:   "Volatility surface — ATM IV, skew, butterfly, term structure",
+	Long: `Access volatility surface data: ATM implied volatility, 25-delta skew,
+butterfly spreads, and interpolated term structure.
+
+Examples:
+  laevitas options vol-surface snapshot --currency BTC
+  laevitas options vol-surface term-structure --currency BTC
+  laevitas options vol-surface history --currency BTC --maturity 28MAR25 -r 1h`,
+}
+
+var vsSnapshotFlags struct {
+	Currency   string
+	Date       string
+	Resolution string
+}
+
+var vsSnapshotCmd = &cobra.Command{
+	Use:   "snapshot",
+	Short: "Vol surface across ALL maturities at a point in time",
+	Run: func(cmd *cobra.Command, args []string) {
+		client, _ := cmdutil.MustClient()
+		params := &api.RequestParams{
+			Exchange:   cmdutil.Exchange,
+			Currency:   vsSnapshotFlags.Currency,
+			Date:       vsSnapshotFlags.Date,
+			Resolution: vsSnapshotFlags.Resolution,
+		}
+		cmdutil.RunAndPrint(client, api.VolSurfaceSnapshot, params)
+	},
+}
+
+var vsTSFlags struct {
+	Currency   string
+	Date       string
+	Resolution string
+}
+
+var vsTSCmd = &cobra.Command{
+	Use:     "term-structure",
+	Aliases: []string{"ts"},
+	Short:   "Interpolated constant-maturity term structure (1d to 365d)",
+	Run: func(cmd *cobra.Command, args []string) {
+		client, _ := cmdutil.MustClient()
+		params := &api.RequestParams{
+			Exchange:   cmdutil.Exchange,
+			Currency:   vsTSFlags.Currency,
+			Date:       vsTSFlags.Date,
+			Resolution: vsTSFlags.Resolution,
+		}
+		cmdutil.RunAndPrint(client, api.VolSurfaceTermStructure, params)
+	},
+}
+
+var vsHistFlags struct {
+	cmdutil.CommonFlags
+	Maturity string
+}
+
+var vsHistCmd = &cobra.Command{
+	Use:   "history",
+	Short: "Historical vol surface data for a specific maturity",
+	Run: func(cmd *cobra.Command, args []string) {
+		client, _ := cmdutil.MustClient()
+		params := vsHistFlags.CommonFlags.ToParams()
+		params.Maturity = vsHistFlags.Maturity
+		cmdutil.RunAndPrint(client, api.VolSurfaceHistory, params)
+	},
+}
+
 func init() {
 	snapshotCmd.Flags().StringVar(&snapshotFlags.Currency, "currency", "", "Base currency (required)")
 	snapshotCmd.Flags().StringVar(&snapshotFlags.Date, "date", "", "Snapshot datetime (ISO 8601)")
@@ -269,6 +344,26 @@ func init() {
 	cmdutil.AddCommonFlags(volumeCmd, &volumeFlags)
 	cmdutil.AddCommonFlags(refPriceCmd, &refPriceFlags)
 
+	// Vol-surface sub-subcommands
+	vsSnapshotCmd.Flags().StringVar(&vsSnapshotFlags.Currency, "currency", "", "Base currency (required)")
+	vsSnapshotCmd.Flags().StringVar(&vsSnapshotFlags.Date, "date", "", "Snapshot datetime (ISO 8601)")
+	vsSnapshotCmd.Flags().StringVarP(&vsSnapshotFlags.Resolution, "resolution", "r", "1m", "Resolution")
+	_ = vsSnapshotCmd.MarkFlagRequired("currency")
+
+	vsTSCmd.Flags().StringVar(&vsTSFlags.Currency, "currency", "", "Base currency (required)")
+	vsTSCmd.Flags().StringVar(&vsTSFlags.Date, "date", "", "Snapshot datetime (ISO 8601)")
+	vsTSCmd.Flags().StringVarP(&vsTSFlags.Resolution, "resolution", "r", "1m", "Resolution")
+	_ = vsTSCmd.MarkFlagRequired("currency")
+
+	cmdutil.AddCommonFlags(vsHistCmd, &vsHistFlags.CommonFlags)
+	vsHistCmd.Flags().StringVar(&vsHistFlags.Maturity, "maturity", "", "Maturity (required, e.g. 28MAR25)")
+	_ = vsHistCmd.MarkFlagRequired("currency")
+	_ = vsHistCmd.MarkFlagRequired("maturity")
+
+	VolSurfaceCmd.AddCommand(vsSnapshotCmd)
+	VolSurfaceCmd.AddCommand(vsTSCmd)
+	VolSurfaceCmd.AddCommand(vsHistCmd)
+
 	Cmd.AddCommand(catalogCmd)
 	Cmd.AddCommand(snapshotCmd)
 	Cmd.AddCommand(flowCmd)
@@ -281,4 +376,5 @@ func init() {
 	Cmd.AddCommand(volumeCmd)
 	Cmd.AddCommand(refPriceCmd)
 	Cmd.AddCommand(metadataCmd)
+	Cmd.AddCommand(VolSurfaceCmd)
 }

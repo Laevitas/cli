@@ -330,10 +330,10 @@ func watchEndpointForCommand(cmd *cobra.Command) (string, error) {
 		"options ticker":     api.OptionsTickerHistory,
 		"options volatility": api.OptionsVolatility,
 		"options metadata":   api.OptionsMetadata,
-		// Vol surface
-		"vol-surface snapshot":       api.VolSurfaceSnapshot,
-		"vol-surface term-structure": api.VolSurfaceTermStructure,
-		"vol-surface history":        api.VolSurfaceHistory,
+		// Vol surface (under options)
+		"options vol-surface snapshot":       api.VolSurfaceSnapshot,
+		"options vol-surface term-structure": api.VolSurfaceTermStructure,
+		"options vol-surface history":        api.VolSurfaceHistory,
 		// Predictions
 		"predictions catalog":    api.PredictionsCatalog,
 		"predictions categories": api.PredictionsCategories,
@@ -345,8 +345,15 @@ func watchEndpointForCommand(cmd *cobra.Command) (string, error) {
 		"predictions metadata":   api.PredictionsMetadata,
 	}
 
-	// Extract "parent child" from full path "laevitas parent child"
+	// Extract command key from full path "laevitas parent child [subchild]"
 	parts := strings.Fields(path)
+	if len(parts) >= 4 {
+		// Try 3-level key first (e.g. "options vol-surface snapshot")
+		key := parts[1] + " " + parts[2] + " " + parts[3]
+		if ep, found := endpointMap[key]; found {
+			return ep, nil
+		}
+	}
 	if len(parts) >= 3 {
 		key := parts[1] + " " + parts[2]
 		if ep, found := endpointMap[key]; found {

@@ -25,9 +25,9 @@ var commandTree = map[string][]subCmd{
 	"futures": {
 		{Name: "catalog"},
 		{Name: "snapshot"},
-		{Name: "ohlcv", NeedsInstrument: true},
+		{Name: "ohlcvt", NeedsInstrument: true},
 		{Name: "oi", NeedsInstrument: true},
-		{Name: "basis", NeedsInstrument: true},
+		{Name: "carry", NeedsInstrument: true},
 		{Name: "trades", NeedsInstrument: true},
 		{Name: "volume", NeedsInstrument: true},
 		{Name: "level1", NeedsInstrument: true},
@@ -39,8 +39,8 @@ var commandTree = map[string][]subCmd{
 	"perps": {
 		{Name: "catalog"},
 		{Name: "snapshot"},
-		{Name: "funding", NeedsInstrument: true},
-		{Name: "ohlcv", NeedsInstrument: true},
+		{Name: "carry", NeedsInstrument: true},
+		{Name: "ohlcvt", NeedsInstrument: true},
 		{Name: "oi", NeedsInstrument: true},
 		{Name: "trades", NeedsInstrument: true},
 		{Name: "volume", NeedsInstrument: true},
@@ -55,7 +55,7 @@ var commandTree = map[string][]subCmd{
 		{Name: "snapshot"},
 		{Name: "flow"},
 		{Name: "trades"},
-		{Name: "ohlcv", NeedsInstrument: true},
+		{Name: "ohlcvt", NeedsInstrument: true},
 		{Name: "oi", NeedsInstrument: true},
 		{Name: "volatility", NeedsInstrument: true},
 		{Name: "level1", NeedsInstrument: true},
@@ -63,6 +63,7 @@ var commandTree = map[string][]subCmd{
 		{Name: "volume", NeedsInstrument: true},
 		{Name: "ref-price", NeedsInstrument: true},
 		{Name: "metadata", NeedsInstrument: true},
+		{Name: "vol-surface"},
 	},
 	"predictions": {
 		{Name: "catalog"},
@@ -74,11 +75,6 @@ var commandTree = map[string][]subCmd{
 		{Name: "orderbook", NeedsInstrument: true},
 		{Name: "metadata", NeedsInstrument: true},
 	},
-	"vol-surface": {
-		{Name: "snapshot"},
-		{Name: "term-structure"},
-		{Name: "history"},
-	},
 	"config": {
 		{Name: "init"},
 		{Name: "show"},
@@ -89,8 +85,8 @@ var commandTree = map[string][]subCmd{
 
 // topLevelCommands includes both tree commands and REPL built-ins.
 var topLevelCommands = []string{
-	"futures", "perps", "options", "predictions", "vol-surface",
-	"config", "watch", "search",
+	"futures", "perps", "options", "predictions",
+	"config", "watch", "version", "search",
 	"save", "run", "saves", "unsave",
 	"help", "quit", "exit", "clear",
 }

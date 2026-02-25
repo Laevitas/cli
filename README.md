@@ -1,8 +1,16 @@
 # Laevitas CLI
 
-Crypto derivatives analytics from your terminal. Built for humans and AI agents.
+[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)]()
+[![Twitter](https://img.shields.io/twitter/follow/laevitas1?style=social)](https://twitter.com/laevitas1)
+[![Discord](https://img.shields.io/discord/laevitas?color=5865F2&logo=discord&logoColor=white)](https://discord.com/invite/yaXc4EFFay)
 
-Real-time data from **Deribit**, **Binance**, and **Polymarket** — futures, perpetuals, options, volatility surfaces, and prediction markets.
+> **Derivatives Data Without The Spread** — in your terminal.
+
+Crypto derivatives analytics CLI for futures, perpetuals, options, vol surfaces, and prediction markets. Agent-native, pipe-friendly, human-readable.
+
+Real-time data from **Deribit**, **Binance**, and **Polymarket**.
 
 ```
 $ laevitas futures snapshot --currency BTC -o table
@@ -16,34 +24,18 @@ BTC-26SEP25      101,200.00  96,800.00    3,100.8        32,000,000      213    
 
 ## Install
 
-### macOS / Linux
-
 ```bash
-curl -sSL https://cli.laevitas.ch/install.sh | sh
-```
-
-### Windows (PowerShell)
-
-```powershell
-irm https://cli.laevitas.ch/install.ps1 | iex
-```
-
-### Homebrew (macOS / Linux)
-
-```bash
+# Homebrew (macOS / Linux)
 brew tap laevitas/cli
 brew install laevitas
-```
 
-### Go
+# Shell script
+curl -sSL https://cli.laevitas.ch/install.sh | sh
 
-```bash
+# Go
 go install github.com/laevitas/cli@latest
-```
 
-### Docker
-
-```bash
+# Docker
 docker run --rm -e LAEVITAS_API_KEY=your-key laevitas/cli futures snapshot --currency BTC -o json
 ```
 
@@ -60,9 +52,9 @@ laevitas options catalog
 
 # 3. Fetch data
 laevitas futures snapshot --currency BTC
-laevitas perps funding BTC-PERPETUAL -r 1d -n 30
+laevitas perps carry BTC-PERPETUAL -r 1d -n 30
 laevitas options flow --currency BTC --min-premium 5000
-laevitas vol-surface snapshot --currency BTC
+laevitas options vol-surface snapshot --currency BTC
 laevitas predictions catalog --keyword bitcoin
 ```
 
@@ -70,12 +62,12 @@ laevitas predictions catalog --keyword bitcoin
 
 | Command | Description |
 |---------|-------------|
-| `futures` | Dated futures — catalog, snapshot, OHLCV, OI, basis, trades, volume, L1/L2, ticker |
-| `perps` | Perpetual swaps — catalog, snapshot, OHLCV, OI, **funding**, trades, volume, L1/L2, ticker |
-| `options` | Options — catalog, snapshot, OHLCV, OI, **flow**, **trades**, **volatility**, L1, ticker |
-| `vol-surface` | Volatility surface — **snapshot**, **term-structure**, **history** |
+| `futures` | Dated futures — catalog, snapshot, OHLCVT, OI, carry, trades, volume, L1/L2, ticker |
+| `perps` | Perpetual swaps — catalog, snapshot, OHLCVT, OI, **carry**, trades, volume, L1/L2, ticker |
+| `options` | Options — catalog, snapshot, OHLCVT, OI, **flow**, **trades**, **volatility**, L1, ticker, **vol-surface** |
 | `predictions` | Prediction markets — catalog, categories, snapshot, OHLCVT, trades, ticker, orderbook |
-| `config` | Configuration — init, show, set, path |
+| `config` | Configuration — init, show, set |
+| `version` | Print version and build information |
 
 ### Global Flags
 
@@ -108,21 +100,21 @@ Override with `-o json`, `-o table`, or `-o csv`.
 
 ```bash
 # Human-readable
-laevitas perps funding BTC-PERPETUAL
+laevitas perps carry BTC-PERPETUAL
 
 # Machine-readable (piped)
-laevitas perps funding BTC-PERPETUAL | jq '.[0].funding_rate_close'
+laevitas perps carry BTC-PERPETUAL | jq '.[0].funding_rate_close'
 
 # Explicit JSON
-laevitas perps funding BTC-PERPETUAL -o json
+laevitas perps carry BTC-PERPETUAL -o json
 
 # CSV for spreadsheets
-laevitas perps funding BTC-PERPETUAL -o csv > funding.csv
+laevitas perps carry BTC-PERPETUAL -o csv > funding.csv
 ```
 
 ## Agent Integration
 
-The CLI is designed to be used by AI agents as a native tool.
+The CLI is designed to be used by AI agents (Claude, GPT, Codex, etc.) as a native tool.
 
 ### Why agents love CLIs
 
@@ -139,13 +131,13 @@ The CLI is designed to be used by AI agents as a native tool.
 laevitas futures snapshot --currency BTC -o json | jq '[.[] | {instrument: .instrument_name, basis: .mark_price - .index_price, days: .days_to_expiry, carry: .annualized_carry}]'
 
 # "Is funding positive or negative right now?"
-laevitas perps funding BTC-PERPETUAL -o json -n 1 | jq '.[0].funding_rate_close'
+laevitas perps carry BTC-PERPETUAL -o json -n 1 | jq '.[0].funding_rate_close'
 
 # "Show me the biggest BTC options trades today"
 laevitas options trades --currency BTC --sort premium_usd --sort-dir DESC -n 10 -o json
 
 # "What does the vol surface look like?"
-laevitas vol-surface snapshot --currency BTC -o json | jq '[.[] | {maturity, atm_iv, skew_25d}]'
+laevitas options vol-surface snapshot --currency BTC -o json | jq '[.[] | {maturity, atm_iv, skew_25d}]'
 
 # "What's the probability of Bitcoin reaching 250k?"
 laevitas predictions ohlcvt will-bitcoin-reach-250000-YES -o json -n 1 | jq '.[0].close'
@@ -155,16 +147,16 @@ BEST=$(laevitas futures snapshot --currency BTC -o json | jq -r 'sort_by(.annual
 laevitas futures orderbook "$BEST" -o json
 ```
 
-### AI Agent Skill
+### Claude / Codex Skill
 
 To teach an AI agent about this CLI, point it at the `--help` output or include this in your system prompt:
 
 ```
 The laevitas CLI provides crypto derivatives data. Key commands:
 - laevitas futures snapshot --currency BTC -o json  (all BTC futures)
-- laevitas perps funding <instrument> -o json       (funding rates)
+- laevitas perps carry <instrument> -o json          (funding/carry)
 - laevitas options flow --currency BTC -o json      (options flow)
-- laevitas vol-surface snapshot --currency BTC      (vol surface)
+- laevitas options vol-surface snapshot --currency BTC      (vol surface)
 - laevitas predictions catalog --keyword <term>     (prediction markets)
 Always use -o json for structured output. Use --help on any command for details.
 ```

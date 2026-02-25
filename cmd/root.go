@@ -5,13 +5,13 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/laevitas/cli/cmd/config"
 	"github.com/laevitas/cli/cmd/futures"
 	"github.com/laevitas/cli/cmd/options"
 	"github.com/laevitas/cli/cmd/perps"
 	"github.com/laevitas/cli/cmd/predictions"
-	"github.com/laevitas/cli/cmd/volsurface"
 	"github.com/laevitas/cli/internal/cmdutil"
 	internalConfig "github.com/laevitas/cli/internal/config"
 	"github.com/laevitas/cli/internal/version"
@@ -23,6 +23,14 @@ var (
 	verbose      bool
 	noChart      bool
 )
+
+const helpBanner = `  ██╗      █████╗ ███████╗██╗   ██╗██╗████████╗ █████╗ ███████╗
+  ██║     ██╔══██╗██╔════╝██║   ██║██║╚══██╔══╝██╔══██╗██╔════╝
+  ██║     ███████║█████╗  ██║   ██║██║   ██║   ███████║███████╗
+  ██║     ██╔══██║██╔══╝  ╚██╗ ██╔╝██║   ██║   ██╔══██║╚════██║
+  ███████╗██║  ██║███████╗ ╚████╔╝ ██║   ██║   ██║  ██║███████║
+  ╚══════╝╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚══════╝
+  Derivatives Data Without The Spread`
 
 var rootCmd = &cobra.Command{
 	Use:   "laevitas",
@@ -37,8 +45,8 @@ Data sourced from Deribit, Binance, and Polymarket.
   Agent mode:    laevitas perps carry BTCUSDT -o json | jq '.[0]'
   Interactive:   laevitas   (no arguments → REPL shell)
 
-Documentation:  https://docs.laevitas.ch/cli
-API Reference:  https://docs.laevitas.ch/api`,
+Documentation:  https://apiv2.laevitas.ch/redoc
+API Reference:  https://apiv2.laevitas.ch/redoc`,
 	Version: fmt.Sprintf("%s (commit: %s, built: %s)", version.Version, version.CommitSHA, version.BuildDate),
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		switch outputFormat {
@@ -62,6 +70,22 @@ API Reference:  https://docs.laevitas.ch/api`,
 	SilenceErrors: true,
 }
 
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print version and build information",
+	Run: func(cmd *cobra.Command, args []string) {
+		dim := "\033[2m"
+		reset := "\033[0m"
+		if !term.IsTerminal(int(os.Stdout.Fd())) {
+			dim = ""
+			reset = ""
+		}
+		fmt.Printf("laevitas v%s (build: %s, %s)\n", version.Version, version.CommitSHA, version.BuildDate)
+		fmt.Printf("%sLaevitas Pte. Ltd. — https://www.laevitas.ch%s\n", dim, reset)
+		fmt.Printf("%sAPI: https://apiv2.laevitas.ch%s\n", dim, reset)
+	},
+}
+
 func init() {
 	// Set Run here (not in the var declaration) to avoid an init cycle
 	// between rootCmd and runInteractive, which references rootCmd.
@@ -70,6 +94,28 @@ func init() {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 			os.Exit(1)
 		}
+	}
+
+	// Branded help template — show banner + colored section headers on TTY
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		rootCmd.SetUsageTemplate("\033[36m" + helpBanner + "\033[0m" + `            v` + version.Version + `
+
+` + "\033[36m" + `USAGE:` + "\033[0m" + `
+  {{.UseLine}}{{if .HasAvailableSubCommands}} [command]{{end}}
+
+` + "\033[36m" + `COMMANDS:` + "\033[0m" + `{{range .Commands}}{{if .IsAvailableCommand}}
+  {{rpad .Name .NamePadding}} {{.Short}}{{end}}{{end}}
+{{if .HasAvailableLocalFlags}}
+` + "\033[36m" + `FLAGS:` + "\033[0m" + `
+{{.LocalFlags.FlagUsages}}{{end}}{{if .HasAvailableInheritedFlags}}
+` + "\033[36m" + `GLOBAL FLAGS:` + "\033[0m" + `
+{{.InheritedFlags.FlagUsages}}{{end}}
+Use "{{.CommandPath}} [command] --help" for more info.
+
+` + "\033[2m" + `Docs:    https://apiv2.laevitas.ch/redoc
+Discord: https://discord.com/invite/yaXc4EFFay
+Twitter: https://twitter.com/laevitas1` + "\033[0m" + `
+`)
 	}
 
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", internalConfig.DefaultOutput, "Output format: auto, json, table, csv")
@@ -81,11 +127,15 @@ func init() {
 	rootCmd.AddCommand(futures.Cmd)
 	rootCmd.AddCommand(perps.Cmd)
 	rootCmd.AddCommand(options.Cmd)
-	rootCmd.AddCommand(volsurface.Cmd)
 	rootCmd.AddCommand(predictions.Cmd)
 	rootCmd.AddCommand(watchCmd)
+	rootCmd.AddCommand(versionCmd)
 }
 
 func Execute() error {
-	return rootCmd.Execute()
+	err := rootCmd.Execute()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "✗ %s\n", err)
+	}
+	return err
 }

@@ -220,12 +220,12 @@ func (c *Client) Do(method, path string, params *RequestParams) ([]byte, error) 
 			return nil, fmt.Errorf("creating request: %w", err)
 		}
 
-		// Auth — X-API-Key header per LAEVITAS API convention
+		// Auth — header name is "apiKey" per LAEVITAS API convention
 		if c.apiKey != "" {
-			req.Header.Set("X-API-Key", c.apiKey)
+			req.Header.Set("apiKey", c.apiKey)
 		}
 		req.Header.Set("Accept", "application/json")
-		req.Header.Set("User-Agent", fmt.Sprintf("laevitas-cli/%s", version.Version))
+		req.Header.Set("User-Agent", fmt.Sprintf("laevitas-cli/%s (+https://github.com/laevitas/cli)", version.Version))
 
 		if c.Verbose {
 			dump, _ := httputil.DumpRequestOut(req, false)

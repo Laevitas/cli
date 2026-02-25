@@ -8,7 +8,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/laevitas/cli/internal/api"
 	internalConfig "github.com/laevitas/cli/internal/config"
 	"github.com/laevitas/cli/internal/output"
 )
@@ -74,21 +73,6 @@ var initCmd = &cobra.Command{
 
 		fmt.Println()
 		output.Successf("Configuration saved to ~/.config/laevitas/config.json")
-
-		// Verify API key
-		if cfg.APIKey != "" {
-			fmt.Print("Verifying API key... ")
-			client := api.NewClient(cfg)
-			_, err := client.Get(api.Health, nil)
-			if err != nil {
-				fmt.Println("✗")
-				output.Warnf("API key verification failed: %v", err)
-			} else {
-				fmt.Println("✓")
-				output.Successf("API key is valid")
-			}
-		}
-
 		return nil
 	},
 }

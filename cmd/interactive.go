@@ -20,11 +20,12 @@ import (
 )
 
 const banner = `
-  _        _    _______     _____ _____  _    ____
- | |      / \  | ____\ \   / /_ _|_   _|/ \  / ___|
- | |     / _ \ |  _|  \ \ / / | |  | | / _ \ \___ \
- | |___ / ___ \| |___  \ V /  | |  | |/ ___ \ ___) |
- |_____/_/   \_\_____|  \_/  |___| |_/_/   \_\____/
+  ██╗      █████╗ ███████╗██╗   ██╗██╗████████╗ █████╗ ███████╗
+  ██║     ██╔══██╗██╔════╝██║   ██║██║╚══██╔══╝██╔══██╗██╔════╝
+  ██║     ███████║█████╗  ██║   ██║██║   ██║   ███████║███████╗
+  ██║     ██╔══██║██╔══╝  ╚██╗ ██╔╝██║   ██║   ██╔══██║╚════██║
+  ███████╗██║  ██║███████╗ ╚████╔╝ ██║   ██║   ██║  ██║███████║
+  ╚══════╝╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚══════╝
 `
 
 func printBanner() {
@@ -34,7 +35,7 @@ func printBanner() {
 	reset := "\033[0m"
 
 	fmt.Fprintf(os.Stdout, "%s%s%s%s", bold, cyan, banner, reset)
-	fmt.Fprintf(os.Stdout, "  %sv%s%s\n", dim, version.Version, reset)
+	fmt.Fprintf(os.Stdout, "  %sDerivatives Data Without The Spread%s            %sv%s%s\n", dim, reset, dim, version.Version, reset)
 	fmt.Fprintf(os.Stdout, "  Type %s'help'%s for commands, %s'quit'%s to exit\n\n", bold, reset, bold, reset)
 }
 
@@ -53,8 +54,22 @@ func runInteractive() error {
 
 	// If no API key, run inline onboarding before entering the REPL
 	if cfg.APIKey == "" {
-		fmt.Println("  Welcome to LAEVITAS CLI! You need an API key to get started.")
-		fmt.Println("  Get your key at \033[1mhttps://app.laevitas.ch/settings/api\033[0m")
+		bold := "\033[1m"
+		dim := "\033[2m"
+		reset := "\033[0m"
+		fmt.Println("  Welcome to Laevitas CLI!")
+		fmt.Println()
+		fmt.Println("  Derivatives data for your terminal -- futures, perps, options,")
+		fmt.Println("  vol surfaces, and prediction markets across 15+ exchanges.")
+		fmt.Println()
+		fmt.Printf("  Quick start:\n")
+		fmt.Printf("    %slaevitas config init%s           Set up your API key\n", bold, reset)
+		fmt.Printf("    %slaevitas futures catalog%s       Browse available instruments\n", bold, reset)
+		fmt.Printf("    %slaevitas perps carry BTC-PERPETUAL%s  Check funding rates\n", bold, reset)
+		fmt.Println()
+		fmt.Printf("  Get an API key: %shttps://app.laevitas.ch%s (Enterprise plan)\n", bold, reset)
+		fmt.Printf("  %sDocs:    https://apiv2.laevitas.ch/redoc%s\n", dim, reset)
+		fmt.Printf("  %sDiscord: https://discord.com/invite/yaXc4EFFay%s\n", dim, reset)
 		fmt.Println()
 
 		reader := bufio.NewReader(os.Stdin)

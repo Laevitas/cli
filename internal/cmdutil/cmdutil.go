@@ -135,19 +135,6 @@ func promptOnboarding(cfg *config.Config) bool {
 	}
 
 	output.Successf("API key saved to ~/.config/laevitas/config.json")
-
-	// Verify API key
-	fmt.Print("  Verifying API key... ")
-	client := api.NewClient(cfg)
-	_, err = client.Get(api.Health, nil)
-	if err != nil {
-		fmt.Println("✗")
-		output.Warnf("API key verification failed: %v", err)
-	} else {
-		fmt.Println("✓")
-		output.Successf("API key is valid")
-	}
-
 	fmt.Println()
 	return true
 }
