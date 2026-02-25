@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Laevitas CLI — Crypto Derivatives Analytics</title>
+  <meta name="description" content="Crypto derivatives analytics from your terminal. Futures, perpetuals, options, volatility surfaces, and prediction markets.">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 4rem 1.5rem;
+    }
+    .container { max-width: 720px; width: 100%; }
+    h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+    h1 span { color: var(--accent); }
+    .tagline {
+      color: var(--muted);
+      font-size: 1.15rem;
+      margin-bottom: 2.5rem;
+    }
+    .install-block {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .install-block h2 {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+    }
+    .code-line {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    .code-line code {
+      overflow-x: auto;
+      white-space: nowrap;
+      color: var(--green);
+    }
+    .copy-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 0.3rem 0.6rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      white-space: nowrap;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .copy-btn:hover { color: var(--text); border-color: var(--text); }
+    .copy-btn.copied { color: var(--green); border-color: var(--green); }
+    .methods {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-bottom: 2.5rem;
+    }
+    @media (max-width: 540px) { .methods { grid-template-columns: 1fr; } }
+    .method {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+    }
+    .method h3 {
+      font-size: 0.95rem;
+      margin-bottom: 0.4rem;
+    }
+    .method code {
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    .links {
+      display: flex;
+      gap: 1.5rem;
+      margin-top: 2rem;
+    }
+    .links a {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.95rem;
+    }
+    .links a:hover { text-decoration: underline; }
+    footer {
+      margin-top: 4rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1><span>laevitas</span> cli</h1>
+    <p class="tagline">Crypto derivatives analytics from your terminal. Built for humans and AI agents.</p>
+
+    <div class="install-block">
+      <h2>macOS / Linux</h2>
+      <div class="code-line">
+        <code>curl -sSL https://cli.laevitas.ch/install.sh | sh</code>
+        <button class="copy-btn" onclick="copyCmd(this, 'curl -sSL https://cli.laevitas.ch/install.sh | sh')">Copy</button>
+      </div>
+    </div>
+
+    <div class="install-block">
+      <h2>Windows (PowerShell)</h2>
+      <div class="code-line">
+        <code>iwr https://cli.laevitas.ch/install.ps1 -UseBasicParsing | iex</code>
+        <button class="copy-btn" onclick="copyCmd(this, 'iwr https://cli.laevitas.ch/install.ps1 -UseBasicParsing | iex')">Copy</button>
+      </div>
+    </div>
+
+    <div class="methods">
+      <div class="method">
+        <h3>Homebrew</h3>
+        <code>brew tap laevitas/cli && brew install laevitas</code>
+      </div>
+      <div class="method">
+        <h3>Go</h3>
+        <code>go install github.com/laevitas/cli@latest</code>
+      </div>
+      <div class="method">
+        <h3>Docker</h3>
+        <code>docker run --rm laevitas/cli --help</code>
+      </div>
+      <div class="method">
+        <h3>From source</h3>
+        <code>git clone &amp; make build</code>
+      </div>
+    </div>
+
+    <div class="links">
+      <a href="https://github.com/laevitas/cli">GitHub</a>
+      <a href="https://github.com/laevitas/cli#commands">Documentation</a>
+      <a href="https://docs.laevitas.ch/api">API Reference</a>
+    </div>
+  </div>
+
+  <footer>&copy; Laevitas</footer>
+
+  <script>
+    function copyCmd(btn, text) {
+      navigator.clipboard.writeText(text).then(() => {
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+      });
+    }
+  </script>
+</body>
+</html>
