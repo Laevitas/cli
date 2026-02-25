@@ -62,12 +62,9 @@ const (
 // ─── Volatility Surface (under /options/) ───────────────────────────────
 
 const (
-	VolSurfaceSnapshot      = "/api/v1/options/vol-surface/snapshot"
-	VolSurfaceTermStructure = "/api/v1/options/vol-surface/term-structure"
-	VolSurfaceHistory       = "/api/v1/options/vol-surface/history"
-	VolSurfaceByExpiry      = "/api/v1/options/vol-surface/by-expiry"
-	VolSurfaceByTenor       = "/api/v1/options/vol-surface/by-tenor"
-	VolSurfaceByTime        = "/api/v1/options/vol-surface/by-time"
+	VolSurfaceByExpiry = "/api/v1/options/vol-surface/by-expiry"
+	VolSurfaceByTenor  = "/api/v1/options/vol-surface/by-tenor"
+	VolSurfaceByTime   = "/api/v1/options/vol-surface/by-time"
 )
 
 // ─── Predictions ────────────────────────────────────────────────────────
