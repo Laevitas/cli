@@ -350,8 +350,14 @@ func (c *Client) Do(method, path string, params *RequestParams) ([]byte, error) 
 			Endpoint:   path,
 		}
 
-		// 401/403: auth error — no retry
+		// 401/403: auth error
 		if apiErr.IsAuthError() {
+			// If wallet is configured (no API key), treat 401 as 402 — trigger x402 payment
+			if c.apiKey == "" && c.paymentClient != nil {
+				result, err := c.handlePaymentRequired(method, fullURL, resp, body, path)
+				c.LastMeta.Duration = time.Since(startTime)
+				return result, err
+			}
 			apiErr.Message = "API key invalid or expired. Run `laevitas config init` to update."
 			return nil, apiErr
 		}
