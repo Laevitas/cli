@@ -169,6 +169,9 @@ func MustClient() (*api.Client, *config.Config) {
 
 	client := api.NewClient(cfg)
 	client.Verbose = Verbose
+	if InteractiveMode {
+		SharedClient = client
+	}
 	return client, cfg
 }
 

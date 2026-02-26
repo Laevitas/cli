@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/laevitas/cli/internal/api"
+	"github.com/laevitas/cli/internal/cmdutil"
 	internalConfig "github.com/laevitas/cli/internal/config"
 	"github.com/laevitas/cli/internal/output"
 	"github.com/laevitas/cli/internal/x402"
@@ -207,6 +208,12 @@ var setCmd = &cobra.Command{
 			return err
 		}
 
+		// Reset shared client when auth-related config changes in REPL mode
+		switch strings.ToLower(key) {
+		case "api_key", "apikey", "key", "wallet_key", "walletkey", "wallet", "auth", "auth_type":
+			cmdutil.SharedClient = nil
+		}
+
 		output.Successf("Set %s", key)
 		return nil
 	},
@@ -237,6 +244,9 @@ var unsetCmd = &cobra.Command{
 		if err := internalConfig.Save(cfg); err != nil {
 			return err
 		}
+
+		// Reset shared client so next command picks up the change
+		cmdutil.SharedClient = nil
 
 		output.Successf("Cleared %s", key)
 		return nil
