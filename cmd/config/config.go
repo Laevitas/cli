@@ -211,10 +211,12 @@ var setCmd = &cobra.Command{
 		// Reset shared client when auth-related config changes in REPL mode
 		switch strings.ToLower(key) {
 		case "api_key", "apikey", "key", "wallet_key", "walletkey", "wallet", "auth", "auth_type":
-			cmdutil.SharedClient = nil
+			if cmdutil.SharedClient != nil {
+				cmdutil.SharedClient = nil
+			}
 		}
 
-		output.Successf("Set %s", key)
+		output.Successf("Set %s = %s", key, value)
 		return nil
 	},
 }
