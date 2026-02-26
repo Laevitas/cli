@@ -79,6 +79,8 @@ var commandTree = map[string][]subCmd{
 		{Name: "init"},
 		{Name: "show"},
 		{Name: "set"},
+		{Name: "unset"},
+		{Name: "path"},
 	},
 	"watch": {},
 }
@@ -96,6 +98,23 @@ var topLevelCommands = []string{
 var savedNameCommands = map[string]bool{
 	"run":    true,
 	"unsave": true,
+}
+
+// configSetKeys are valid keys for "config set <key>".
+var configSetKeys = []string{
+	"api_key", "exchange", "output", "base_url", "wallet_key", "auth",
+}
+
+// configUnsetKeys are valid keys for "config unset <key>".
+var configUnsetKeys = []string{
+	"api_key", "wallet_key",
+}
+
+// configValueOptions maps config keys to their valid values for "config set <key> <value>".
+var configValueOptions = map[string][]string{
+	"auth":     {"auto", "api-key", "x402"},
+	"output":   {"auto", "json", "table", "csv"},
+	"exchange": {"deribit", "binance", "bybit", "okx"},
 }
 
 // catalogEndpoints maps top-level command to the API endpoint for its catalog.
@@ -166,13 +185,40 @@ func (c *Completer) Do(line []rune, pos int) ([][]rune, int) {
 		return c.completeSubcommand(segments[0], segments[1])
 
 	case len(segments) == 2 && trailing:
-		// Subcommand complete, now complete instrument if needed
+		// Subcommand complete — complete config keys or instrument
+		if strings.ToLower(segments[0]) == "config" {
+			return c.completeConfigKey(segments[1], "")
+		}
 		return c.completeInstrument(segments[0], segments[1], "")
+
+	case len(segments) == 3 && !trailing:
+		// Partially typed 3rd arg — config key or instrument
+		if strings.ToLower(segments[0]) == "config" {
+			return c.completeConfigKey(segments[1], segments[2])
+		}
+		last := segments[2]
+		if !strings.HasPrefix(last, "-") {
+			return c.completeInstrument(segments[0], segments[1], last)
+		}
+		return nil, 0
+
+	case len(segments) == 3 && trailing:
+		// 3rd arg complete — config value completion (e.g. "config set auth ")
+		if strings.ToLower(segments[0]) == "config" {
+			return c.completeConfigValue(segments[2], "")
+		}
+		return nil, 0
+
+	case len(segments) == 4 && !trailing:
+		// Partially typed 4th arg — config value (e.g. "config set auth au")
+		if strings.ToLower(segments[0]) == "config" {
+			return c.completeConfigValue(segments[2], segments[3])
+		}
+		return nil, 0
 
 	case len(segments) >= 3 && !trailing:
 		// Could be partially typed instrument
 		last := segments[len(segments)-1]
-		// Only complete as instrument if it doesn't start with -
 		if !strings.HasPrefix(last, "-") {
 			return c.completeInstrument(segments[0], segments[1], last)
 		}
@@ -226,6 +272,26 @@ func (c *Completer) completeInstrument(parent, sub, prefix string) ([][]rune, in
 	}
 
 	return filterCompletions(instruments, strings.ToUpper(prefix))
+}
+
+// completeConfigKey returns completions for config key names.
+func (c *Completer) completeConfigKey(subCmd, prefix string) ([][]rune, int) {
+	switch strings.ToLower(subCmd) {
+	case "set":
+		return filterCompletions(configSetKeys, prefix)
+	case "unset":
+		return filterCompletions(configUnsetKeys, prefix)
+	}
+	return nil, 0
+}
+
+// completeConfigValue returns completions for config values given a key.
+func (c *Completer) completeConfigValue(key, prefix string) ([][]rune, int) {
+	opts, ok := configValueOptions[strings.ToLower(key)]
+	if !ok {
+		return nil, 0
+	}
+	return filterCompletions(opts, prefix)
 }
 
 // completeSavedNames returns completions for saved query names.
