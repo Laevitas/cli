@@ -52,8 +52,8 @@ func runInteractive() error {
 		return err
 	}
 
-	// If no API key, run inline onboarding before entering the REPL
-	if cfg.APIKey == "" {
+	// If no API key and no wallet key, run inline onboarding before entering the REPL
+	if cfg.APIKey == "" && cfg.WalletKey == "" {
 		bold := "\033[1m"
 		dim := "\033[2m"
 		reset := "\033[0m"
