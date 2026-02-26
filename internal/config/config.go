@@ -18,6 +18,13 @@ const (
 	configFileName = "config.json"
 )
 
+// Auth type constants for choosing default authentication method.
+const (
+	AuthTypeAuto   = "auto"   // API key if set, otherwise x402 wallet
+	AuthTypeAPIKey = "api-key" // Always use API key
+	AuthTypeX402   = "x402"   // Always use x402 wallet payment
+)
+
 // Config holds all CLI configuration.
 type Config struct {
 	APIKey    string `json:"api_key,omitempty"`
@@ -25,6 +32,7 @@ type Config struct {
 	Exchange  string `json:"exchange,omitempty"`
 	Output    string `json:"output,omitempty"`
 	WalletKey string `json:"wallet_key,omitempty"` // EVM private key for x402 payments
+	Auth      string `json:"auth,omitempty"`       // "auto", "api-key", or "x402"
 }
 
 // configDir returns ~/.config/laevitas/
@@ -79,6 +87,9 @@ func Load() (*Config, error) {
 	}
 	if v := os.Getenv("LAEVITAS_WALLET_KEY"); v != "" {
 		cfg.WalletKey = v
+	}
+	if v := os.Getenv("LAEVITAS_AUTH"); v != "" {
+		cfg.Auth = v
 	}
 
 	return cfg, nil

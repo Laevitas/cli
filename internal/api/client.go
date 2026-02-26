@@ -55,17 +55,37 @@ func (c *Client) HasWallet() bool {
 }
 
 // NewClient creates a new API client from config.
+// The auth config field controls which auth method is used when both are set:
+//   - "auto" (default): API key if set, otherwise x402 wallet
+//   - "api-key": only use API key, ignore wallet
+//   - "x402": only use x402 wallet, ignore API key
 func NewClient(cfg *config.Config) *Client {
+	authType := cfg.Auth
+	if authType == "" {
+		authType = config.AuthTypeAuto
+	}
+
+	apiKey := cfg.APIKey
+	useWallet := cfg.WalletKey != ""
+
+	// Apply auth preference
+	switch authType {
+	case config.AuthTypeAPIKey:
+		useWallet = false
+	case config.AuthTypeX402:
+		apiKey = "" // don't send API key — use wallet only
+	}
+
 	c := &Client{
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-		apiKey:  cfg.APIKey,
+		apiKey:  apiKey,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
 
-	// Initialize x402 payment client if wallet key is configured
-	if cfg.WalletKey != "" {
+	// Initialize x402 payment client if wallet key is configured and not disabled
+	if useWallet {
 		pc, err := x402.NewPaymentClient(cfg.WalletKey)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\033[33m⚠ Invalid wallet key: %s\033[0m\n", err)

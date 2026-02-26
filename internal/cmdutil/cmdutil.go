@@ -336,12 +336,12 @@ func printRequestMeta(client *api.Client, endpoint string, params *api.RequestPa
 
 	var parts []string
 
-	// Auth method (with icon for x402)
+	// Auth type + payment method
 	switch meta.PaymentMethod {
 	case api.PaymentMethodOnChain:
-		parts = append(parts, "⚡ on-chain")
+		parts = append(parts, "x402 on-chain")
 	case api.PaymentMethodCredit:
-		parts = append(parts, "💳 credit")
+		parts = append(parts, "x402 credit")
 	default:
 		parts = append(parts, "api-key")
 	}

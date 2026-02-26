@@ -73,6 +73,18 @@ var initCmd = &cobra.Command{
 			cfg.WalletKey = wk
 		}
 
+		// Auth type
+		currentAuth := cfg.Auth
+		if currentAuth == "" {
+			currentAuth = "auto"
+		}
+		fmt.Printf("Auth type (auto/api-key/x402) [%s]: ", currentAuth)
+		auth, _ := reader.ReadString('\n')
+		auth = strings.TrimSpace(auth)
+		if auth != "" {
+			cfg.Auth = auth
+		}
+
 		// Base URL
 		fmt.Printf("API base URL [%s]: ", cfg.BaseURL)
 		url, _ := reader.ReadString('\n')
@@ -120,10 +132,16 @@ var showCmd = &cobra.Command{
 			keyDisplay = internalConfig.MaskKey(cfg.APIKey)
 		}
 
+		authDisplay := cfg.Auth
+		if authDisplay == "" {
+			authDisplay = "auto"
+		}
+
 		fmt.Printf("API Key:    %s\n", keyDisplay)
 		fmt.Printf("Base URL:   %s\n", cfg.BaseURL)
 		fmt.Printf("Exchange:   %s\n", cfg.Exchange)
 		fmt.Printf("Output:     %s\n", cfg.Output)
+		fmt.Printf("Auth:       %s\n", authDisplay)
 
 		// x402 payment info
 		if cfg.WalletKey != "" {
@@ -147,7 +165,7 @@ var showCmd = &cobra.Command{
 
 var setCmd = &cobra.Command{
 	Use:   "set <key> <value>",
-	Short: "Set a config value (api_key, exchange, output, base_url, wallet_key)",
+	Short: "Set a config value (api_key, exchange, output, base_url, wallet_key, auth)",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := internalConfig.Load()
@@ -168,8 +186,21 @@ var setCmd = &cobra.Command{
 			cfg.BaseURL = value
 		case "wallet_key", "walletkey", "wallet":
 			cfg.WalletKey = value
+		case "auth", "auth_type":
+			switch strings.ToLower(value) {
+			case "auto", "api-key", "apikey", "x402", "wallet":
+				if value == "apikey" {
+					value = "api-key"
+				}
+				if value == "wallet" {
+					value = "x402"
+				}
+				cfg.Auth = value
+			default:
+				return fmt.Errorf("invalid auth type: %s (valid: auto, api-key, x402)", value)
+			}
 		default:
-			return fmt.Errorf("unknown config key: %s (valid: api_key, exchange, output, base_url, wallet_key)", key)
+			return fmt.Errorf("unknown config key: %s (valid: api_key, exchange, output, base_url, wallet_key, auth)", key)
 		}
 
 		if err := internalConfig.Save(cfg); err != nil {
