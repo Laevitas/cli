@@ -11,7 +11,7 @@ $InstallDir = Join-Path $env:LOCALAPPDATA "laevitas"
 
 function Write-Info($msg)  { Write-Host "▸ $msg" -ForegroundColor Green }
 function Write-Warn($msg)  { Write-Host "▸ $msg" -ForegroundColor Yellow }
-function Write-Err($msg)   { Write-Host "▸ $msg" -ForegroundColor Red; exit 1 }
+function Write-Err($msg)   { Write-Host "▸ $msg" -ForegroundColor Red; throw $msg}
 
 # Detect architecture
 function Get-Arch {
