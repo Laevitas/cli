@@ -18,6 +18,22 @@ import (
 	"github.com/laevitas/cli/internal/x402"
 )
 
+// Payment method constants for tracking how each request was authenticated.
+const (
+	PaymentMethodAPIKey  = "api-key"
+	PaymentMethodCredit  = "credit"
+	PaymentMethodOnChain = "on-chain"
+)
+
+// RequestMeta holds metadata from the last API request.
+type RequestMeta struct {
+	Duration      time.Duration
+	PaymentMethod string // "api-key", "credit", "on-chain"
+	Credits       string // remaining credits (x402)
+	Retries       int    // number of 429 retries before success
+	ResponseSize  int    // response body size in bytes
+}
+
 // Client is the LAEVITAS API client.
 type Client struct {
 	baseURL    string
@@ -26,9 +42,16 @@ type Client struct {
 	Verbose    bool
 
 	// x402 payment support
-	paymentClient   *x402.PaymentClient
-	creditToken     string // cached JWT credit token
-	CreditsRemaining string // last known credits remaining (from response header)
+	paymentClient *x402.PaymentClient
+	creditToken   string // cached JWT credit token
+
+	// LastMeta contains metadata from the most recent request.
+	LastMeta RequestMeta
+}
+
+// HasWallet returns true if x402 wallet payment is configured.
+func (c *Client) HasWallet() bool {
+	return c.paymentClient != nil
 }
 
 // NewClient creates a new API client from config.
@@ -240,6 +263,10 @@ const maxRetries = 3
 // network errors with user-friendly messages.
 func (c *Client) Do(method, path string, params *RequestParams) ([]byte, error) {
 	fullURL := c.buildURL(path, params)
+	c.LastMeta = RequestMeta{} // reset for each call
+	startTime := time.Now()
+
+	usedCredit := false
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		req, err := http.NewRequest(method, fullURL, nil)
@@ -254,6 +281,7 @@ func (c *Client) Do(method, path string, params *RequestParams) ([]byte, error) 
 		// Send cached x402 credit token if available (and no API key)
 		if c.apiKey == "" && c.creditToken != "" {
 			req.Header.Set("X-Credit-Token", c.creditToken)
+			usedCredit = true
 		}
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("User-Agent", fmt.Sprintf("laevitas-cli/%s (+https://github.com/laevitas/cli)", version.Version))
@@ -297,12 +325,23 @@ func (c *Client) Do(method, path string, params *RequestParams) ([]byte, error) 
 		c.extractCreditHeaders(resp)
 
 		if resp.StatusCode == http.StatusOK {
+			// Track request metadata
+			c.LastMeta.Duration = time.Since(startTime)
+			c.LastMeta.ResponseSize = len(body)
+			c.LastMeta.Retries = attempt
+			if c.apiKey != "" {
+				c.LastMeta.PaymentMethod = PaymentMethodAPIKey
+			} else if usedCredit {
+				c.LastMeta.PaymentMethod = PaymentMethodCredit
+			}
 			return body, nil
 		}
 
 		// 402: Payment Required — try x402 payment
 		if resp.StatusCode == http.StatusPaymentRequired {
-			return c.handlePaymentRequired(method, fullURL, resp, body, path)
+			result, err := c.handlePaymentRequired(method, fullURL, resp, body, path)
+			c.LastMeta.Duration = time.Since(startTime)
+			return result, err
 		}
 
 		apiErr := &APIError{
@@ -342,7 +381,7 @@ func (c *Client) extractCreditHeaders(resp *http.Response) {
 		_ = config.SaveCreditToken(token)
 	}
 	if remaining := resp.Header.Get("X-Credits-Remaining"); remaining != "" {
-		c.CreditsRemaining = remaining
+		c.LastMeta.Credits = remaining
 	}
 }
 
@@ -426,6 +465,8 @@ func (c *Client) handlePaymentRequired(method, fullURL string, resp *http.Respon
 	c.extractCreditHeaders(retryResp)
 
 	if retryResp.StatusCode == http.StatusOK {
+		c.LastMeta.PaymentMethod = PaymentMethodOnChain
+		c.LastMeta.ResponseSize = len(retryBody)
 		return retryBody, nil
 	}
 

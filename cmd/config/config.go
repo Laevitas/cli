@@ -181,6 +181,37 @@ var setCmd = &cobra.Command{
 	},
 }
 
+var unsetCmd = &cobra.Command{
+	Use:   "unset <key>",
+	Short: "Clear a config value (api_key, wallet_key)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := internalConfig.Load()
+		if err != nil {
+			return err
+		}
+
+		key := args[0]
+
+		switch strings.ToLower(key) {
+		case "api_key", "apikey", "key":
+			cfg.APIKey = ""
+		case "wallet_key", "walletkey", "wallet":
+			cfg.WalletKey = ""
+			internalConfig.ClearCreditToken()
+		default:
+			return fmt.Errorf("unknown config key: %s (valid: api_key, wallet_key)", key)
+		}
+
+		if err := internalConfig.Save(cfg); err != nil {
+			return err
+		}
+
+		output.Successf("Cleared %s", key)
+		return nil
+	},
+}
+
 var pathCmd = &cobra.Command{
 	Use:   "path",
 	Short: "Print the config file path",
@@ -194,5 +225,6 @@ func init() {
 	Cmd.AddCommand(initCmd)
 	Cmd.AddCommand(showCmd)
 	Cmd.AddCommand(setCmd)
+	Cmd.AddCommand(unsetCmd)
 	Cmd.AddCommand(pathCmd)
 }

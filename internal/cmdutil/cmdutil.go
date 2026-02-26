@@ -151,7 +151,8 @@ func MustClient() (*api.Client, *config.Config) {
 		return nil, nil
 	}
 
-	if cfg.APIKey == "" {
+	// Require either an API key or a wallet key for authentication
+	if cfg.APIKey == "" && cfg.WalletKey == "" {
 		if !promptOnboarding(cfg) {
 			if !InteractiveMode {
 				os.Exit(1)
@@ -260,20 +261,29 @@ func RunAndPrint(client *api.Client, endpoint string, params *api.RequestParams)
 		return
 	}
 
-	// Extract total count from API response metadata for the footer
-	if p.Format == output.FormatTable {
-		var wrapper struct {
-			Count int `json:"count"`
-			Meta  *struct {
-				Total int `json:"total"`
-			} `json:"meta"`
+	// Extract record counts from API response metadata
+	var recordCount, totalCount int
+	var wrapper struct {
+		Count int `json:"count"`
+		Meta  *struct {
+			Total int `json:"total"`
+		} `json:"meta"`
+	}
+	if json.Unmarshal(data, &wrapper) == nil {
+		if wrapper.Meta != nil && wrapper.Meta.Total > 0 {
+			totalCount = wrapper.Meta.Total
 		}
-		if json.Unmarshal(data, &wrapper) == nil {
-			if wrapper.Meta != nil && wrapper.Meta.Total > 0 {
-				p.TotalCount = wrapper.Meta.Total
-			} else if wrapper.Count > 0 {
-				p.TotalCount = wrapper.Count
-			}
+		if wrapper.Count > 0 {
+			recordCount = wrapper.Count
+		}
+	}
+
+	// Set total count on printer for table footer
+	if p.Format == output.FormatTable {
+		if totalCount > 0 {
+			p.TotalCount = totalCount
+		} else if recordCount > 0 {
+			p.TotalCount = recordCount
 		}
 	}
 
@@ -294,22 +304,97 @@ func RunAndPrint(client *api.Client, endpoint string, params *api.RequestParams)
 
 	// Show pagination hint for table/csv output
 	if p.Format != output.FormatJSON {
-		var wrapper struct {
+		var cursorWrapper struct {
 			Meta *struct {
 				NextCursor string `json:"next_cursor"`
 			} `json:"meta"`
 			NextCursor string `json:"next_cursor"`
 		}
-		if json.Unmarshal(data, &wrapper) == nil {
+		if json.Unmarshal(data, &cursorWrapper) == nil {
 			cursor := ""
-			if wrapper.Meta != nil && wrapper.Meta.NextCursor != "" {
-				cursor = wrapper.Meta.NextCursor
-			} else if wrapper.NextCursor != "" {
-				cursor = wrapper.NextCursor
+			if cursorWrapper.Meta != nil && cursorWrapper.Meta.NextCursor != "" {
+				cursor = cursorWrapper.Meta.NextCursor
+			} else if cursorWrapper.NextCursor != "" {
+				cursor = cursorWrapper.NextCursor
 			}
 			if cursor != "" {
 				fmt.Fprintf(os.Stderr, "\n→ More results available. Use --cursor %q\n", cursor)
 			}
 		}
+	}
+
+	// Show request metadata footer
+	printRequestMeta(client, endpoint, params, recordCount, totalCount)
+}
+
+// printRequestMeta shows a compact metadata line on stderr after each request.
+func printRequestMeta(client *api.Client, endpoint string, params *api.RequestParams, recordCount, totalCount int) {
+	meta := client.LastMeta
+	if meta.PaymentMethod == "" {
+		return
+	}
+
+	var parts []string
+
+	// Auth method (with icon for x402)
+	switch meta.PaymentMethod {
+	case api.PaymentMethodOnChain:
+		parts = append(parts, "⚡ on-chain")
+	case api.PaymentMethodCredit:
+		parts = append(parts, "💳 credit")
+	default:
+		parts = append(parts, "api-key")
+	}
+
+	// Latency
+	parts = append(parts, formatDuration(meta.Duration))
+
+	// Record count
+	if totalCount > 0 && totalCount != recordCount && recordCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d of %d records", recordCount, totalCount))
+	} else if recordCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d records", recordCount))
+	}
+
+	// Exchange
+	if params != nil && params.Exchange != "" {
+		parts = append(parts, params.Exchange)
+	}
+
+	// Credits remaining (x402 only)
+	if meta.Credits != "" {
+		parts = append(parts, fmt.Sprintf("%s credits remaining", meta.Credits))
+	}
+
+	// Verbose: show endpoint, response size, retries
+	if Verbose {
+		parts = append(parts, endpoint)
+		parts = append(parts, formatBytes(meta.ResponseSize))
+		if meta.Retries > 0 {
+			parts = append(parts, fmt.Sprintf("%d retries", meta.Retries))
+		}
+	}
+
+	line := strings.Join(parts, " · ")
+	fmt.Fprintf(os.Stderr, "\033[2m%s\033[0m\n", line)
+}
+
+// formatDuration formats a duration for display (e.g. "247ms", "1.2s").
+func formatDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	return fmt.Sprintf("%.1fs", d.Seconds())
+}
+
+// formatBytes formats byte count for display (e.g. "1.2 KB", "3.4 MB").
+func formatBytes(b int) string {
+	switch {
+	case b >= 1024*1024:
+		return fmt.Sprintf("%.1f MB", float64(b)/(1024*1024))
+	case b >= 1024:
+		return fmt.Sprintf("%.1f KB", float64(b)/1024)
+	default:
+		return fmt.Sprintf("%d B", b)
 	}
 }
