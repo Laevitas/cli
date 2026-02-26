@@ -308,7 +308,15 @@ func (c *Client) Do(method, path string, params *RequestParams) ([]byte, error) 
 
 		if c.Verbose {
 			dump, _ := httputil.DumpRequestOut(req, false)
-			fmt.Fprintf(os.Stderr, "\n--- REQUEST ---\n%s", string(dump))
+			// Redact sensitive headers before printing
+			dumpStr := string(dump)
+			if c.apiKey != "" {
+				dumpStr = strings.Replace(dumpStr, c.apiKey, config.MaskKey(c.apiKey), -1)
+			}
+			if c.creditToken != "" {
+				dumpStr = strings.Replace(dumpStr, c.creditToken, config.MaskKey(c.creditToken), -1)
+			}
+			fmt.Fprintf(os.Stderr, "\n--- REQUEST ---\n%s", dumpStr)
 		}
 
 		resp, err := c.httpClient.Do(req)
@@ -468,7 +476,12 @@ func (c *Client) handlePaymentRequired(method, fullURL string, resp *http.Respon
 
 	if c.Verbose {
 		dump, _ := httputil.DumpRequestOut(retryReq, false)
-		fmt.Fprintf(os.Stderr, "\n--- x402 RETRY REQUEST ---\n%s", string(dump))
+		// Redact sensitive headers before printing
+		dumpStr := string(dump)
+		if c.apiKey != "" {
+			dumpStr = strings.Replace(dumpStr, c.apiKey, config.MaskKey(c.apiKey), -1)
+		}
+		fmt.Fprintf(os.Stderr, "\n--- x402 RETRY REQUEST ---\n%s", dumpStr)
 	}
 
 	retryResp, err := c.httpClient.Do(retryReq)

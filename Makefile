@@ -7,7 +7,11 @@ LDFLAGS     := -s -w \
 	-X github.com/laevitas/cli/internal/version.CommitSHA=$(COMMIT) \
 	-X github.com/laevitas/cli/internal/version.BuildDate=$(BUILD_DATE)
 
-.PHONY: build install test clean release lint fmt
+.PHONY: build install test clean release lint fmt mod-download
+
+## Download modules (overrides GOPROXY=off for environments that disable it)
+mod-download:
+	GOPROXY=https://proxy.golang.org,direct go mod download
 
 ## Build for current platform
 build:

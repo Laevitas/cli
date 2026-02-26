@@ -216,7 +216,13 @@ var setCmd = &cobra.Command{
 			}
 		}
 
-		output.Successf("Set %s = %s", key, value)
+		// Mask sensitive values in confirmation message
+		displayValue := value
+		switch strings.ToLower(key) {
+		case "api_key", "apikey", "key", "wallet_key", "walletkey", "wallet":
+			displayValue = internalConfig.MaskKey(value)
+		}
+		output.Successf("Set %s = %s", key, displayValue)
 		return nil
 	},
 }

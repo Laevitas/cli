@@ -6,3 +6,8 @@ dist/
 .env.*
 *.pem
 *.key
+*.p12
+*.pfx
+config.json
+x402-token
+.vscode/
