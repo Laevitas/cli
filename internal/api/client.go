@@ -15,6 +15,7 @@ import (
 
 	"github.com/laevitas/cli/internal/config"
 	"github.com/laevitas/cli/internal/version"
+	"github.com/laevitas/cli/internal/x402"
 )
 
 // Client is the LAEVITAS API client.
@@ -23,17 +24,43 @@ type Client struct {
 	apiKey     string
 	httpClient *http.Client
 	Verbose    bool
+
+	// x402 payment support
+	paymentClient   *x402.PaymentClient
+	creditToken     string // cached JWT credit token
+	CreditsRemaining string // last known credits remaining (from response header)
 }
 
 // NewClient creates a new API client from config.
 func NewClient(cfg *config.Config) *Client {
-	return &Client{
+	c := &Client{
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
 		apiKey:  cfg.APIKey,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
+
+	// Initialize x402 payment client if wallet key is configured
+	if cfg.WalletKey != "" {
+		pc, err := x402.NewPaymentClient(cfg.WalletKey)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\033[33m⚠ Invalid wallet key: %s\033[0m\n", err)
+		} else {
+			c.paymentClient = pc
+			c.creditToken = config.LoadCreditToken()
+		}
+	}
+
+	return c
+}
+
+// WalletAddress returns the x402 wallet address, or empty if not configured.
+func (c *Client) WalletAddress() string {
+	if c.paymentClient == nil {
+		return ""
+	}
+	return c.paymentClient.Address()
 }
 
 // APIError represents a structured error from the API.
@@ -224,6 +251,10 @@ func (c *Client) Do(method, path string, params *RequestParams) ([]byte, error) 
 		if c.apiKey != "" {
 			req.Header.Set("apiKey", c.apiKey)
 		}
+		// Send cached x402 credit token if available (and no API key)
+		if c.apiKey == "" && c.creditToken != "" {
+			req.Header.Set("X-Credit-Token", c.creditToken)
+		}
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("User-Agent", fmt.Sprintf("laevitas-cli/%s (+https://github.com/laevitas/cli)", version.Version))
 
@@ -262,8 +293,16 @@ func (c *Client) Do(method, path string, params *RequestParams) ([]byte, error) 
 			fmt.Fprintf(os.Stderr, "\n%s\n", bodyStr)
 		}
 
+		// Cache credit token and credits remaining from any response
+		c.extractCreditHeaders(resp)
+
 		if resp.StatusCode == http.StatusOK {
 			return body, nil
+		}
+
+		// 402: Payment Required — try x402 payment
+		if resp.StatusCode == http.StatusPaymentRequired {
+			return c.handlePaymentRequired(method, fullURL, resp, body, path)
 		}
 
 		apiErr := &APIError{
@@ -292,6 +331,107 @@ func (c *Client) Do(method, path string, params *RequestParams) ([]byte, error) 
 	return nil, &APIError{
 		StatusCode: http.StatusTooManyRequests,
 		Message:    "Rate limited. Max retries exceeded.",
+		Endpoint:   path,
+	}
+}
+
+// extractCreditHeaders caches x402 credit token and remaining credits from response.
+func (c *Client) extractCreditHeaders(resp *http.Response) {
+	if token := resp.Header.Get("X-Credit-Token"); token != "" {
+		c.creditToken = token
+		_ = config.SaveCreditToken(token)
+	}
+	if remaining := resp.Header.Get("X-Credits-Remaining"); remaining != "" {
+		c.CreditsRemaining = remaining
+	}
+}
+
+// handlePaymentRequired processes a 402 response by signing an x402 payment and retrying.
+func (c *Client) handlePaymentRequired(method, fullURL string, resp *http.Response, body []byte, path string) ([]byte, error) {
+	// If we sent a credit token that was rejected, clear it
+	if c.creditToken != "" {
+		c.creditToken = ""
+		config.ClearCreditToken()
+	}
+
+	// No wallet configured — can't pay
+	if c.paymentClient == nil {
+		return nil, &APIError{
+			StatusCode: http.StatusPaymentRequired,
+			Message:    "Payment required. Set a wallet key with `laevitas config set wallet_key <key>` or use an API key.",
+			Endpoint:   path,
+		}
+	}
+
+	// Sign payment using x402 protocol
+	if c.Verbose {
+		fmt.Fprintf(os.Stderr, "\n--- x402: Signing payment with wallet %s ---\n", c.paymentClient.Address())
+	}
+
+	paymentHeaders, err := c.paymentClient.HandlePaymentRequired(resp, body)
+	if err != nil {
+		return nil, &APIError{
+			StatusCode: http.StatusPaymentRequired,
+			Message:    fmt.Sprintf("x402 payment failed: %s", err),
+			Endpoint:   path,
+		}
+	}
+
+	// Retry request with payment signature
+	retryReq, err := http.NewRequest(method, fullURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating retry request: %w", err)
+	}
+
+	if c.apiKey != "" {
+		retryReq.Header.Set("apiKey", c.apiKey)
+	}
+	retryReq.Header.Set("Accept", "application/json")
+	retryReq.Header.Set("User-Agent", fmt.Sprintf("laevitas-cli/%s (+https://github.com/laevitas/cli)", version.Version))
+
+	// Add payment signature headers
+	for k, v := range paymentHeaders {
+		retryReq.Header.Set(k, v)
+	}
+
+	if c.Verbose {
+		dump, _ := httputil.DumpRequestOut(retryReq, false)
+		fmt.Fprintf(os.Stderr, "\n--- x402 RETRY REQUEST ---\n%s", string(dump))
+	}
+
+	retryResp, err := c.httpClient.Do(retryReq)
+	if err != nil {
+		if isNetworkError(err) {
+			return nil, &NetworkError{Err: err}
+		}
+		return nil, fmt.Errorf("x402 retry failed: %w", err)
+	}
+
+	retryBody, err := io.ReadAll(retryResp.Body)
+	retryResp.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("reading x402 retry response: %w", err)
+	}
+
+	if c.Verbose {
+		fmt.Fprintf(os.Stderr, "\n--- x402 RETRY RESPONSE %d ---\n", retryResp.StatusCode)
+		for k, vals := range retryResp.Header {
+			for _, v := range vals {
+				fmt.Fprintf(os.Stderr, "%s: %s\n", k, v)
+			}
+		}
+	}
+
+	// Cache credit token from retry response
+	c.extractCreditHeaders(retryResp)
+
+	if retryResp.StatusCode == http.StatusOK {
+		return retryBody, nil
+	}
+
+	return nil, &APIError{
+		StatusCode: retryResp.StatusCode,
+		Message:    string(retryBody),
 		Endpoint:   path,
 	}
 }

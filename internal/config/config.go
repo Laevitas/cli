@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -19,10 +20,11 @@ const (
 
 // Config holds all CLI configuration.
 type Config struct {
-	APIKey   string `json:"api_key,omitempty"`
-	BaseURL  string `json:"base_url,omitempty"`
-	Exchange string `json:"exchange,omitempty"`
-	Output   string `json:"output,omitempty"`
+	APIKey    string `json:"api_key,omitempty"`
+	BaseURL   string `json:"base_url,omitempty"`
+	Exchange  string `json:"exchange,omitempty"`
+	Output    string `json:"output,omitempty"`
+	WalletKey string `json:"wallet_key,omitempty"` // EVM private key for x402 payments
 }
 
 // configDir returns ~/.config/laevitas/
@@ -76,8 +78,49 @@ func Load() (*Config, error) {
 	if v := os.Getenv("LAEVITAS_OUTPUT"); v != "" {
 		cfg.Output = v
 	}
+	if v := os.Getenv("LAEVITAS_WALLET_KEY"); v != "" {
+		cfg.WalletKey = v
+	}
 
 	return cfg, nil
+}
+
+// ─── Credit token storage (x402) ────────────────────────────────────────────
+
+const creditTokenFile = "x402-token"
+
+// LoadCreditToken reads the cached x402 credit token from disk.
+func LoadCreditToken() string {
+	dir, err := configDir()
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(dir, creditTokenFile))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// SaveCreditToken writes the x402 credit token to disk.
+func SaveCreditToken(token string) error {
+	dir, err := configDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, creditTokenFile), []byte(token), 0600)
+}
+
+// ClearCreditToken removes the cached x402 credit token.
+func ClearCreditToken() {
+	dir, err := configDir()
+	if err != nil {
+		return
+	}
+	os.Remove(filepath.Join(dir, creditTokenFile))
 }
 
 // Save writes config to disk.

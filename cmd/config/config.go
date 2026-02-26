@@ -11,6 +11,7 @@ import (
 	"github.com/laevitas/cli/internal/api"
 	internalConfig "github.com/laevitas/cli/internal/config"
 	"github.com/laevitas/cli/internal/output"
+	"github.com/laevitas/cli/internal/x402"
 )
 
 // Cmd is the top-level "config" command.
@@ -60,6 +61,18 @@ var initCmd = &cobra.Command{
 			cfg.Output = out
 		}
 
+		// Wallet key (x402 payments)
+		fmt.Print("Wallet key (EVM private key for x402 payments)")
+		if cfg.WalletKey != "" {
+			fmt.Printf(" [current: %s]", internalConfig.MaskKey(cfg.WalletKey))
+		}
+		fmt.Print(" (optional): ")
+		wk, _ := reader.ReadString('\n')
+		wk = strings.TrimSpace(wk)
+		if wk != "" {
+			cfg.WalletKey = wk
+		}
+
 		// Base URL
 		fmt.Printf("API base URL [%s]: ", cfg.BaseURL)
 		url, _ := reader.ReadString('\n')
@@ -107,10 +120,26 @@ var showCmd = &cobra.Command{
 			keyDisplay = internalConfig.MaskKey(cfg.APIKey)
 		}
 
-		fmt.Printf("API Key:   %s\n", keyDisplay)
-		fmt.Printf("Base URL:  %s\n", cfg.BaseURL)
-		fmt.Printf("Exchange:  %s\n", cfg.Exchange)
-		fmt.Printf("Output:    %s\n", cfg.Output)
+		fmt.Printf("API Key:    %s\n", keyDisplay)
+		fmt.Printf("Base URL:   %s\n", cfg.BaseURL)
+		fmt.Printf("Exchange:   %s\n", cfg.Exchange)
+		fmt.Printf("Output:     %s\n", cfg.Output)
+
+		// x402 payment info
+		if cfg.WalletKey != "" {
+			pc, err := x402.NewPaymentClient(cfg.WalletKey)
+			if err != nil {
+				fmt.Printf("Wallet:     (invalid key)\n")
+			} else {
+				fmt.Printf("Wallet:     %s\n", pc.Address())
+			}
+			token := internalConfig.LoadCreditToken()
+			if token != "" {
+				fmt.Printf("x402 Token: %s...%s\n", token[:10], token[len(token)-6:])
+			} else {
+				fmt.Printf("x402 Token: (none)\n")
+			}
+		}
 
 		return nil
 	},
@@ -118,7 +147,7 @@ var showCmd = &cobra.Command{
 
 var setCmd = &cobra.Command{
 	Use:   "set <key> <value>",
-	Short: "Set a config value (api_key, exchange, output, base_url)",
+	Short: "Set a config value (api_key, exchange, output, base_url, wallet_key)",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := internalConfig.Load()
@@ -137,8 +166,10 @@ var setCmd = &cobra.Command{
 			cfg.Output = value
 		case "base_url", "baseurl", "url":
 			cfg.BaseURL = value
+		case "wallet_key", "walletkey", "wallet":
+			cfg.WalletKey = value
 		default:
-			return fmt.Errorf("unknown config key: %s (valid: api_key, exchange, output, base_url)", key)
+			return fmt.Errorf("unknown config key: %s (valid: api_key, exchange, output, base_url, wallet_key)", key)
 		}
 
 		if err := internalConfig.Save(cfg); err != nil {
