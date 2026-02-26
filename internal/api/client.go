@@ -408,16 +408,23 @@ func (c *Client) handlePaymentRequired(method, fullURL string, resp *http.Respon
 		}
 	}
 
+	walletAddr := c.paymentClient.Address()
+
 	// Sign payment using x402 protocol
 	if c.Verbose {
-		fmt.Fprintf(os.Stderr, "\n--- x402: Signing payment with wallet %s ---\n", c.paymentClient.Address())
+		fmt.Fprintf(os.Stderr, "\n--- x402: Signing payment with wallet %s ---\n", walletAddr)
 	}
 
 	paymentHeaders, err := c.paymentClient.HandlePaymentRequired(resp, body)
 	if err != nil {
+		// Provide specific guidance based on the failure
+		msg := fmt.Sprintf("x402 payment signing failed: %s\n", err)
+		msg += fmt.Sprintf("  Wallet: %s\n", walletAddr)
+		msg += "  Ensure your wallet has USDC on Base chain.\n"
+		msg += "  If this persists, try `laevitas config set wallet_key <key>` with a valid EVM private key (0x-prefixed)."
 		return nil, &APIError{
 			StatusCode: http.StatusPaymentRequired,
-			Message:    fmt.Sprintf("x402 payment failed: %s", err),
+			Message:    msg,
 			Endpoint:   path,
 		}
 	}
@@ -476,10 +483,58 @@ func (c *Client) handlePaymentRequired(method, fullURL string, resp *http.Respon
 		return retryBody, nil
 	}
 
+	// Payment was signed but server rejected it — build a helpful error
+	msg := c.buildPaymentErrorMessage(retryResp.StatusCode, retryBody, walletAddr)
 	return nil, &APIError{
 		StatusCode: retryResp.StatusCode,
-		Message:    string(retryBody),
+		Message:    msg,
 		Endpoint:   path,
+	}
+}
+
+// buildPaymentErrorMessage creates a user-friendly error for rejected x402 payments.
+func (c *Client) buildPaymentErrorMessage(statusCode int, body []byte, walletAddr string) string {
+	// Try to extract error details from response body
+	var parsed struct {
+		Message      string `json:"message"`
+		Error        string `json:"error"`
+		ErrorMessage string `json:"errorMessage"`
+		ErrorReason  string `json:"errorReason"`
+	}
+	serverMsg := ""
+	if json.Unmarshal(body, &parsed) == nil {
+		if parsed.ErrorMessage != "" {
+			serverMsg = parsed.ErrorMessage
+		} else if parsed.ErrorReason != "" {
+			serverMsg = parsed.ErrorReason
+		} else if parsed.Message != "" {
+			serverMsg = parsed.Message
+		} else if parsed.Error != "" {
+			serverMsg = parsed.Error
+		}
+	}
+	if serverMsg == "" && len(body) > 2 {
+		// Use raw body if it's not just "{}"
+		serverMsg = string(body)
+	}
+
+	switch statusCode {
+	case http.StatusPaymentRequired:
+		msg := "Payment rejected by server."
+		if serverMsg != "" {
+			msg = fmt.Sprintf("Payment rejected: %s", serverMsg)
+		}
+		msg += fmt.Sprintf("\n  Wallet:  %s", walletAddr)
+		msg += "\n  Check:   Does this wallet have USDC on Base chain?"
+		msg += "\n  Verify:  Run `laevitas config show` to confirm wallet address"
+		return msg
+	case http.StatusForbidden:
+		return fmt.Sprintf("Payment forbidden: %s\n  The server rejected the payment signature.", serverMsg)
+	default:
+		if serverMsg != "" {
+			return fmt.Sprintf("Payment failed (HTTP %d): %s", statusCode, serverMsg)
+		}
+		return fmt.Sprintf("Payment failed (HTTP %d). Run with --verbose for details.", statusCode)
 	}
 }
 
