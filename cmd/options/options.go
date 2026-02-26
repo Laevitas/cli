@@ -25,6 +25,8 @@ Examples:
 var catalogCmd = &cobra.Command{
 	Use:   "catalog",
 	Short: "List all available options instruments",
+	Example: `  laevitas options catalog
+  laevitas options catalog --exchange binance`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := &api.RequestParams{Exchange: cmdutil.Exchange}
@@ -40,6 +42,8 @@ var snapshotFlags struct {
 var snapshotCmd = &cobra.Command{
 	Use:   "snapshot",
 	Short: "Full options chain snapshot — all strikes, maturities, Greeks",
+	Example: `  laevitas options snapshot --currency BTC
+  laevitas options snapshot --currency ETH --date 2025-02-01T12:00:00Z`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := &api.RequestParams{
@@ -132,6 +136,8 @@ var ohlcvCmd = &cobra.Command{
 	Aliases: []string{"ohlcv"},
 	Short:   "OHLCVT candle data for a specific option",
 	Args:    cobra.ExactArgs(1),
+	Example: `  laevitas options ohlcvt BTC-27MAR26-70000-C -p 24h
+  laevitas options ohlcvt BTC-27MAR26-70000-C -p 3d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := ohlcvFlags.ToParams()
@@ -147,6 +153,8 @@ var oiCmd = &cobra.Command{
 	Aliases: []string{"open-interest"},
 	Short:   "Open interest for a specific option over time",
 	Args:    cobra.ExactArgs(1),
+	Example: `  laevitas options oi BTC-27MAR26-70000-C -p 7d
+  laevitas options oi BTC-27MAR26-70000-C -p 30d -r 1d`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := oiFlags.ToParams()
@@ -161,6 +169,8 @@ var volCmd = &cobra.Command{
 	Use:   "volatility <instrument>",
 	Short: "Implied volatility and Greeks for a specific option",
 	Args:  cobra.ExactArgs(1),
+	Example: `  laevitas options volatility BTC-27MAR26-70000-C -p 24h
+  laevitas options volatility BTC-27MAR26-70000-C -p 7d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := volFlags.ToParams()
@@ -172,9 +182,11 @@ var volCmd = &cobra.Command{
 var level1Flags cmdutil.CommonFlags
 
 var level1Cmd = &cobra.Command{
-	Use:  "level1 <instrument>",
+	Use:   "level1 <instrument>",
 	Short: "Best bid/ask data for an option",
-	Args: cobra.ExactArgs(1),
+	Args:  cobra.ExactArgs(1),
+	Example: `  laevitas options level1 BTC-27MAR26-70000-C -p 24h
+  laevitas options level1 BTC-27MAR26-70000-C -p 3d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := level1Flags.ToParams()
@@ -186,9 +198,11 @@ var level1Cmd = &cobra.Command{
 var tickerFlags cmdutil.CommonFlags
 
 var tickerCmd = &cobra.Command{
-	Use:  "ticker <instrument>",
+	Use:   "ticker <instrument>",
 	Short: "Historical ticker — IV surface, Greeks, OI by strike",
-	Args: cobra.ExactArgs(1),
+	Args:  cobra.ExactArgs(1),
+	Example: `  laevitas options ticker BTC-27MAR26-70000-C -p 24h
+  laevitas options ticker BTC-27MAR26-70000-C -p 7d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := tickerFlags.ToParams()
@@ -200,9 +214,11 @@ var tickerCmd = &cobra.Command{
 var volumeFlags cmdutil.CommonFlags
 
 var volumeCmd = &cobra.Command{
-	Use:  "volume <instrument>",
+	Use:   "volume <instrument>",
 	Short: "24h rolling volume for an option",
-	Args: cobra.ExactArgs(1),
+	Args:  cobra.ExactArgs(1),
+	Example: `  laevitas options volume BTC-27MAR26-70000-C -p 24h
+  laevitas options volume BTC-27MAR26-70000-C -p 7d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := volumeFlags.ToParams()
@@ -214,9 +230,11 @@ var volumeCmd = &cobra.Command{
 var refPriceFlags cmdutil.CommonFlags
 
 var refPriceCmd = &cobra.Command{
-	Use:  "ref-price <instrument>",
+	Use:   "ref-price <instrument>",
 	Short: "Mark price and index price OHLC",
-	Args: cobra.ExactArgs(1),
+	Args:  cobra.ExactArgs(1),
+	Example: `  laevitas options ref-price BTC-27MAR26-70000-C -p 24h
+  laevitas options ref-price BTC-27MAR26-70000-C -p 7d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := refPriceFlags.ToParams()
@@ -226,9 +244,10 @@ var refPriceCmd = &cobra.Command{
 }
 
 var metadataCmd = &cobra.Command{
-	Use:  "metadata <instrument>",
+	Use:   "metadata <instrument>",
 	Short: "Data availability info",
-	Args: cobra.ExactArgs(1),
+	Args:  cobra.ExactArgs(1),
+	Example: `  laevitas options metadata BTC-27MAR26-70000-C`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := &api.RequestParams{
@@ -263,6 +282,8 @@ var vsSnapshotFlags struct {
 var vsSnapshotCmd = &cobra.Command{
 	Use:   "snapshot",
 	Short: "Vol surface across ALL maturities at a point in time",
+	Example: `  laevitas options vol-surface snapshot --currency BTC
+  laevitas options vol-surface snapshot --currency ETH`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := &api.RequestParams{
@@ -285,6 +306,8 @@ var vsTSCmd = &cobra.Command{
 	Use:     "term-structure",
 	Aliases: []string{"ts"},
 	Short:   "Interpolated constant-maturity term structure (1d to 365d)",
+	Example: `  laevitas options vol-surface term-structure --currency BTC
+  laevitas options vol-surface ts --currency ETH`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := &api.RequestParams{
@@ -305,6 +328,7 @@ var vsHistFlags struct {
 var vsHistCmd = &cobra.Command{
 	Use:   "history",
 	Short: "Historical vol surface data for a specific maturity",
+	Example: `  laevitas options vol-surface history --currency BTC --maturity 28MAR25 -p 7d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := vsHistFlags.CommonFlags.ToParams()

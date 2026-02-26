@@ -9,6 +9,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -152,7 +153,7 @@ func (p *Printer) printTable(data interface{}) error {
 
 	for i, h := range headers {
 		hl := strings.ToLower(h)
-		isTimestamp[i] = isTimestampHeader(hl)
+		isTimestamp[i] = isTimestampHeader(hl) && !isDaysColumn(hl)
 		isSignedValue[i] = isSignedHeader(hl)
 	}
 
@@ -193,8 +194,16 @@ func (p *Printer) printTable(data interface{}) error {
 	for r, row := range formatted {
 		displayRows[r] = make([]string, numCols)
 		for c, cell := range row {
+			hl := strings.ToLower(headers[c])
 			if isTimestamp[c] && cell != "" {
 				displayRows[r][c] = formatRelativeTime(cell)
+			} else if hl == "days_to_expiry" && cell != "" {
+				// Round noisy float to integer (e.g. 30.649... → 31)
+				if f, err := strconv.ParseFloat(cell, 64); err == nil {
+					displayRows[r][c] = fmt.Sprintf("%d", int(math.Round(f)))
+				} else {
+					displayRows[r][c] = cell
+				}
 			} else if isNumeric[c] && cell != "" {
 				displayRows[r][c] = formatNumber(cell)
 			} else {
@@ -307,9 +316,14 @@ func (p *Printer) printTable(data interface{}) error {
 
 // ─── Column type detection ──────────────────────────────────────────────────
 
+func isDaysColumn(h string) bool {
+	return strings.HasPrefix(h, "days_")
+}
+
 func isTimestampHeader(h string) bool {
 	tsKeywords := []string{
-		"timestamp", "time", "datetime", "date", "created_at", "updated_at",
+		"timestamp", "time", "datetime", "date", "minute",
+		"created_at", "updated_at",
 		"expiration", "expiry", "start_time", "end_time", "trade_time",
 		"open_time", "close_time",
 	}
@@ -403,14 +417,24 @@ func formatRelativeTime(s string) string {
 		return s
 	}
 
+	// Use compact absolute timestamps to preserve precision in time-series data.
+	// Only fall back to relative ("2d ago") for data older than 7 days.
 	now := time.Now().UTC()
 	diff := now.Sub(t)
 	if diff < 0 {
 		diff = -diff
-		return "in " + humanDuration(diff)
 	}
 
-	return humanDuration(diff) + " ago"
+	switch {
+	case diff < 24*time.Hour:
+		return t.Format("15:04") // e.g. "16:09"
+	case diff < 7*24*time.Hour:
+		return t.Format("Mon 15:04") // e.g. "Mon 16:09"
+	case diff < 365*24*time.Hour:
+		return t.Format("Jan 02 15:04") // e.g. "Feb 24 16:09"
+	default:
+		return t.Format("2006-01-02") // e.g. "2025-02-24"
+	}
 }
 
 func humanDuration(d time.Duration) string {
@@ -557,6 +581,144 @@ func sliceToRows(v reflect.Value) [][]string {
 	return nil
 }
 
+// columnPriority returns a sort weight for a column name.
+// Lower = shown first. Columns not listed get a default weight of 500.
+var columnPriorities = map[string]int{
+	// ── Identity / time — always first ──────────────────────────────────
+	"date": 1, "minute": 1, "timestamp": 2,
+	"exchange": 5, "currency": 6,
+	"instrument_name": 10, "instrument_type": 11,
+	"maturity": 12, "tenor": 13,
+	"days_to_expiry": 14,
+
+	// ── OHLCV core ──────────────────────────────────────────────────────
+	"open": 20, "high": 21, "low": 22, "close": 23,
+	"volume": 24, "vwap": 25,
+	"mark_price": 26, "index_price": 27,
+	"underlying_price": 28, "price": 29,
+
+	// ── OI ───────────────────────────────────────────────────────────────
+	"oi": 30, "oi_open": 30, "oi_high": 31, "oi_low": 32, "oi_close": 33,
+	"open_interest": 34, "oi_change": 35,
+
+	// ── Carry / funding ─────────────────────────────────────────────────
+	"annualized_carry": 40, "funding_rate": 41,
+	"funding_rate_close": 42, "funding_8h_close": 43, "basis_close": 44,
+	"funding_rate_open": 45, "funding_8h_open": 46,
+	"basis_open": 47, "basis_high": 48, "basis_low": 49,
+	"funding_rate_high": 50, "funding_rate_low": 51,
+	"funding_8h_high": 52, "funding_8h_low": 53,
+	"basis": 54, "funding": 55,
+	"next_funding_time": 56,
+
+	// ── Level1 / bid-ask ────────────────────────────────────────────────
+	"bid_price": 60, "ask_price": 61, "bid_size": 62, "ask_size": 63,
+	"bid_ask_spread": 64,
+	"bid_price_close": 65, "ask_price_close": 66,
+	"bid_size_close": 67, "ask_size_close": 68,
+	"bid_ask_spread_close": 69,
+	"mark_price_close": 70, "index_price_close": 71,
+	"bid_price_open": 72, "ask_price_open": 73,
+	"bid_size_open": 74, "ask_size_open": 75,
+	"bid_ask_spread_open": 76,
+	"bid_price_high": 77, "ask_price_high": 78,
+	"bid_size_high": 79, "ask_size_high": 80,
+	"bid_ask_spread_high": 81,
+	"bid_price_low": 82, "ask_price_low": 83,
+	"bid_size_low": 84, "ask_size_low": 85,
+	"bid_ask_spread_low": 86,
+	"total_liquidity_close": 87, "total_liquidity_open": 88,
+	"total_liquidity_high": 89, "total_liquidity_low": 90,
+	"total_liquidity_avg": 91,
+	"mark_price_open": 92, "mark_price_high": 93, "mark_price_low": 94,
+	"index_price_open": 95, "index_price_high": 96, "index_price_low": 97,
+
+	// ── Volume / trades ─────────────────────────────────────────────────
+	"trades_count": 100, "buy_trades_count": 101, "sell_trades_count": 102,
+	"buy_volume": 103, "sell_volume": 104,
+	"volume_usd_24h": 105, "volume_24h": 106,
+
+	// ── Options: greeks / pricing ───────────────────────────────────────
+	"strike": 120, "option_type": 121, "direction": 122,
+	"premium_usd": 123, "premium": 124, "notional": 125, "amount": 126,
+	"iv": 130, "delta": 131, "gamma": 132, "theta": 133, "vega": 134, "rho": 135,
+	"bid_iv": 136, "ask_iv": 137, "mark_iv": 138, "iv_spread": 139,
+	"bid_iv_close": 140, "ask_iv_close": 141, "mark_iv_close": 142, "iv_spread_close": 143,
+	"bid_iv_open": 144, "ask_iv_open": 145, "mark_iv_open": 146, "iv_spread_open": 147,
+	"bid_iv_high": 148, "ask_iv_high": 149, "mark_iv_high": 150, "iv_spread_high": 151,
+	"bid_iv_low": 152, "ask_iv_low": 153, "mark_iv_low": 154, "iv_spread_low": 155,
+	"iv_spread_avg": 156,
+
+	// ── Vol surface ─────────────────────────────────────────────────────
+	"atm_iv": 160, "skew_25d": 161, "butterfly_25d": 162,
+	"call_25d_iv": 163, "put_25d_iv": 164,
+
+	// ── Options trade changes (secondary) ───────────────────────────────
+	"bid_price_change": 200, "ask_price_change": 201,
+	"bid_size_change": 202, "ask_size_change": 203,
+	"bid_iv_change": 204, "ask_iv_change": 205,
+
+	// ── Predictions ─────────────────────────────────────────────────────
+	"category": 250, "event_slug": 251,
+
+	// ── Orderbook depth: microprice ─────────────────────────────────────
+	"microprice_close": 300, "microprice_open": 301,
+	"microprice_high": 302, "microprice_low": 303, "microprice_avg": 304,
+
+	// ── Orderbook depth: 10 bps ─────────────────────────────────────────
+	"bid_liq_10_close": 310, "ask_liq_10_close": 311,
+	"bid_liq_10_open": 312, "ask_liq_10_open": 313,
+	"bid_liq_10_high": 314, "ask_liq_10_high": 315,
+	"bid_liq_10_low": 316, "ask_liq_10_low": 317,
+	"bid_liq_10_avg": 318, "ask_liq_10_avg": 319,
+	"imbalance_10_close": 320, "imbalance_10_open": 321,
+	"imbalance_10_high": 322, "imbalance_10_low": 323, "imbalance_10_avg": 324,
+
+	// ── Orderbook depth: 20 bps ─────────────────────────────────────────
+	"bid_liq_20_close": 330, "ask_liq_20_close": 331,
+	"bid_liq_20_open": 332, "ask_liq_20_open": 333,
+	"bid_liq_20_high": 334, "ask_liq_20_high": 335,
+	"bid_liq_20_low": 336, "ask_liq_20_low": 337,
+	"bid_liq_20_avg": 338, "ask_liq_20_avg": 339,
+	"imbalance_20_close": 340, "imbalance_20_open": 341,
+	"imbalance_20_high": 342, "imbalance_20_low": 343, "imbalance_20_avg": 344,
+
+	// ── Orderbook depth: 50 bps ─────────────────────────────────────────
+	"bid_liq_50_close": 350, "ask_liq_50_close": 351,
+	"bid_liq_50_open": 352, "ask_liq_50_open": 353,
+	"bid_liq_50_high": 354, "ask_liq_50_high": 355,
+	"bid_liq_50_low": 356, "ask_liq_50_low": 357,
+	"bid_liq_50_avg": 358, "ask_liq_50_avg": 359,
+	"imbalance_50_close": 360, "imbalance_50_open": 361,
+	"imbalance_50_high": 362, "imbalance_50_low": 363, "imbalance_50_avg": 364,
+
+	// ── Orderbook depth: 100 bps ────────────────────────────────────────
+	"bid_liq_100_close": 370, "ask_liq_100_close": 371,
+	"bid_liq_100_open": 372, "ask_liq_100_open": 373,
+	"bid_liq_100_high": 374, "ask_liq_100_high": 375,
+	"bid_liq_100_low": 376, "ask_liq_100_low": 377,
+	"bid_liq_100_avg": 378, "ask_liq_100_avg": 379,
+	"imbalance_100_close": 380, "imbalance_100_open": 381,
+	"imbalance_100_high": 382, "imbalance_100_low": 383, "imbalance_100_avg": 384,
+
+	// ── Orderbook depth: snapshot count ─────────────────────────────────
+	"snapshot_count": 390,
+
+	// ── Noisy / IDs — push to end ───────────────────────────────────────
+	"block_trade_buy_volume": 900, "block_trade_sell_volume": 901,
+	"liquidation_long_volume": 902, "liquidation_short_volume": 903,
+	"trade_id": 910, "combo_id": 911, "combo_trade_id": 912,
+	"block_trade_id": 913, "tick_direction": 914,
+	"oi_before": 915, "strategy": 916,
+}
+
+func columnWeight(name string) int {
+	if w, ok := columnPriorities[name]; ok {
+		return w
+	}
+	return 500
+}
+
 func sliceOfMapsToRows(v reflect.Value) [][]string {
 	// Collect all unique keys in order of first appearance
 	keyOrder := []string{}
@@ -582,6 +744,22 @@ func sliceOfMapsToRows(v reflect.Value) [][]string {
 	if len(keyOrder) == 0 {
 		return nil
 	}
+
+	// Drop redundant columns: raw "timestamp" when "minute" or "date" exists
+	if (keySet["minute"] || keySet["date"]) && keySet["timestamp"] {
+		filtered := keyOrder[:0]
+		for _, k := range keyOrder {
+			if k != "timestamp" {
+				filtered = append(filtered, k)
+			}
+		}
+		keyOrder = filtered
+	}
+
+	// Sort columns by priority — important fields first, noisy fields last
+	sort.SliceStable(keyOrder, func(i, j int) bool {
+		return columnWeight(keyOrder[i]) < columnWeight(keyOrder[j])
+	})
 
 	rows := [][]string{keyOrder}
 

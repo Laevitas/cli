@@ -51,9 +51,8 @@ func configPath() (string, error) {
 //	LAEVITAS_API_KEY, LAEVITAS_BASE_URL, LAEVITAS_EXCHANGE, LAEVITAS_OUTPUT
 func Load() (*Config, error) {
 	cfg := &Config{
-		BaseURL:  DefaultBaseURL,
-		Exchange: DefaultExchange,
-		Output:   DefaultOutput,
+		BaseURL: DefaultBaseURL,
+		Output:  DefaultOutput,
 	}
 
 	// Read file if it exists

@@ -233,6 +233,11 @@ func Ftoa(f float64) string {
 
 // RunAndPrint fetches data, prints it, and handles errors.
 func RunAndPrint(client *api.Client, endpoint string, params *api.RequestParams) {
+	// Warn if instrument is specified but exchange is missing
+	if params != nil && params.InstrumentName != "" && params.Exchange == "" {
+		output.Warnf("No --exchange specified. Add --exchange <name> (e.g. --exchange deribit, --exchange binance) for accurate results.")
+	}
+
 	p := MustPrinter()
 
 	// Start spinner in interactive mode
