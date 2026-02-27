@@ -259,6 +259,11 @@ func resolveWatchCommand(args []string) (string, *api.RequestParams, error) {
 	if f := cmd.Flags().Lookup("type"); f != nil && f.Value.String() != "" {
 		params.OptionType = f.Value.String()
 	}
+	if params.OptionType == "" {
+		if f := cmd.Flags().Lookup("option-type"); f != nil && f.Value.String() != "" {
+			params.OptionType = f.Value.String()
+		}
+	}
 	if f := cmd.Flags().Lookup("min-premium"); f != nil && f.Value.String() != "" && f.Value.String() != "0" {
 		if v, parseErr := strconv.ParseFloat(f.Value.String(), 64); parseErr == nil {
 			params.MinPremium = v
@@ -717,6 +722,12 @@ func watchPadCell(s string, width int, rightAlign bool) string {
 }
 
 func watchTermWidth() int {
+	if output.WidthOverride == 0 {
+		return 0 // --wide: no truncation
+	}
+	if output.WidthOverride > 0 {
+		return output.WidthOverride // --width N
+	}
 	w, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || w <= 0 {
 		return 0

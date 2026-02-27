@@ -7,6 +7,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
 	"github.com/laevitas/cli/internal/api"
 )
 
@@ -136,7 +139,8 @@ var catalogEndpoints = map[string]string{
 
 // Completer implements readline.AutoCompleter with dynamic instrument lookup.
 type Completer struct {
-	client *api.Client
+	client  *api.Client
+	rootCmd *cobra.Command // for flag completion
 
 	mu       sync.RWMutex
 	catalogs map[string][]string // "futures" → ["BTC-28MAR25", ...]
@@ -147,9 +151,10 @@ type Completer struct {
 }
 
 // New creates a new Completer backed by the given API client.
-func New(client *api.Client) *Completer {
+func New(client *api.Client, rootCmd *cobra.Command) *Completer {
 	return &Completer{
 		client:   client,
+		rootCmd:  rootCmd,
 		catalogs: make(map[string][]string),
 	}
 }
@@ -164,6 +169,14 @@ func (c *Completer) Do(line []rune, pos int) ([][]rune, int) {
 	// Split into segments
 	segments := splitLine(lineStr)
 	trailing := len(lineStr) > 0 && lineStr[len(lineStr)-1] == ' '
+
+	// Flag completion: if the last segment starts with "-", complete flag names
+	if len(segments) > 0 && !trailing {
+		last := segments[len(segments)-1]
+		if strings.HasPrefix(last, "-") {
+			return c.completeFlags(segments[:len(segments)-1], last)
+		}
+	}
 
 	// Determine what to complete based on segment count
 	switch {
@@ -389,6 +402,56 @@ func (c *Completer) PreloadCatalogs() {
 	for cat := range catalogEndpoints {
 		go c.getCatalog(cat)
 	}
+}
+
+// completeFlags returns flag name completions for the current command context.
+// It resolves the Cobra command from non-flag segments and enumerates its flags.
+func (c *Completer) completeFlags(segments []string, prefix string) ([][]rune, int) {
+	if c.rootCmd == nil {
+		return nil, 0
+	}
+
+	// Collect non-flag segments to resolve the command
+	cmdSegments := make([]string, 0, len(segments))
+	for _, seg := range segments {
+		if !strings.HasPrefix(seg, "-") {
+			cmdSegments = append(cmdSegments, seg)
+		}
+	}
+
+	cmd, _, err := c.rootCmd.Find(cmdSegments)
+	if err != nil || cmd == nil {
+		cmd = c.rootCmd
+	}
+
+	// Collect all visible flag names (local + inherited)
+	seen := make(map[string]bool)
+	var flagNames []string
+
+	addFlags := func(fs *pflag.FlagSet) {
+		fs.VisitAll(func(f *pflag.Flag) {
+			if f.Hidden {
+				return
+			}
+			name := "--" + f.Name
+			if !seen[name] {
+				seen[name] = true
+				flagNames = append(flagNames, name)
+			}
+			if f.Shorthand != "" {
+				short := "-" + f.Shorthand
+				if !seen[short] {
+					seen[short] = true
+					flagNames = append(flagNames, short)
+				}
+			}
+		})
+	}
+
+	addFlags(cmd.Flags())
+	addFlags(cmd.InheritedFlags())
+
+	return filterCompletions(flagNames, prefix)
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

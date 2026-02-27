@@ -20,6 +20,10 @@ import (
 	"golang.org/x/text/message"
 )
 
+// WidthOverride controls terminal width for table truncation.
+// -1 = auto-detect (default), 0 = no truncation (--wide), >0 = exact width (--width N).
+var WidthOverride int = -1
+
 // Format determines the output format.
 type Format string
 
@@ -465,6 +469,13 @@ func humanDuration(d time.Duration) string {
 // ─── Terminal width and truncation ──────────────────────────────────────────
 
 func getTerminalWidth() int {
+	if WidthOverride == 0 {
+		return 0 // --wide: no truncation
+	}
+	if WidthOverride > 0 {
+		return WidthOverride // --width N
+	}
+	// Default: auto-detect
 	w, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || w <= 0 {
 		return 0 // unknown — don't truncate

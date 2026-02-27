@@ -96,7 +96,7 @@ func runInteractive() error {
 	client := api.NewClient(cfg)
 
 	// Create the dynamic completer and preload catalogs in background
-	replCompleter = completer.New(client)
+	replCompleter = completer.New(client, rootCmd)
 	replCompleter.PreloadCatalogs()
 
 	// Wire saved query name completion
@@ -245,10 +245,15 @@ func resetFlags() {
 	exchange = ""
 	verbose = false
 	noChart = false
+	wide = false
+	widthOverride = 0
 	rootCmd.PersistentFlags().Set("output", "auto")
 	rootCmd.PersistentFlags().Set("exchange", "")
 	rootCmd.PersistentFlags().Set("verbose", "false")
 	rootCmd.PersistentFlags().Set("no-chart", "false")
+	rootCmd.PersistentFlags().Set("wide", "false")
+	rootCmd.PersistentFlags().Set("width", "0")
+	output.WidthOverride = -1
 }
 
 // runSearch performs a fuzzy search across all instrument catalogs.

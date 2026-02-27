@@ -15,14 +15,17 @@ import (
 	"github.com/laevitas/cli/cmd/update"
 	"github.com/laevitas/cli/internal/cmdutil"
 	internalConfig "github.com/laevitas/cli/internal/config"
+	"github.com/laevitas/cli/internal/output"
 	"github.com/laevitas/cli/internal/version"
 )
 
 var (
-	outputFormat string
-	exchange     string
-	verbose      bool
-	noChart      bool
+	outputFormat  string
+	exchange      string
+	verbose       bool
+	noChart       bool
+	wide          bool
+	widthOverride int
 )
 
 const helpBanner = `  ██╗      █████╗ ███████╗██╗   ██╗██╗████████╗ █████╗ ███████╗
@@ -63,6 +66,12 @@ API Reference:  https://apiv2.laevitas.ch/redoc`,
 		}
 		cmdutil.Verbose = verbose
 		cmdutil.NoChart = noChart
+		// Width override: --wide takes precedence over --width
+		if wide {
+			output.WidthOverride = 0
+		} else if widthOverride > 0 {
+			output.WidthOverride = widthOverride
+		}
 	},
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -120,6 +129,8 @@ Twitter: https://twitter.com/laevitas1` + "\033[0m" + `
 	rootCmd.PersistentFlags().StringVar(&exchange, "exchange", "", "Exchange (deribit, binance). Overrides config default.")
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "Show full HTTP request/response for debugging")
 	rootCmd.PersistentFlags().BoolVar(&noChart, "no-chart", false, "Disable inline charts for time-series data")
+	rootCmd.PersistentFlags().BoolVar(&wide, "wide", false, "Disable column truncation (show all data)")
+	rootCmd.PersistentFlags().IntVar(&widthOverride, "width", 0, "Override terminal width for table formatting")
 
 	rootCmd.AddCommand(config.Cmd)
 	rootCmd.AddCommand(futures.Cmd)
