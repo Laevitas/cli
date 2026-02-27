@@ -129,6 +129,48 @@ or --currency for cross-instrument flow (max 7-day window).`,
 	},
 }
 
+// ─── trades-summary ─────────────────────────────────────────────────────────
+
+var tradesSummaryFlags struct {
+	cmdutil.CommonFlags
+	GroupBy     string
+	Direction   string
+	BlockOnly   bool
+	OpeningOnly bool
+	OptionType  string
+	Maturity    string
+	MinPremium  float64
+	MinNotional float64
+	Strategy    string
+}
+
+var tradesSummaryCmd = &cobra.Command{
+	Use:     "trades-summary",
+	Aliases: []string{"ts"},
+	Short:   "Aggregated options trade statistics grouped by axis",
+	Long: `Returns aggregated options trade statistics grouped by a chosen axis.
+Valid --group-by values: exchange, instrument_name, strike, maturity, option_type, direction, strategy.`,
+	Example: `  laevitas options trades-summary --currency BTC --group-by maturity
+  laevitas options trades-summary --currency BTC --group-by option_type --min-premium 5000
+  laevitas options ts --currency ETH --group-by strike -p 24h`,
+	Run: func(cmd *cobra.Command, args []string) {
+		client, _ := cmdutil.MustClient()
+		params := tradesSummaryFlags.CommonFlags.ToParams()
+		params.GroupBy = tradesSummaryFlags.GroupBy
+		params.Direction = tradesSummaryFlags.Direction
+		params.BlockOnly = tradesSummaryFlags.BlockOnly
+		params.OpeningOnly = tradesSummaryFlags.OpeningOnly
+		params.OptionType = tradesSummaryFlags.OptionType
+		params.Maturity = tradesSummaryFlags.Maturity
+		params.MinPremium = tradesSummaryFlags.MinPremium
+		params.MinNotional = tradesSummaryFlags.MinNotional
+		params.Strategy = tradesSummaryFlags.Strategy
+		cmdutil.RunAndPrint(client, api.OptionsTradesSummary, params)
+	},
+}
+
+// ─── ohlcvt ─────────────────────────────────────────────────────────────────
+
 var ohlcvFlags cmdutil.CommonFlags
 
 var ohlcvCmd = &cobra.Command{
@@ -361,6 +403,18 @@ func init() {
 	tradesCmd.Flags().BoolVar(&tradesFlags.BlockOnly, "block-only", false, "Only block trades")
 	tradesCmd.Flags().BoolVar(&tradesFlags.OpeningOnly, "opening-only", false, "Only opening trades")
 
+	cmdutil.AddCommonFlags(tradesSummaryCmd, &tradesSummaryFlags.CommonFlags)
+	tradesSummaryCmd.Flags().StringVar(&tradesSummaryFlags.GroupBy, "group-by", "", "Group axis (required): exchange, instrument_name, strike, maturity, option_type, direction, strategy")
+	tradesSummaryCmd.Flags().StringVar(&tradesSummaryFlags.Direction, "direction", "", "Filter: buy or sell")
+	tradesSummaryCmd.Flags().BoolVar(&tradesSummaryFlags.BlockOnly, "block-only", false, "Only block trades")
+	tradesSummaryCmd.Flags().BoolVar(&tradesSummaryFlags.OpeningOnly, "opening-only", false, "Only opening trades")
+	tradesSummaryCmd.Flags().StringVar(&tradesSummaryFlags.OptionType, "type", "", "Filter: C (call) or P (put)")
+	tradesSummaryCmd.Flags().StringVar(&tradesSummaryFlags.Maturity, "maturity", "", "Filter by maturity (e.g. 28MAR25)")
+	tradesSummaryCmd.Flags().Float64Var(&tradesSummaryFlags.MinPremium, "min-premium", 0, "Min premium USD")
+	tradesSummaryCmd.Flags().Float64Var(&tradesSummaryFlags.MinNotional, "min-notional", 0, "Min notional USD")
+	tradesSummaryCmd.Flags().StringVar(&tradesSummaryFlags.Strategy, "strategy", "", "Filter by strategy")
+	_ = tradesSummaryCmd.MarkFlagRequired("group-by")
+
 	cmdutil.AddCommonFlags(ohlcvCmd, &ohlcvFlags)
 	cmdutil.AddCommonFlags(oiCmd, &oiFlags)
 	cmdutil.AddCommonFlags(volCmd, &volFlags)
@@ -393,6 +447,7 @@ func init() {
 	Cmd.AddCommand(snapshotCmd)
 	Cmd.AddCommand(flowCmd)
 	Cmd.AddCommand(tradesCmd)
+	Cmd.AddCommand(tradesSummaryCmd)
 	Cmd.AddCommand(ohlcvCmd)
 	Cmd.AddCommand(oiCmd)
 	Cmd.AddCommand(volCmd)
