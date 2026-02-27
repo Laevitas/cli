@@ -151,6 +151,15 @@ func MustClient() (*api.Client, *config.Config) {
 		return nil, nil
 	}
 
+	// Apply config exchange default if --exchange flag was not provided
+	if Exchange == "" {
+		if cfg.Exchange != "" {
+			Exchange = cfg.Exchange
+		} else {
+			Exchange = config.DefaultExchange
+		}
+	}
+
 	// Require either an API key or a wallet key for authentication
 	if cfg.APIKey == "" && cfg.WalletKey == "" {
 		if !promptOnboarding(cfg) {
