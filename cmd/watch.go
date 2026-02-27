@@ -276,6 +276,35 @@ func resolveWatchCommand(args []string) (string, *api.RequestParams, error) {
 	if f := cmd.Flags().Lookup("opening-only"); f != nil && f.Value.String() == "true" {
 		params.OpeningOnly = true
 	}
+	if f := cmd.Flags().Lookup("position-side"); f != nil && f.Value.String() != "" {
+		params.PositionSide = f.Value.String()
+	}
+	if f := cmd.Flags().Lookup("min-amount-usd"); f != nil && f.Value.String() != "" && f.Value.String() != "0" {
+		if v, parseErr := strconv.ParseFloat(f.Value.String(), 64); parseErr == nil {
+			params.MinAmountUsd = v
+		}
+	}
+	if f := cmd.Flags().Lookup("group-by"); f != nil && f.Value.String() != "" {
+		params.GroupBy = f.Value.String()
+	}
+	if f := cmd.Flags().Lookup("strategy"); f != nil && f.Value.String() != "" {
+		params.Strategy = f.Value.String()
+	}
+	if f := cmd.Flags().Lookup("min-amount"); f != nil && f.Value.String() != "" && f.Value.String() != "0" {
+		if v, parseErr := strconv.ParseFloat(f.Value.String(), 64); parseErr == nil {
+			params.MinAmount = v
+		}
+	}
+	if f := cmd.Flags().Lookup("top-n"); f != nil && f.Value.String() != "" && f.Value.String() != "0" {
+		if n, parseErr := strconv.Atoi(f.Value.String()); parseErr == nil {
+			params.TopN = n
+		}
+	}
+	if f := cmd.Flags().Lookup("min-notional"); f != nil && f.Value.String() != "" && f.Value.String() != "0" {
+		if v, parseErr := strconv.ParseFloat(f.Value.String(), 64); parseErr == nil {
+			params.MinNotional = v
+		}
+	}
 
 	// If the command expects a positional instrument argument
 	if len(nonFlagArgs) > 0 {
@@ -303,7 +332,10 @@ func watchEndpointForCommand(cmd *cobra.Command) (string, error) {
 		"futures orderbook": api.FuturesOrderbook,
 		"futures ticker":    api.FuturesTickerHistory,
 		"futures ref-price": api.FuturesReferencePrice,
-		"futures metadata":  api.FuturesMetadata,
+		"futures metadata":       api.FuturesMetadata,
+		"futures liquidations":   api.FuturesLiquidations,
+		"futures trades-summary": api.FuturesTradesSummary,
+		"futures flow":           api.FuturesFlow,
 		// Perps
 		"perps catalog":   api.PerpsCatalog,
 		"perps snapshot":  api.PerpsSnapshot,
@@ -316,7 +348,10 @@ func watchEndpointForCommand(cmd *cobra.Command) (string, error) {
 		"perps orderbook": api.PerpsOrderbook,
 		"perps ticker":    api.PerpsTickerHistory,
 		"perps ref-price": api.PerpsReferencePrice,
-		"perps metadata":  api.PerpsMetadata,
+		"perps metadata":       api.PerpsMetadata,
+		"perps liquidations":   api.PerpsLiquidations,
+		"perps trades-summary": api.PerpsTradesSummary,
+		"perps flow":           api.PerpsFlow,
 		// Options
 		"options catalog":    api.OptionsCatalog,
 		"options snapshot":   api.OptionsSnapshot,
@@ -329,7 +364,8 @@ func watchEndpointForCommand(cmd *cobra.Command) (string, error) {
 		"options flow":       api.OptionsFlow,
 		"options ticker":     api.OptionsTickerHistory,
 		"options volatility": api.OptionsVolatility,
-		"options metadata":   api.OptionsMetadata,
+		"options metadata":       api.OptionsMetadata,
+		"options trades-summary": api.OptionsTradesSummary,
 		// Vol surface (under options)
 		"options vol-surface by-expiry": api.VolSurfaceByExpiry,
 		"options vol-surface by-tenor":  api.VolSurfaceByTenor,

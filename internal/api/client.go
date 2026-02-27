@@ -175,6 +175,15 @@ type RequestParams struct {
 	// Snapshot-specific
 	Date string
 
+	// Liquidation / flow / trades-summary specific
+	PositionSide string
+	MinAmountUsd float64
+	GroupBy      string
+	Strategy     string
+	MinAmount    float64
+	TopN         int
+	MinNotional  float64
+
 	// Extra allows arbitrary key-value params
 	Extra map[string]string
 }
@@ -236,6 +245,27 @@ func (c *Client) buildURL(path string, params *RequestParams) string {
 	}
 	if params.OpeningOnly {
 		q.Set("opening_only", "true")
+	}
+	if params.PositionSide != "" {
+		q.Set("position_side", params.PositionSide)
+	}
+	if params.MinAmountUsd > 0 {
+		q.Set("min_amount_usd", fmt.Sprintf("%.0f", params.MinAmountUsd))
+	}
+	if params.GroupBy != "" {
+		q.Set("group_by", params.GroupBy)
+	}
+	if params.Strategy != "" {
+		q.Set("strategy", params.Strategy)
+	}
+	if params.MinAmount > 0 {
+		q.Set("min_amount", fmt.Sprintf("%.0f", params.MinAmount))
+	}
+	if params.TopN > 0 {
+		q.Set("top_n", fmt.Sprintf("%d", params.TopN))
+	}
+	if params.MinNotional > 0 {
+		q.Set("min_notional", fmt.Sprintf("%.0f", params.MinNotional))
 	}
 	if params.Category != "" {
 		q.Set("category", params.Category)

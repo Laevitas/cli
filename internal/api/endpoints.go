@@ -22,6 +22,9 @@ const (
 	FuturesReferencePrice = "/api/v1/futures/reference-price"
 	FuturesTickerHistory  = "/api/v1/futures/ticker-history"
 	FuturesMetadata       = "/api/v1/futures/metadata"
+	FuturesLiquidations   = "/api/v1/futures/liquidations"
+	FuturesTradesSummary  = "/api/v1/futures/trades/summary"
+	FuturesFlow           = "/api/v1/futures/flow"
 )
 
 // ─── Perpetuals ─────────────────────────────────────────────────────────
@@ -40,6 +43,9 @@ const (
 	PerpsReferencePrice = "/api/v1/perpetuals/reference-price"
 	PerpsTickerHistory  = "/api/v1/perpetuals/ticker-history"
 	PerpsMetadata       = "/api/v1/perpetuals/metadata"
+	PerpsLiquidations   = "/api/v1/perpetuals/liquidations"
+	PerpsTradesSummary  = "/api/v1/perpetuals/trades/summary"
+	PerpsFlow           = "/api/v1/perpetuals/flow"
 )
 
 // ─── Options ────────────────────────────────────────────────────────────
@@ -57,6 +63,7 @@ const (
 	OptionsTickerHistory  = "/api/v1/options/ticker-history"
 	OptionsVolatility     = "/api/v1/options/volatility"
 	OptionsMetadata       = "/api/v1/options/metadata"
+	OptionsTradesSummary  = "/api/v1/options/trades/summary"
 )
 
 // ─── Volatility Surface (under /options/) ───────────────────────────────
