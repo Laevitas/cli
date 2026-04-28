@@ -27,13 +27,15 @@ jobs:
           cp install.ps1 site/install.ps1
           cp install.sh  site/install.sh
 
+      # Direct npx invocation — cloudflare/wrangler-action@v3 doesn't propagate
+      # CLOUDFLARE_API_TOKEN to wrangler when invoked with a custom `command:`,
+      # so wrangler errors with "non-interactive environment ...". A bare `run:`
+      # step inherits step-level env normally.
+      #
+      # Wrangler v4 is required for assets-only Workers (no `main` field in
+      # wrangler.jsonc); v3 errors with "Missing entry-point".
       - name: Deploy Worker (cli.laevitas.ch)
-        uses: cloudflare/wrangler-action@v3
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        with:
-          # v4+ is required for assets-only Workers (no `main` in wrangler.jsonc).
-          # The action's default v3 ships 3.90 which errors with "Missing entry-point".
-          wranglerVersion: "4"
-          command: deploy
+        run: npx --yes wrangler@4 deploy
