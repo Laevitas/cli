@@ -20,14 +20,26 @@ Examples:
   laevitas perps snapshot --currency BTC`,
 }
 
+var catalogFlags struct {
+	cmdutil.CommonFlags
+	Maturity string
+}
+
 var catalogCmd = &cobra.Command{
 	Use:   "catalog",
-	Short: "List all available perpetual instruments",
+	Short: "List perpetual instruments (paginated)",
 	Example: `  laevitas perps catalog
-  laevitas perps catalog --exchange binance`,
+  laevitas perps catalog --exchange binance
+  laevitas perps catalog --currency BTC -n 50`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
-		params := &api.RequestParams{Exchange: cmdutil.Exchange}
+		params := catalogFlags.CommonFlags.ToParams()
+		params.Start = ""
+		params.End = ""
+		params.Resolution = ""
+		params.SortDir = ""
+		params.Exchange = cmdutil.Exchange
+		params.Maturity = catalogFlags.Maturity
 		cmdutil.RunAndPrint(client, api.PerpsCatalog, params)
 	},
 }
@@ -117,7 +129,6 @@ var tradesFlags struct {
 	MinAmount float64
 	Strategy  string
 	Sort      string
-	SortDir   string
 	TopN      int
 }
 
@@ -143,7 +154,6 @@ var tradesCmd = &cobra.Command{
 		params.MinAmount = tradesFlags.MinAmount
 		params.Strategy = tradesFlags.Strategy
 		params.Sort = tradesFlags.Sort
-		params.SortDir = tradesFlags.SortDir
 		params.TopN = tradesFlags.TopN
 		cmdutil.RunAndPrint(client, api.PerpsTrades, params)
 	},
@@ -253,7 +263,6 @@ var liquidationsFlags struct {
 	PositionSide string
 	MinAmountUsd float64
 	Sort         string
-	SortDir      string
 }
 
 var liquidationsCmd = &cobra.Command{
@@ -271,7 +280,6 @@ Filter by --currency (e.g. BTC) and optional direction/position filters.`,
 		params.PositionSide = liquidationsFlags.PositionSide
 		params.MinAmountUsd = liquidationsFlags.MinAmountUsd
 		params.Sort = liquidationsFlags.Sort
-		params.SortDir = liquidationsFlags.SortDir
 		cmdutil.RunAndPrint(client, api.PerpsLiquidations, params)
 	},
 }
@@ -342,6 +350,9 @@ and most active instruments — all in a single call.`,
 }
 
 func init() {
+	cmdutil.AddCommonFlags(catalogCmd, &catalogFlags.CommonFlags)
+	catalogCmd.Flags().StringVar(&catalogFlags.Maturity, "maturity", "", "Filter by maturity (e.g. "+cmdutil.ExampleMaturity()+")")
+
 	snapshotCmd.Flags().StringVar(&snapshotFlags.Currency, "currency", "", "Filter by currency (BTC, ETH)")
 	snapshotCmd.Flags().StringVar(&snapshotFlags.Date, "date", "", "Snapshot datetime (ISO 8601)")
 
@@ -355,7 +366,6 @@ func init() {
 	tradesCmd.Flags().Float64Var(&tradesFlags.MinAmount, "min-amount", 0, "Min trade amount (contracts)")
 	tradesCmd.Flags().StringVar(&tradesFlags.Strategy, "strategy", "", "Filter by strategy")
 	tradesCmd.Flags().StringVar(&tradesFlags.Sort, "sort", "", "Sort: timestamp, amount_usd, price")
-	tradesCmd.Flags().StringVar(&tradesFlags.SortDir, "sort-dir", "", "Sort direction: ASC or DESC")
 	tradesCmd.Flags().IntVar(&tradesFlags.TopN, "top-n", 0, "Return top N trades (no pagination)")
 
 	cmdutil.AddCommonFlags(volumeCmd, &volumeFlags)
@@ -369,7 +379,6 @@ func init() {
 	liquidationsCmd.Flags().StringVar(&liquidationsFlags.PositionSide, "position-side", "", "Filter: long or short")
 	liquidationsCmd.Flags().Float64Var(&liquidationsFlags.MinAmountUsd, "min-amount-usd", 0, "Min liquidation value in USD")
 	liquidationsCmd.Flags().StringVar(&liquidationsFlags.Sort, "sort", "", "Sort: timestamp, amount_usd, price")
-	liquidationsCmd.Flags().StringVar(&liquidationsFlags.SortDir, "sort-dir", "", "Sort direction: ASC or DESC")
 
 	cmdutil.AddCommonFlags(tradesSummaryCmd, &tradesSummaryFlags.CommonFlags)
 	tradesSummaryCmd.Flags().StringVar(&tradesSummaryFlags.GroupBy, "group-by", "", "Group axis (required): exchange, instrument_name, direction, strategy")

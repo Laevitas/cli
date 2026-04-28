@@ -11,6 +11,7 @@ require (
 	github.com/coinbase/x402/go v0.0.0-20260211184331-65d968c3660a
 	github.com/guptarohit/asciigraph v0.7.3
 	github.com/spf13/cobra v1.8.1
+	github.com/spf13/pflag v1.0.6
 	golang.org/x/term v0.37.0
 	golang.org/x/text v0.31.0
 )
@@ -34,7 +35,6 @@ require (
 	github.com/mattn/go-runewidth v0.0.15 // indirect
 	github.com/muesli/termenv v0.15.2 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/supranational/blst v0.3.16-0.20250831170142-f48500c1fdbe // indirect
 	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect

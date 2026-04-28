@@ -15,22 +15,36 @@ var Cmd = &cobra.Command{
 Examples:
   laevitas futures catalog
   laevitas futures snapshot --currency BTC
-  laevitas futures ohlcvt BTC-27MAR26 -p 24h
-  laevitas futures ohlcvt BTC-27MAR26 -p 3d -r 1h
-  laevitas futures carry BTC-27MAR26 -p 7d
-  laevitas futures oi BTC-27MAR26 -r 1d -n 30`,
+  laevitas futures ohlcvt {{FUT}} -p 24h
+  laevitas futures ohlcvt {{FUT}} -p 3d -r 1h
+  laevitas futures carry {{FUT}} -p 7d
+  laevitas futures oi {{FUT}} -r 1d -n 30`,
 }
 
 // ─── catalog ────────────────────────────────────────────────────────────────
 
+var catalogFlags struct {
+	cmdutil.CommonFlags
+	Maturity string
+}
+
 var catalogCmd = &cobra.Command{
 	Use:   "catalog",
-	Short: "List all available dated futures instruments",
+	Short: "List dated futures instruments (paginated)",
 	Example: `  laevitas futures catalog
-  laevitas futures catalog --exchange binance`,
+  laevitas futures catalog --exchange binance
+  laevitas futures catalog --currency BTC --maturity {{MAT}}
+  laevitas futures catalog -n 50 --cursor <next>`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
-		params := &api.RequestParams{Exchange: cmdutil.Exchange}
+		params := catalogFlags.CommonFlags.ToParams()
+		// Catalog has no time-series.
+		params.Start = ""
+		params.End = ""
+		params.Resolution = ""
+		params.SortDir = ""
+		params.Exchange = cmdutil.Exchange
+		params.Maturity = catalogFlags.Maturity
 		cmdutil.RunAndPrint(client, api.FuturesCatalog, params)
 	},
 }
@@ -67,8 +81,8 @@ var ohlcvCmd = &cobra.Command{
 	Aliases: []string{"ohlcv"},
 	Short:   "OHLCVT candle data from trades",
 	Args:    cobra.ExactArgs(1),
-	Example: `  laevitas futures ohlcvt BTC-27MAR26 -p 24h
-  laevitas futures ohlcvt BTC-27MAR26 -p 3d -r 1h -n 50`,
+	Example: `  laevitas futures ohlcvt {{FUT}} -p 24h
+  laevitas futures ohlcvt {{FUT}} -p 3d -r 1h -n 50`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := ohlcvFlags.ToParams()
@@ -86,8 +100,8 @@ var oiCmd = &cobra.Command{
 	Aliases: []string{"open-interest"},
 	Short:   "Open interest data over time",
 	Args:    cobra.ExactArgs(1),
-	Example: `  laevitas futures oi BTC-27MAR26 -p 7d
-  laevitas futures oi BTC-27MAR26 -p 30d -r 1d`,
+	Example: `  laevitas futures oi {{FUT}} -p 7d
+  laevitas futures oi {{FUT}} -p 30d -r 1d`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := oiFlags.ToParams()
@@ -105,8 +119,8 @@ var carryCmd = &cobra.Command{
 	Aliases: []string{"basis"},
 	Short:   "Basis and annualized carry data",
 	Args:    cobra.ExactArgs(1),
-	Example: `  laevitas futures carry BTC-27MAR26 -p 24h
-  laevitas futures carry BTC-27MAR26 -p 7d -r 1h`,
+	Example: `  laevitas futures carry {{FUT}} -p 24h
+  laevitas futures carry {{FUT}} -p 7d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := carryFlags.ToParams()
@@ -125,7 +139,6 @@ var tradesFlags struct {
 	Strategy  string
 	Maturity  string
 	Sort      string
-	SortDir   string
 	TopN      int
 }
 
@@ -133,11 +146,11 @@ var tradesCmd = &cobra.Command{
 	Use:   "trades [instrument]",
 	Short: "Individual trade records (by instrument or currency)",
 	Long: `Fetch individual trade records. Two modes:
-  • Instrument mode: laevitas futures trades BTC-27MAR26 -p 24h
+  • Instrument mode: laevitas futures trades {{FUT}} -p 24h
   • Currency mode:   laevitas futures trades --currency BTC --top-n 50`,
 	Args: cobra.MaximumNArgs(1),
-	Example: `  laevitas futures trades BTC-27MAR26 -p 24h
-  laevitas futures trades BTC-27MAR26 -p 1h -n 20
+	Example: `  laevitas futures trades {{FUT}} -p 24h
+  laevitas futures trades {{FUT}} -p 1h -n 20
   laevitas futures trades --currency BTC --top-n 50
   laevitas futures trades --currency BTC --direction buy --block-only`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -152,7 +165,6 @@ var tradesCmd = &cobra.Command{
 		params.Strategy = tradesFlags.Strategy
 		params.Maturity = tradesFlags.Maturity
 		params.Sort = tradesFlags.Sort
-		params.SortDir = tradesFlags.SortDir
 		params.TopN = tradesFlags.TopN
 		cmdutil.RunAndPrint(client, api.FuturesTrades, params)
 	},
@@ -166,8 +178,8 @@ var volumeCmd = &cobra.Command{
 	Use:   "volume <instrument>",
 	Short: "24h rolling volume data",
 	Args:  cobra.ExactArgs(1),
-	Example: `  laevitas futures volume BTC-27MAR26 -p 24h
-  laevitas futures volume BTC-27MAR26 -p 7d -r 1h`,
+	Example: `  laevitas futures volume {{FUT}} -p 24h
+  laevitas futures volume {{FUT}} -p 7d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := volumeFlags.ToParams()
@@ -184,8 +196,8 @@ var level1Cmd = &cobra.Command{
 	Use:   "level1 <instrument>",
 	Short: "Best bid/ask (L1) data over time",
 	Args:  cobra.ExactArgs(1),
-	Example: `  laevitas futures level1 BTC-27MAR26 -p 24h
-  laevitas futures level1 BTC-27MAR26 -p 3d -r 1h`,
+	Example: `  laevitas futures level1 {{FUT}} -p 24h
+  laevitas futures level1 {{FUT}} -p 3d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := level1Flags.ToParams()
@@ -202,8 +214,8 @@ var orderbookCmd = &cobra.Command{
 	Use:   "orderbook <instrument>",
 	Short: "L2 orderbook depth metrics",
 	Args:  cobra.ExactArgs(1),
-	Example: `  laevitas futures orderbook BTC-27MAR26 -p 24h
-  laevitas futures orderbook BTC-27MAR26 -p 7d -r 1h`,
+	Example: `  laevitas futures orderbook {{FUT}} -p 24h
+  laevitas futures orderbook {{FUT}} -p 7d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := orderbookFlags.ToParams()
@@ -220,8 +232,8 @@ var tickerCmd = &cobra.Command{
 	Use:   "ticker <instrument>",
 	Short: "Historical ticker snapshots (mark price, OI, bid/ask, funding)",
 	Args:  cobra.ExactArgs(1),
-	Example: `  laevitas futures ticker BTC-27MAR26 -p 24h
-  laevitas futures ticker BTC-27MAR26 -p 7d -r 1h`,
+	Example: `  laevitas futures ticker {{FUT}} -p 24h
+  laevitas futures ticker {{FUT}} -p 7d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := tickerFlags.ToParams()
@@ -238,8 +250,8 @@ var refPriceCmd = &cobra.Command{
 	Use:   "ref-price <instrument>",
 	Short: "Mark price and index price OHLC",
 	Args:  cobra.ExactArgs(1),
-	Example: `  laevitas futures ref-price BTC-27MAR26 -p 24h
-  laevitas futures ref-price BTC-27MAR26 -p 7d -r 1h`,
+	Example: `  laevitas futures ref-price {{FUT}} -p 24h
+  laevitas futures ref-price {{FUT}} -p 7d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := refPriceFlags.ToParams()
@@ -254,7 +266,7 @@ var metadataCmd = &cobra.Command{
 	Use:   "metadata <instrument>",
 	Short: "Data availability info for a dated futures instrument",
 	Args:  cobra.ExactArgs(1),
-	Example: `  laevitas futures metadata BTC-27MAR26`,
+	Example: `  laevitas futures metadata {{FUT}}`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := &api.RequestParams{
@@ -273,7 +285,6 @@ var liquidationsFlags struct {
 	PositionSide string
 	MinAmountUsd float64
 	Sort         string
-	SortDir      string
 }
 
 var liquidationsCmd = &cobra.Command{
@@ -291,7 +302,6 @@ Filter by --currency (e.g. BTC) or instrument via --currency + specific flags.`,
 		params.PositionSide = liquidationsFlags.PositionSide
 		params.MinAmountUsd = liquidationsFlags.MinAmountUsd
 		params.Sort = liquidationsFlags.Sort
-		params.SortDir = liquidationsFlags.SortDir
 		cmdutil.RunAndPrint(client, api.FuturesLiquidations, params)
 	},
 }
@@ -364,6 +374,9 @@ and most active instruments — all in a single call.`,
 }
 
 func init() {
+	cmdutil.AddCommonFlags(catalogCmd, &catalogFlags.CommonFlags)
+	catalogCmd.Flags().StringVar(&catalogFlags.Maturity, "maturity", "", "Filter by maturity (e.g. "+cmdutil.ExampleMaturity()+")")
+
 	snapshotCmd.Flags().StringVar(&snapshotFlags.Currency, "currency", "", "Filter by currency (BTC, ETH)")
 	snapshotCmd.Flags().StringVar(&snapshotFlags.Date, "date", "", "Snapshot datetime (ISO 8601)")
 
@@ -376,9 +389,8 @@ func init() {
 	tradesCmd.Flags().BoolVar(&tradesFlags.BlockOnly, "block-only", false, "Only block trades")
 	tradesCmd.Flags().Float64Var(&tradesFlags.MinAmount, "min-amount", 0, "Min trade amount (contracts)")
 	tradesCmd.Flags().StringVar(&tradesFlags.Strategy, "strategy", "", "Filter by strategy")
-	tradesCmd.Flags().StringVar(&tradesFlags.Maturity, "maturity", "", "Filter by maturity (e.g. 28MAR25)")
+	tradesCmd.Flags().StringVar(&tradesFlags.Maturity, "maturity", "", "Filter by maturity (e.g. "+cmdutil.ExampleMaturity()+")")
 	tradesCmd.Flags().StringVar(&tradesFlags.Sort, "sort", "", "Sort: timestamp, amount_usd, price")
-	tradesCmd.Flags().StringVar(&tradesFlags.SortDir, "sort-dir", "", "Sort direction: ASC or DESC")
 	tradesCmd.Flags().IntVar(&tradesFlags.TopN, "top-n", 0, "Return top N trades (no pagination)")
 
 	cmdutil.AddCommonFlags(volumeCmd, &volumeFlags)
@@ -392,7 +404,6 @@ func init() {
 	liquidationsCmd.Flags().StringVar(&liquidationsFlags.PositionSide, "position-side", "", "Filter: long or short")
 	liquidationsCmd.Flags().Float64Var(&liquidationsFlags.MinAmountUsd, "min-amount-usd", 0, "Min liquidation value in USD")
 	liquidationsCmd.Flags().StringVar(&liquidationsFlags.Sort, "sort", "", "Sort: timestamp, amount_usd, price")
-	liquidationsCmd.Flags().StringVar(&liquidationsFlags.SortDir, "sort-dir", "", "Sort direction: ASC or DESC")
 
 	cmdutil.AddCommonFlags(tradesSummaryCmd, &tradesSummaryFlags.CommonFlags)
 	tradesSummaryCmd.Flags().StringVar(&tradesSummaryFlags.GroupBy, "group-by", "", "Group axis (required): exchange, instrument_name, maturity, direction, strategy")

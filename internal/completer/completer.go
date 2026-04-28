@@ -85,6 +85,22 @@ var commandTree = map[string][]subCmd{
 		{Name: "orderbook", NeedsInstrument: true},
 		{Name: "metadata", NeedsInstrument: true},
 	},
+	"spot": {
+		{Name: "catalog"},
+		{Name: "snapshot"},
+		{Name: "metadata", NeedsInstrument: true},
+		{Name: "ohlcvt", NeedsInstrument: true},
+		{Name: "ticker", NeedsInstrument: true},
+		{Name: "volume", NeedsInstrument: true},
+		{Name: "level1", NeedsInstrument: true},
+		{Name: "orderbook", NeedsInstrument: true},
+		{Name: "orderbook-raw", NeedsInstrument: true},
+		{Name: "trades"},
+	},
+	"instruments": {
+		{Name: "list"},
+		{Name: "detail", NeedsInstrument: true},
+	},
 	"config": {
 		{Name: "init"},
 		{Name: "show"},
@@ -97,7 +113,7 @@ var commandTree = map[string][]subCmd{
 
 // topLevelCommands includes both tree commands and REPL built-ins.
 var topLevelCommands = []string{
-	"futures", "perps", "options", "predictions",
+	"futures", "perps", "options", "spot", "predictions", "instruments",
 	"config", "watch", "version", "search",
 	"save", "run", "saves", "unsave",
 	"help", "quit", "exit", "clear",
@@ -132,6 +148,7 @@ var catalogEndpoints = map[string]string{
 	"futures":     api.FuturesCatalog,
 	"perps":       api.PerpsCatalog,
 	"options":     api.OptionsCatalog,
+	"spot":        api.SpotCatalog,
 	"predictions": api.PredictionsCatalog,
 }
 

@@ -151,16 +151,19 @@ type RequestParams struct {
 	Exchange       string
 	InstrumentName string
 	Currency       string
+	QuoteCurrency  string
 	Start          string
 	End            string
 	Resolution     string
 	Limit          int
 	Cursor         string
 
-	// Options-specific
+	// Options / catalog filters
 	Direction   string
 	OptionType  string
 	Maturity    string
+	StrikeMin   float64
+	StrikeMax   float64
 	MinPremium  float64
 	Sort        string
 	SortDir     string
@@ -176,13 +179,21 @@ type RequestParams struct {
 	Date string
 
 	// Liquidation / flow / trades-summary specific
-	PositionSide string
-	MinAmountUsd float64
-	GroupBy      string
-	Strategy     string
-	MinAmount    float64
-	TopN         int
-	MinNotional  float64
+	PositionSide   string
+	MinAmountUsd   float64
+	GroupBy        string
+	Strategy       string
+	MinAmount      float64
+	MinQuoteAmount float64
+	TopN           int
+	MinNotional    float64
+
+	// Cross-product instruments registry
+	MarketType string
+	Status     string
+	MarginType string
+	ExpiryFrom string
+	ExpiryTo   string
 
 	// Extra allows arbitrary key-value params
 	Extra map[string]string
@@ -207,6 +218,9 @@ func (c *Client) buildURL(path string, params *RequestParams) string {
 	if params.Currency != "" {
 		q.Set("currency", params.Currency)
 	}
+	if params.QuoteCurrency != "" {
+		q.Set("quote_currency", params.QuoteCurrency)
+	}
 	if params.Start != "" {
 		q.Set("start", params.Start)
 	}
@@ -230,6 +244,12 @@ func (c *Client) buildURL(path string, params *RequestParams) string {
 	}
 	if params.Maturity != "" {
 		q.Set("maturity", params.Maturity)
+	}
+	if params.StrikeMin > 0 {
+		q.Set("strike_min", fmt.Sprintf("%g", params.StrikeMin))
+	}
+	if params.StrikeMax > 0 {
+		q.Set("strike_max", fmt.Sprintf("%g", params.StrikeMax))
 	}
 	if params.MinPremium > 0 {
 		q.Set("min_premium_usd", fmt.Sprintf("%.0f", params.MinPremium))
@@ -261,6 +281,9 @@ func (c *Client) buildURL(path string, params *RequestParams) string {
 	if params.MinAmount > 0 {
 		q.Set("min_amount", fmt.Sprintf("%.0f", params.MinAmount))
 	}
+	if params.MinQuoteAmount > 0 {
+		q.Set("min_quote_amount", fmt.Sprintf("%.0f", params.MinQuoteAmount))
+	}
 	if params.TopN > 0 {
 		q.Set("top_n", fmt.Sprintf("%d", params.TopN))
 	}
@@ -278,6 +301,21 @@ func (c *Client) buildURL(path string, params *RequestParams) string {
 	}
 	if params.Date != "" {
 		q.Set("date", params.Date)
+	}
+	if params.MarketType != "" {
+		q.Set("market_type", params.MarketType)
+	}
+	if params.Status != "" {
+		q.Set("status", params.Status)
+	}
+	if params.MarginType != "" {
+		q.Set("margin_type", params.MarginType)
+	}
+	if params.ExpiryFrom != "" {
+		q.Set("expiry_from", params.ExpiryFrom)
+	}
+	if params.ExpiryTo != "" {
+		q.Set("expiry_to", params.ExpiryTo)
 	}
 
 	for k, v := range params.Extra {

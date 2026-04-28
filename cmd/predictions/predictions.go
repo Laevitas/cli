@@ -21,6 +21,7 @@ Examples:
 }
 
 var catalogFlags struct {
+	cmdutil.CommonFlags
 	Category  string
 	EventSlug string
 	Keyword   string
@@ -28,14 +29,19 @@ var catalogFlags struct {
 
 var catalogCmd = &cobra.Command{
 	Use:   "catalog",
-	Short: "List available prediction market instruments",
+	Short: "List prediction market instruments (paginated)",
+	Example: `  laevitas predictions catalog --keyword bitcoin
+  laevitas predictions catalog --category crypto -n 50`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
-		params := &api.RequestParams{
-			Category:  catalogFlags.Category,
-			EventSlug: catalogFlags.EventSlug,
-			Keyword:   catalogFlags.Keyword,
-		}
+		params := catalogFlags.CommonFlags.ToParams()
+		params.Start = ""
+		params.End = ""
+		params.Resolution = ""
+		params.SortDir = ""
+		params.Category = catalogFlags.Category
+		params.EventSlug = catalogFlags.EventSlug
+		params.Keyword = catalogFlags.Keyword
 		cmdutil.RunAndPrint(client, api.PredictionsCatalog, params)
 	},
 }
@@ -139,6 +145,7 @@ var metadataCmd = &cobra.Command{
 }
 
 func init() {
+	cmdutil.AddCommonFlags(catalogCmd, &catalogFlags.CommonFlags)
 	catalogCmd.Flags().StringVar(&catalogFlags.Category, "category", "", "Filter by category")
 	catalogCmd.Flags().StringVar(&catalogFlags.EventSlug, "event", "", "Filter by event slug")
 	catalogCmd.Flags().StringVar(&catalogFlags.Keyword, "keyword", "", "Keyword search")

@@ -7,7 +7,7 @@ LDFLAGS     := -s -w \
 	-X github.com/laevitas/cli/internal/version.CommitSHA=$(COMMIT) \
 	-X github.com/laevitas/cli/internal/version.BuildDate=$(BUILD_DATE)
 
-.PHONY: build install test clean release lint fmt mod-download
+.PHONY: build install test clean release release-snapshot lint fmt mod-download
 
 ## Download modules (overrides GOPROXY=off for environments that disable it)
 mod-download:
@@ -25,13 +25,16 @@ install:
 test:
 	go test ./... -v
 
-## Cross-compile for all platforms
+## Cross-compile for all platforms via GoReleaser. Triggered automatically on
+## "git push <vX.Y.Z tag>" by .github/workflows/release.yml — this target is
+## for local dry-runs only.
 release:
-	GOOS=linux   GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/$(APP_NAME)-linux-amd64 .
-	GOOS=linux   GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/$(APP_NAME)-linux-arm64 .
-	GOOS=darwin  GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/$(APP_NAME)-darwin-amd64 .
-	GOOS=darwin  GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/$(APP_NAME)-darwin-arm64 .
-	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/$(APP_NAME)-windows-amd64.exe .
+	goreleaser release --clean --skip=publish
+
+## Snapshot build — produces a dist/ tree without tagging or publishing.
+## Use this to verify the release config without cutting a real version.
+release-snapshot:
+	goreleaser release --snapshot --clean
 
 ## Lint
 lint:

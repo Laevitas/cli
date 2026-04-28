@@ -9,9 +9,11 @@ import (
 
 	"github.com/laevitas/cli/cmd/config"
 	"github.com/laevitas/cli/cmd/futures"
+	"github.com/laevitas/cli/cmd/instruments"
 	"github.com/laevitas/cli/cmd/options"
 	"github.com/laevitas/cli/cmd/perps"
 	"github.com/laevitas/cli/cmd/predictions"
+	"github.com/laevitas/cli/cmd/spot"
 	"github.com/laevitas/cli/cmd/update"
 	"github.com/laevitas/cli/internal/cmdutil"
 	internalConfig "github.com/laevitas/cli/internal/config"
@@ -136,10 +138,16 @@ Twitter: https://twitter.com/laevitas1` + "\033[0m" + `
 	rootCmd.AddCommand(futures.Cmd)
 	rootCmd.AddCommand(perps.Cmd)
 	rootCmd.AddCommand(options.Cmd)
+	rootCmd.AddCommand(spot.Cmd)
 	rootCmd.AddCommand(predictions.Cmd)
+	rootCmd.AddCommand(instruments.Cmd)
 	rootCmd.AddCommand(watchCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(update.Cmd)
+
+	// Replace {{FUT}}/{{OPT_C}}/{{OPT_P}}/{{MAT}} tokens in help text with
+	// instrument names computed from time.Now() so examples never go stale.
+	cmdutil.SubstituteExamplesRecursive(rootCmd)
 }
 
 func Execute() error {

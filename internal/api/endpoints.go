@@ -86,3 +86,25 @@ const (
 	PredictionsOrderbookRaw  = "/api/v1/predictions/orderbook-raw"
 	PredictionsMetadata      = "/api/v1/predictions/metadata"
 )
+
+// ─── Spot ───────────────────────────────────────────────────────────────
+
+const (
+	SpotCatalog        = "/api/v1/spot/catalog"
+	SpotSnapshot       = "/api/v1/spot/snapshot"
+	SpotMetadata       = "/api/v1/spot/metadata"
+	SpotOHLCVT         = "/api/v1/spot/ohlcvt"
+	SpotTicker         = "/api/v1/spot/ticker"
+	SpotVolume         = "/api/v1/spot/volume"
+	SpotLevel1         = "/api/v1/spot/level1"
+	SpotL2Orderbook    = "/api/v1/spot/l2-orderbook"
+	SpotL2OrderbookRaw = "/api/v1/spot/l2-orderbook-raw"
+	SpotTrades         = "/api/v1/spot/trades"
+)
+
+// ─── Cross-product instruments registry ─────────────────────────────────
+
+const (
+	InstrumentsList   = "/api/v1/instruments"
+	InstrumentsDetail = "/api/v1/instruments/detail"
+)
