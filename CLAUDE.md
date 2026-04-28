@@ -2,14 +2,14 @@
 
 ## Project Overview
 
-Laevitas CLI is a Go command-line tool for accessing crypto derivatives market data. It wraps the Laevitas V2 REST API (`https://apiv2.laevitas.ch`) and presents futures, perpetuals, options, volatility surfaces, and prediction market data in table, JSON, or CSV format.
+Laevitas CLI is a Go command-line tool for accessing crypto derivatives market data. It wraps the Laevitas V2 REST API (`https://apiv2.laevitas.ch`) and presents futures, perpetuals, options, spot, volatility surfaces, prediction markets, and a cross-product instruments registry in table, JSON, or CSV format.
 
 **This is a read-only data client.** It fetches and formats data — it does not trade, place orders, or modify any state.
 
 ## Architecture
 
 ```
-main.go → cmd/root.go → cmd/{futures,perps,options,predictions,config}/ → internal/cmdutil → internal/api → internal/output
+main.go → cmd/root.go → cmd/{futures,perps,options,spot,predictions,instruments,config}/ → internal/cmdutil → internal/api → internal/output
                        → cmd/interactive.go (REPL)
                        → cmd/watch.go (live-updating)
                        → cmd/saved.go (saved queries)
@@ -32,11 +32,14 @@ main.go → cmd/root.go → cmd/{futures,perps,options,predictions,config}/ → 
 | `cmd/futures/` | Dated futures subcommands (catalog, snapshot, ohlcvt, carry, oi, trades, etc.) |
 | `cmd/perps/` | Perpetual swap subcommands (same structure as futures) |
 | `cmd/options/` | Options subcommands + vol-surface sub-group |
+| `cmd/spot/` | Spot market subcommands (catalog, snapshot, ohlcvt, ticker, volume, l2-orderbook, trades) |
 | `cmd/predictions/` | Polymarket prediction market subcommands |
+| `cmd/instruments/` | Cross-product instrument registry — list + detail across all exchanges/market types |
 | `cmd/config/` | Config init/show/set/path |
 | `internal/api/client.go` | HTTP client — auth (`apiKey` header), retry on 429, network error wrapping |
 | `internal/api/endpoints.go` | API endpoint path constants |
 | `internal/cmdutil/cmdutil.go` | Shared CLI helpers — `MustClient()`, `RunAndPrint()`, `CommonFlags`, global state |
+| `internal/cmdutil/examples.go` | Dynamic instrument-name helpers for help text (`{{FUT}}` / `{{OPT_C}}` / `{{OPT_P}}` / `{{MAT}}` token substitution) |
 | `internal/config/config.go` | Config loading/saving, env var overrides, defaults |
 | `internal/config/saved.go` | Saved queries file I/O, placeholder expansion |
 | `internal/output/printer.go` | Table/JSON/CSV formatting, lipgloss styles, number formatting |
@@ -183,29 +186,48 @@ func init() {
 
 ## Common Mistakes to Avoid
 
-1. **Never add `CommonFlags` to snapshot/catalog commands.** These endpoints return all records in a single response — no pagination, no `-n` limit. Only time-series endpoints (ohlcvt, carry, oi, trades, volume, ticker, etc.) use `CommonFlags`.
+1. **Snapshot endpoints don't paginate. Catalog endpoints do.** Snapshots return a complete point-in-time view in a single response — never add `CommonFlags` to a `snapshot` command. Catalogs are paginated (`limit`, `cursor`) and accept per-product filters (`maturity`, `strike-min`/`strike-max`, `option-type`, `quote-currency`, etc.); they DO use `CommonFlags`. When adding a catalog command, also strip the time-window fields after `ToParams()` because catalog has no time-series:
 
-2. **Never use `time.Now()` for version detection in tests.** `version.go` calls git at init time. If building in a non-git context, it falls back to `"dev"`.
+   ```go
+   params := flags.CommonFlags.ToParams()
+   params.Start = ""
+   params.End = ""
+   params.Resolution = ""
+   params.SortDir = ""
+   ```
 
-3. **Never forget to update all four places when adding a command:**
+2. **Time-series default sort is `DESC` (newest first).** `CommonFlags.ToParams()` sets `SortDir = "DESC"` when the user passed neither `--sort-dir` nor `--cursor`. Don't override this in command Run funcs unless you have a reason. When `--cursor` is present, the CLI deliberately doesn't inject a default direction so paginated scans keep their starting direction.
+
+3. **Charts must be passed chronologically.** `RunAndPrint` reverses the JSON array before passing it to `RenderChart` whenever `params.SortDir == "DESC"`. If you write a new chart-rendering path, mirror this — charts are visually meaningless if drawn in reverse-time.
+
+4. **Instrument names in `--help` text use tokens, not literal dates.** Use `{{FUT}}` (e.g. `BTC-26JUN26`), `{{OPT_C}}` / `{{OPT_P}}` (e.g. `BTC-26JUN26-100000-C`), and `{{MAT}}` (e.g. `26JUN26`) in cobra `Long` and `Example` fields. `cmdutil.SubstituteExamplesRecursive(rootCmd)` is called once from `cmd/root.go init()` and replaces all tokens at startup. For flag descriptions (which aren't covered by the recursive walk), use `cmdutil.ExampleMaturity()` directly: `"Filter by maturity (e.g. "+cmdutil.ExampleMaturity()+")"`.
+
+5. **Never use `time.Now()` for version detection in tests.** `version.go` calls git at init time. If building in a non-git context, it falls back to `"dev"`.
+
+6. **Never forget to update all five places when adding a command:**
    - The command definition in `cmd/{group}/{group}.go`
    - The endpoint constant in `internal/api/endpoints.go`
    - The watch endpoint map in `cmd/watch.go`
    - The completer command tree in `internal/completer/completer.go`
+   - The catalog endpoint map in `internal/completer/completer.go` (if the new group has a catalog used for instrument autocompletion)
 
-4. **Never add a command to two cobra parents.** Cobra doesn't support it. If you need an alias, use `Aliases` on the command itself.
+7. **Never add a command to two cobra parents.** Cobra doesn't support it. If you need an alias, use `Aliases` on the command itself.
 
-5. **Never skip `resetFlags()` in the REPL.** Persistent flags leak between commands. The `resetFlags()` call in `executeREPLCommand` clears them after each invocation.
+8. **Never skip `resetFlags()` in the REPL.** Persistent flags leak between commands. The `resetFlags()` call in `executeREPLCommand` clears them after each invocation.
 
-6. **Never print to stdout for diagnostic/progress messages.** Use `os.Stderr`. Stdout is reserved for data output — agents and pipes depend on clean JSON/table output.
+9. **Never print to stdout for diagnostic/progress messages.** Use `os.Stderr`. Stdout is reserved for data output — agents and pipes depend on clean JSON/table output.
 
-7. **Vol-surface is under options, not a top-level command.** The API paths are `/api/v1/options/vol-surface/...` and the CLI mirrors this: `laevitas options vol-surface snapshot`.
+10. **Vol-surface is under options, not a top-level command.** The API paths are `/api/v1/options/vol-surface/...` and the CLI mirrors this: `laevitas options vol-surface snapshot`.
 
-8. **The API `instrument_name` field is the canonical identifier.** Don't invent your own naming — use exactly what the catalog endpoint returns.
+11. **Spot defaults to `binance`, not `deribit`.** Deribit doesn't trade spot. `cmd/spot/spot.go` has a `spotExchange()` helper that falls back to `binance` when the global `cmdutil.Exchange` is `deribit`. Use it on every spot command.
 
-9. **Don't add error handling for flags Cobra already validates.** `cobra.ExactArgs(1)` handles missing arguments. `MarkFlagRequired` handles missing required flags.
+12. **The API `instrument_name` field is the canonical identifier.** Don't invent your own naming — use exactly what the catalog endpoint returns.
 
-10. **Version strings never include the `v` prefix internally.** Git tags use `v0.1.0`, but `version.Version` stores `0.1.0`. Display code adds the `v`.
+13. **Don't add error handling for flags Cobra already validates.** `cobra.ExactArgs(1)` handles missing arguments. `MarkFlagRequired` handles missing required flags.
+
+14. **Version strings never include the `v` prefix internally.** Git tags use `v0.1.0`, but `version.Version` stores `0.1.0`. Display code adds the `v`.
+
+15. **`--sort-dir` is registered on every time-series command via `AddCommonFlags`.** Don't re-declare it on individual commands or Cobra panics with "flag redefined: sort-dir". Trades/liquidations used to declare their own; they no longer do.
 
 ## Environment Variables
 
@@ -220,12 +242,20 @@ func init() {
 
 ### Adding a new data command
 1. Add endpoint constant to `internal/api/endpoints.go`
-2. Add cobra command in the appropriate `cmd/{group}/{group}.go` with the standard pattern
+2. Add cobra command in the appropriate `cmd/{group}/{group}.go` with the standard pattern. Use `{{FUT}}` / `{{OPT_C}}` / `{{OPT_P}}` / `{{MAT}}` tokens in `Example` and `Long` fields instead of literal expiry dates.
 3. Register in `init()` with `Cmd.AddCommand(newCmd)`
 4. Add to watch endpoint map in `cmd/watch.go`
 5. Add to completer command tree in `internal/completer/completer.go`
-6. Update `docs/SKILL.md` with the new command
-7. Build and test: `go build -o laevitas . && ./laevitas {group} {cmd} --help`
+6. If the new command requires a query field that's not on `RequestParams`, add it AND wire it through `buildURL` in `internal/api/client.go`.
+7. Update `docs/SKILL.md` and `README.md` with the new command
+8. Build and test: `go build -o laevitas . && ./laevitas {group} {cmd} --help`
+
+### Adding a new product group (like spot or instruments)
+1. Steps 1-7 above for each subcommand.
+2. Create `cmd/{group}/{group}.go` with a top-level `Cmd` variable and per-subcommand `init()` registration.
+3. Register the group in `cmd/root.go`: import + `rootCmd.AddCommand({group}.Cmd)`.
+4. Add the group to `topLevelCommands` and `commandTree` in `internal/completer/completer.go`.
+5. If the group has a `catalog` endpoint used for instrument autocompletion, add it to `catalogEndpoints` in `internal/completer/completer.go`.
 
 ### Testing changes
 ```bash

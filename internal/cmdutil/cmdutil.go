@@ -46,6 +46,7 @@ type CommonFlags struct {
 	Limit      int
 	Cursor     string
 	Currency   string
+	SortDir    string
 }
 
 // AddCommonFlags registers the shared flags on a command.
@@ -57,6 +58,7 @@ func AddCommonFlags(cmd *cobra.Command, f *CommonFlags) {
 	cmd.Flags().IntVarP(&f.Limit, "limit", "n", 0, "Number of records (1-1000)")
 	cmd.Flags().StringVar(&f.Cursor, "cursor", "", "Pagination cursor from previous response")
 	cmd.Flags().StringVar(&f.Currency, "currency", "", "Base currency filter (BTC, ETH)")
+	cmd.Flags().StringVar(&f.SortDir, "sort-dir", "", "Sort direction: ASC or DESC (default DESC — newest first)")
 }
 
 // parsePeriod converts a shorthand like "24h", "3d", "30d" into a time.Duration.
@@ -122,6 +124,13 @@ func (f *CommonFlags) ToParams() *api.RequestParams {
 		}
 	}
 
+	// Default sort direction: newest-first when no cursor and no explicit direction.
+	// Skip when --cursor is set so a paginated scan keeps the direction it started with.
+	sortDir := f.SortDir
+	if sortDir == "" && f.Cursor == "" {
+		sortDir = "DESC"
+	}
+
 	p := &api.RequestParams{
 		Start:      start,
 		End:        end,
@@ -129,6 +138,7 @@ func (f *CommonFlags) ToParams() *api.RequestParams {
 		Limit:      f.Limit,
 		Cursor:     f.Cursor,
 		Currency:   f.Currency,
+		SortDir:    sortDir,
 	}
 	if Exchange != "" {
 		p.Exchange = Exchange
@@ -307,10 +317,18 @@ func RunAndPrint(client *api.Client, endpoint string, params *api.RequestParams)
 		return
 	}
 
-	// Render inline chart for time-series data in table mode
+	// Render inline chart for time-series data in table mode.
+	// Charts must be drawn chronologically (oldest→newest, left→right) regardless
+	// of how the response is sorted, so reverse the data when the request was DESC.
 	if p.Format == output.FormatTable && !NoChart {
 		if col, caption := output.ChartableEndpoint(endpoint); col != "" {
-			output.RenderChart(p.Writer, data, col, caption)
+			chartData := data
+			if params != nil && params.SortDir == "DESC" {
+				if reversed, ok := reverseJSONArray(data); ok {
+					chartData = reversed
+				}
+			}
+			output.RenderChart(p.Writer, chartData, col, caption)
 		}
 	}
 
@@ -330,7 +348,11 @@ func RunAndPrint(client *api.Client, endpoint string, params *api.RequestParams)
 				cursor = cursorWrapper.NextCursor
 			}
 			if cursor != "" {
-				fmt.Fprintf(os.Stderr, "\n→ More results available. Use --cursor %q\n", cursor)
+				label := "More results"
+				if params != nil && params.SortDir == "DESC" {
+					label = "Older results"
+				}
+				fmt.Fprintf(os.Stderr, "\n→ %s available. Use --cursor %q\n", label, cursor)
 			}
 		}
 	}
@@ -408,5 +430,45 @@ func formatBytes(b int) string {
 		return fmt.Sprintf("%.1f KB", float64(b)/1024)
 	default:
 		return fmt.Sprintf("%d B", b)
+	}
+}
+
+// reverseJSONArray returns the same JSON payload with its top-level array
+// reversed. Handles both bare arrays and { "data": [...] } envelopes.
+// Returns ok=false if the payload doesn't look like a record array.
+func reverseJSONArray(data []byte) ([]byte, bool) {
+	var bare []json.RawMessage
+	if err := json.Unmarshal(data, &bare); err == nil {
+		reverseRaw(bare)
+		out, err := json.Marshal(bare)
+		return out, err == nil
+	}
+	var env struct {
+		Data json.RawMessage `json:"data"`
+		Meta json.RawMessage `json:"meta,omitempty"`
+	}
+	if err := json.Unmarshal(data, &env); err != nil || len(env.Data) == 0 {
+		return nil, false
+	}
+	var rows []json.RawMessage
+	if err := json.Unmarshal(env.Data, &rows); err != nil {
+		return nil, false
+	}
+	reverseRaw(rows)
+	newData, err := json.Marshal(rows)
+	if err != nil {
+		return nil, false
+	}
+	wrapper := map[string]json.RawMessage{"data": newData}
+	if len(env.Meta) > 0 {
+		wrapper["meta"] = env.Meta
+	}
+	out, err := json.Marshal(wrapper)
+	return out, err == nil
+}
+
+func reverseRaw(s []json.RawMessage) {
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
 	}
 }

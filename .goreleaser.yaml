@@ -1,0 +1,175 @@
+# GoReleaser config for the Laevitas CLI.
+#
+# Local snapshot test:
+#   goreleaser release --snapshot --clean
+#
+# Production release is driven by .github/workflows/release.yml when a vX.Y.Z
+# tag is pushed. See RELEASING.md for the full procedure.
+
+version: 2
+
+project_name: laevitas
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: laevitas
+    main: .
+    binary: laevitas
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # Windows on arm64 isn't a meaningful CLI target right now.
+      - goos: windows
+        goarch: arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/laevitas/cli/internal/version.Version={{.Version}}
+      - -X github.com/laevitas/cli/internal/version.CommitSHA={{.ShortCommit}}
+      - -X github.com/laevitas/cli/internal/version.BuildDate={{.Date}}
+
+archives:
+  - id: default
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- if eq .Os "darwin" }}macOS
+      {{- else if eq .Os "linux" }}Linux
+      {{- else if eq .Os "windows" }}Windows
+      {{- else }}{{ .Os }}{{ end }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}arm64
+      {{- else }}{{ .Arch }}{{ end }}
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE*
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev"
+
+changelog:
+  # GoReleaser writes its own per-tag commit-summary to the GitHub Release
+  # body. The full per-version notes live in CHANGELOG.md (referenced from
+  # release_notes_mode below).
+  use: github
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '(?i)^.*?(feat|add)(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '(?i)^.*?(fix|bug)(\(.+\))??!?:.+$'
+      order: 1
+    - title: Documentation
+      regexp: '(?i)^.*?docs?(\(.+\))??!?:.+$'
+      order: 2
+    - title: Other
+      order: 999
+  filters:
+    exclude:
+      - '^chore:'
+      - '^ci:'
+      - '^test:'
+      - 'Merge pull request'
+      - 'Merge branch'
+
+release:
+  github:
+    owner: laevitas
+    name: cli
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    ## Laevitas CLI {{ .Tag }}
+
+    See [CHANGELOG.md](https://github.com/laevitas/cli/blob/main/CHANGELOG.md) for the full notes.
+
+    ### Install
+
+    **macOS / Linux (Homebrew):**
+    ```sh
+    brew install laevitas/cli/laevitas
+    ```
+
+    **macOS / Linux (one-line script):**
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/laevitas/cli/main/install.sh | sh
+    ```
+
+    **Windows (PowerShell):**
+    ```powershell
+    irm https://raw.githubusercontent.com/laevitas/cli/main/install.ps1 | iex
+    ```
+
+    **Go:**
+    ```sh
+    go install github.com/laevitas/cli@{{ .Tag }}
+    ```
+
+    Or download a binary below.
+
+# Homebrew tap. Requires the laevitas/homebrew-cli repo to exist and a
+# HOMEBREW_TAP_TOKEN secret with write access to it. Skipped silently if
+# either is missing (goreleaser logs a warning and continues).
+#
+# Note: GoReleaser v2.x phased out `brews` (Formulae) in favor of
+# `homebrew_casks` (Casks) for distributing pre-built binaries. Casks are
+# the right shape for a Go CLI shipped as a tarball — formulas would imply
+# source-build install. Users still run `brew install laevitas/cli/laevitas`.
+homebrew_casks:
+  - name: laevitas
+    repository:
+      owner: laevitas
+      name: homebrew-cli
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+      pull_request:
+        enabled: false
+    homepage: "https://github.com/laevitas/cli"
+    description: "Crypto derivatives data CLI — futures, perpetuals, options, spot, vol surfaces, prediction markets."
+    license: "MIT"
+    skip_upload: auto
+    url:
+      verified: "github.com/laevitas/cli"
+    commit_author:
+      name: laevitas-release-bot
+      email: noreply@laevitas.ch
+    # Strip the macOS quarantine bit so users don't have to right-click→Open.
+    # Safe because the binary itself is reproducible from this repo's tag.
+    hooks:
+      post:
+        install: |
+          if OS.mac? && File.exist?("#{staged_path}/laevitas")
+            system_command "/usr/bin/xattr",
+                           args: ["-dr", "com.apple.quarantine", "#{staged_path}/laevitas"]
+          end
+
+# Scoop bucket for Windows. Requires laevitas/scoop-bucket repo + same token.
+scoops:
+  - repository:
+      owner: laevitas
+      name: scoop-bucket
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/laevitas/cli"
+    description: "Crypto derivatives data CLI."
+    license: "MIT"
+    skip_upload: auto

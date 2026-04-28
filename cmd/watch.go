@@ -384,6 +384,20 @@ func watchEndpointForCommand(cmd *cobra.Command) (string, error) {
 		"predictions orderbook":  api.PredictionsOrderbookRaw,
 		"predictions ticker":     api.PredictionsTickerHistory,
 		"predictions metadata":   api.PredictionsMetadata,
+		// Spot
+		"spot catalog":       api.SpotCatalog,
+		"spot snapshot":      api.SpotSnapshot,
+		"spot metadata":      api.SpotMetadata,
+		"spot ohlcvt":        api.SpotOHLCVT,
+		"spot ticker":        api.SpotTicker,
+		"spot volume":        api.SpotVolume,
+		"spot level1":        api.SpotLevel1,
+		"spot orderbook":     api.SpotL2Orderbook,
+		"spot orderbook-raw": api.SpotL2OrderbookRaw,
+		"spot trades":        api.SpotTrades,
+		// Cross-product instruments registry
+		"instruments list":   api.InstrumentsList,
+		"instruments detail": api.InstrumentsDetail,
 	}
 
 	// Extract command key from full path "laevitas parent child [subchild]"
