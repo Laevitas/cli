@@ -27,10 +27,6 @@ builds:
     goarch:
       - amd64
       - arm64
-    ignore:
-      # Windows on arm64 isn't a meaningful CLI target right now.
-      - goos: windows
-        goarch: arm64
     flags:
       - -trimpath
     ldflags:

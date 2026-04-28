@@ -17,7 +17,12 @@ function Write-Ok($msg)   { Write-Host "✓ $msg" -ForegroundColor Green }
 function Write-Err($msg)  { Write-Host "✗ $msg" -ForegroundColor Red; exit 1 }
 
 # ─── detect arch ─────────────────────────────────────────────────────────────
-$arch = if ([System.Environment]::Is64BitOperatingSystem) { 'x86_64' } else { Write-Err 'Unsupported architecture (32-bit Windows is not supported).' }
+$osArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+$arch = switch ($osArch) {
+    'X64'   { 'x86_64' }
+    'Arm64' { 'arm64' }
+    default { Write-Err "Unsupported architecture: $osArch" }
+}
 
 # ─── pick version ────────────────────────────────────────────────────────────
 $version = if ($env:LAEVITAS_VERSION) { $env:LAEVITAS_VERSION } else {

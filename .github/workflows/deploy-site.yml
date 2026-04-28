@@ -1,0 +1,34 @@
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "install.ps1"
+      - "install.sh"
+      - ".github/workflows/deploy-site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sync the canonical installers into site/ so cli.laevitas.ch serves
+      # the same content as raw.githubusercontent.com/laevitas/cli/main/.
+      - name: Sync install scripts into site/
+        run: |
+          cp install.ps1 site/install.ps1
+          cp install.sh  site/install.sh
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          command: pages deploy site --project-name=cli --branch=main

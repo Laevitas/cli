@@ -101,9 +101,19 @@ Once this secret is set, future tagged releases will automatically update the ta
 
 > The secret name is `HOMEBREW_TAP_TOKEN` for historical reasons even though it covers Scoop too — keeps the `.goreleaser.yaml` config readable.
 
-### 4. (Optional) Reserve `cli.laevitas.ch` for the install script
+### 4. Cloudflare Pages secrets for `cli.laevitas.ch`
 
-Currently the README points users at `https://raw.githubusercontent.com/laevitas/cli/main/install.sh`. If you want a prettier `cli.laevitas.ch/install.sh`, you'll need a static-hosting redirect (Cloudflare Worker, GitHub Pages with a custom domain, or any redirect host). Until then the raw GitHub URL works fine.
+The `cli.laevitas.ch` landing page and install scripts are deployed from `site/` by [`.github/workflows/deploy-site.yml`](.github/workflows/deploy-site.yml). The workflow runs on every push to `main` that touches `site/**`, the root `install.{ps1,sh}`, or the workflow itself. Before the first push it needs two repo secrets:
+
+1. **Create a Cloudflare API token.** Cloudflare dashboard → My Profile → API Tokens → **Create Token** → use the **"Cloudflare Workers"** template (covers Pages too) or a custom token with `Account → Cloudflare Pages → Edit`. Scope to your account; no IP filter.
+2. **Grab your Account ID** from the right sidebar of any Workers/Pages dashboard page.
+3. **In `laevitas/cli` → Settings → Secrets and variables → Actions**, add:
+   - `CF_API_TOKEN` = the token from step 1
+   - `CF_ACCOUNT_ID` = the ID from step 2
+
+The Pages project itself must be named `cli` (matches `--project-name=cli` in the workflow). If the dashboard shows a "disconnected from Git" banner on the existing project, **disconnect** the dashboard's own Git integration — CI now drives deploys, and leaving both wired up causes them to fight. The custom domain (`cli.laevitas.ch`) stays attached to the Pages project either way.
+
+The root `install.{ps1,sh}` are the source of truth. The workflow copies them into `site/` immediately before `wrangler pages deploy`, so there is no second copy to keep in sync. `site/install.{ps1,sh}` is `.gitignore`d to enforce this.
 
 ---
 
