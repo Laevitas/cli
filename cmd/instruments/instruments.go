@@ -52,11 +52,11 @@ var listCmd = &cobra.Command{
 
 		params.Exchange = cmdutil.Exchange
 		params.MarketType = listFlags.MarketType
-		// CommonFlags.Currency carries base; the instruments endpoint uses base_currency
-		// which buildURL already maps from .Currency. Use BaseCurrency override if set.
-		if listFlags.BaseCurrency != "" {
-			params.Currency = listFlags.BaseCurrency
-		}
+		// The instruments registry uses ?base_currency, not ?currency. Wire the
+		// flag through the dedicated BaseCurrency field so we don't accidentally
+		// send ?currency=BTC (which the registry silently ignores, returning
+		// every instrument alphabetically).
+		params.BaseCurrency = listFlags.BaseCurrency
 		params.QuoteCurrency = listFlags.QuoteCurrency
 		params.Status = listFlags.Status
 		params.MarginType = listFlags.MarginType

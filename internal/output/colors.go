@@ -6,7 +6,7 @@ import (
 	"golang.org/x/term"
 )
 
-// Brand colors for TTY output.
+// Generic ANSI helpers (8-color terminal palette).
 const (
 	Cyan   = "\033[36m"
 	Green  = "\033[32m"
@@ -17,13 +17,34 @@ const (
 	Reset  = "\033[0m"
 )
 
-// Semantic aliases.
+// Laevitas brand palette, 24-bit truecolor. From Branding Guidelines (Apr 2021):
+//
+//	Primary green   #46be52   "Laevitas green" — accents, positive deltas, brand glyph
+//	Dark navy       #1a2127   header backgrounds, deep contrast
+//	Mid grey        #475057   secondary text, dim labels, metadata
+//	Light grey      #ececec   separators, faint borders
+//
+// Modern terminals (iTerm2, Windows Terminal, VS Code, Alacritty, Kitty) honour
+// these directly. Older terminals fall back to the nearest 256-colour entry —
+// still readable, just less brand-faithful.
 const (
-	ColorSuccess = Green
-	ColorError   = Red
-	ColorWarn    = Yellow
-	ColorAccent  = Cyan
-	ColorMuted   = Dim
+	BrandGreen     = "\033[38;2;70;190;82m"     // #46be52
+	BrandNavy      = "\033[38;2;26;33;39m"      // #1a2127
+	BrandGreyMid   = "\033[38;2;71;80;87m"      // #475057
+	BrandGreyLight = "\033[38;2;236;236;236m"   // #ececec
+
+	BrandGreenBg = "\033[48;2;70;190;82m"  // green background (rare; for badges)
+	BrandNavyBg  = "\033[48;2;26;33;39m"   // dark navy background (header rows)
+)
+
+// Semantic aliases — prefer these in new code so the palette can swap centrally.
+const (
+	ColorSuccess  = BrandGreen
+	ColorError    = Red          // No brand red exists; using terminal red.
+	ColorWarn     = Yellow
+	ColorAccent   = BrandGreen   // Brand-coloured accents replace generic cyan.
+	ColorMuted    = BrandGreyMid // Dim text uses brand mid-grey, not generic dim.
+	ColorHeaderBg = BrandNavyBg
 )
 
 // Colorize wraps text in ANSI color codes. Returns plain text if noColor is true.

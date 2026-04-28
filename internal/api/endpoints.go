@@ -108,3 +108,9 @@ const (
 	InstrumentsList   = "/api/v1/instruments"
 	InstrumentsDetail = "/api/v1/instruments/detail"
 )
+
+// ─── Analytics ──────────────────────────────────────────────────────────
+
+const (
+	AnalyticsRealizedVolatility = "/api/v1/analytics/realized-volatility"
+)

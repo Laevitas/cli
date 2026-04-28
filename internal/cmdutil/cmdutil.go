@@ -255,6 +255,15 @@ func Ftoa(f float64) string {
 }
 
 // RunAndPrint fetches data, prints it, and handles errors.
+//
+// JSON output is wrapped in a stable envelope:
+//
+//	{"success": true,  "data": [...], "meta": {...}}            // success
+//	{"success": false, "error": {"message", "code", "status"}}  // failure
+//
+// Table and CSV output are NOT enveloped — they format the data array directly.
+// Errors in JSON mode go to stdout (so agents can parse them); errors in table
+// or csv mode go to stderr free-text. Exit code is non-zero for any error.
 func RunAndPrint(client *api.Client, endpoint string, params *api.RequestParams) {
 	// Warn if instrument is specified but exchange is missing
 	if params != nil && params.InstrumentName != "" && params.Exchange == "" {
@@ -276,7 +285,7 @@ func RunAndPrint(client *api.Client, endpoint string, params *api.RequestParams)
 	}
 
 	if err != nil {
-		output.PrintError(p.Format, err)
+		printErrorEnvelope(p, err)
 		if !InteractiveMode {
 			os.Exit(1)
 		}
@@ -309,7 +318,15 @@ func RunAndPrint(client *api.Client, endpoint string, params *api.RequestParams)
 		}
 	}
 
-	if err := p.Print(data); err != nil {
+	// JSON output: wrap in success envelope. Table/CSV: pass through.
+	printPayload := data
+	if p.Format == output.FormatJSON {
+		if wrapped, ok := wrapSuccessEnvelope(data); ok {
+			printPayload = wrapped
+		}
+	}
+
+	if err := p.Print(printPayload); err != nil {
 		output.Errorf("Formatting output: %s", err)
 		if !InteractiveMode {
 			os.Exit(1)
@@ -431,6 +448,100 @@ func formatBytes(b int) string {
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
+}
+
+// wrapSuccessEnvelope rewrites the API response body into the v0.6.0 envelope
+// shape: {"success": true, "data": [...], "meta": {...}}.
+//
+// The upstream API returns either a bare array, or {"data": [...], "meta": {...}}
+// (sometimes plus "count"). We normalise to a single shape so agents always see
+// the same envelope regardless of which endpoint they hit.
+//
+// Returns (payload, true) on success. On any unmarshal failure we return
+// (nil, false) and the caller falls back to printing the raw bytes — the
+// envelope is best-effort, never a hard requirement.
+func wrapSuccessEnvelope(data []byte) ([]byte, bool) {
+	out := map[string]interface{}{"success": true}
+
+	// Try envelope-shaped first: {"data": ..., "meta": ..., "count": ...}
+	var env struct {
+		Data  json.RawMessage `json:"data"`
+		Meta  json.RawMessage `json:"meta,omitempty"`
+		Count *int            `json:"count,omitempty"`
+	}
+	if err := json.Unmarshal(data, &env); err == nil && len(env.Data) > 0 {
+		out["data"] = env.Data
+		meta := buildMeta(env.Meta, env.Count)
+		if meta != nil {
+			out["meta"] = meta
+		}
+		b, err := json.Marshal(out)
+		return b, err == nil
+	}
+
+	// Fall back: bare array or any other JSON value.
+	var bare json.RawMessage = data
+	out["data"] = bare
+	b, err := json.Marshal(out)
+	return b, err == nil
+}
+
+// buildMeta normalises the meta block. It keeps any meta fields the upstream
+// API sent and adds count if present at the top level. Returns nil when there
+// is nothing to report so callers can omit the key entirely.
+func buildMeta(rawMeta json.RawMessage, count *int) map[string]interface{} {
+	meta := map[string]interface{}{}
+	if len(rawMeta) > 0 {
+		var parsed map[string]interface{}
+		if err := json.Unmarshal(rawMeta, &parsed); err == nil {
+			for k, v := range parsed {
+				meta[k] = v
+			}
+		}
+	}
+	if count != nil {
+		meta["count"] = *count
+	}
+	if len(meta) == 0 {
+		return nil
+	}
+	return meta
+}
+
+// printErrorEnvelope emits an error in the right shape for the active output
+// format. JSON mode produces {"success": false, "error": {...}} on stdout so
+// agents can parse a single shape for both success and failure. Table/CSV
+// modes fall back to the existing stderr free-text path.
+func printErrorEnvelope(p *output.Printer, err error) {
+	if p.Format != output.FormatJSON {
+		output.PrintError(p.Format, err)
+		return
+	}
+
+	errObj := map[string]interface{}{
+		"message": err.Error(),
+		"code":    api.ErrCodeUnknown,
+	}
+
+	if apiErr, ok := err.(*api.APIError); ok {
+		errObj["code"] = apiErr.Code()
+		errObj["status"] = apiErr.StatusCode
+		// Prefer the upstream message body over our wrapped Error() string.
+		errObj["message"] = apiErr.Message
+		if apiErr.Endpoint != "" {
+			errObj["endpoint"] = apiErr.Endpoint
+		}
+	} else if netErr, ok := err.(*api.NetworkError); ok {
+		errObj["code"] = netErr.Code()
+	}
+
+	envelope := map[string]interface{}{
+		"success": false,
+		"error":   errObj,
+	}
+	enc := json.NewEncoder(p.Writer)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(envelope)
 }
 
 // reverseJSONArray returns the same JSON payload with its top-level array
