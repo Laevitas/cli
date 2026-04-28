@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/laevitas/cli/cmd/analytics"
 	"github.com/laevitas/cli/cmd/config"
 	"github.com/laevitas/cli/cmd/futures"
 	"github.com/laevitas/cli/cmd/instruments"
@@ -141,6 +142,7 @@ Twitter: https://twitter.com/laevitas1` + "\033[0m" + `
 	rootCmd.AddCommand(spot.Cmd)
 	rootCmd.AddCommand(predictions.Cmd)
 	rootCmd.AddCommand(instruments.Cmd)
+	rootCmd.AddCommand(analytics.Cmd)
 	rootCmd.AddCommand(watchCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(update.Cmd)

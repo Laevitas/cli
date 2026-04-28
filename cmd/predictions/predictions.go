@@ -7,6 +7,20 @@ import (
 	"github.com/laevitas/cli/internal/cmdutil"
 )
 
+// predictionsExchange returns the exchange to use for prediction-market
+// endpoints. Polymarket is the only supported venue today, so the global
+// `--exchange` default (which is `deribit` for the rest of the CLI) leaks
+// a meaningless param into every predictions request. This helper pins the
+// value to `polymarket` unless the user has explicitly chosen a known
+// prediction-market exchange.
+func predictionsExchange() string {
+	switch cmdutil.Exchange {
+	case "polymarket":
+		return cmdutil.Exchange
+	}
+	return "polymarket"
+}
+
 var Cmd = &cobra.Command{
 	Use:     "predictions",
 	Aliases: []string{"pred", "pm"},
@@ -39,6 +53,7 @@ var catalogCmd = &cobra.Command{
 		params.End = ""
 		params.Resolution = ""
 		params.SortDir = ""
+		params.Exchange = predictionsExchange()
 		params.Category = catalogFlags.Category
 		params.EventSlug = catalogFlags.EventSlug
 		params.Keyword = catalogFlags.Keyword
@@ -56,10 +71,12 @@ var categoriesCmd = &cobra.Command{
 }
 
 var snapshotFlags struct {
-	Category   string
-	EventSlug  string
-	Date       string
-	Resolution string
+	Category       string
+	EventSlug      string
+	Keyword        string
+	InstrumentName string
+	Date           string
+	Resolution     string
 }
 
 var snapshotCmd = &cobra.Command{
@@ -68,10 +85,13 @@ var snapshotCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := &api.RequestParams{
-			Category:   snapshotFlags.Category,
-			EventSlug:  snapshotFlags.EventSlug,
-			Date:       snapshotFlags.Date,
-			Resolution: snapshotFlags.Resolution,
+			Exchange:       predictionsExchange(),
+			Category:       snapshotFlags.Category,
+			EventSlug:      snapshotFlags.EventSlug,
+			Keyword:        snapshotFlags.Keyword,
+			InstrumentName: snapshotFlags.InstrumentName,
+			Date:           snapshotFlags.Date,
+			Resolution:     snapshotFlags.Resolution,
 		}
 		cmdutil.RunAndPrint(client, api.PredictionsSnapshot, params)
 	},
@@ -86,6 +106,7 @@ var ohlcvtCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := ohlcvtFlags.ToParams()
+		params.Exchange = predictionsExchange()
 		params.InstrumentName = args[0]
 		cmdutil.RunAndPrint(client, api.PredictionsOHLCVT, params)
 	},
@@ -100,6 +121,7 @@ var tradesCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := tradesFlags.ToParams()
+		params.Exchange = predictionsExchange()
 		params.InstrumentName = args[0]
 		cmdutil.RunAndPrint(client, api.PredictionsTrades, params)
 	},
@@ -114,6 +136,7 @@ var tickerCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := tickerFlags.ToParams()
+		params.Exchange = predictionsExchange()
 		params.InstrumentName = args[0]
 		cmdutil.RunAndPrint(client, api.PredictionsTickerHistory, params)
 	},
@@ -128,6 +151,7 @@ var orderbookCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := orderbookFlags.ToParams()
+		params.Exchange = predictionsExchange()
 		params.InstrumentName = args[0]
 		cmdutil.RunAndPrint(client, api.PredictionsOrderbookRaw, params)
 	},
@@ -139,7 +163,10 @@ var metadataCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
-		params := &api.RequestParams{InstrumentName: args[0]}
+		params := &api.RequestParams{
+			Exchange:       predictionsExchange(),
+			InstrumentName: args[0],
+		}
 		cmdutil.RunAndPrint(client, api.PredictionsMetadata, params)
 	},
 }
@@ -152,6 +179,8 @@ func init() {
 
 	snapshotCmd.Flags().StringVar(&snapshotFlags.Category, "category", "", "Filter by category")
 	snapshotCmd.Flags().StringVar(&snapshotFlags.EventSlug, "event", "", "Filter by event slug")
+	snapshotCmd.Flags().StringVar(&snapshotFlags.Keyword, "keyword", "", "Keyword search across instrument names")
+	snapshotCmd.Flags().StringVar(&snapshotFlags.InstrumentName, "instrument", "", "Filter to a specific instrument name (case-insensitive exact)")
 	snapshotCmd.Flags().StringVar(&snapshotFlags.Date, "date", "", "Snapshot datetime (ISO 8601)")
 	snapshotCmd.Flags().StringVarP(&snapshotFlags.Resolution, "resolution", "r", "1h", "Resolution")
 

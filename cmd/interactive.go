@@ -19,24 +19,24 @@ import (
 	"github.com/laevitas/cli/internal/version"
 )
 
-const banner = `
-  ██╗      █████╗ ███████╗██╗   ██╗██╗████████╗ █████╗ ███████╗
-  ██║     ██╔══██╗██╔════╝██║   ██║██║╚══██╔══╝██╔══██╗██╔════╝
-  ██║     ███████║█████╗  ██║   ██║██║   ██║   ███████║███████╗
-  ██║     ██╔══██║██╔══╝  ╚██╗ ██╔╝██║   ██║   ██╔══██║╚════██║
-  ███████╗██║  ██║███████╗ ╚████╔╝ ██║   ██║   ██║  ██║███████║
-  ╚══════╝╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚══════╝
-`
-
+// printBanner renders the REPL header. Replaces the giant ASCII block letters
+// with a single branded line: "▲ LAEVITAS  v0.5.0" in brand green + bold white.
+// Tagline and exit hint follow on dim grey lines.
 func printBanner() {
-	cyan := "\033[36m"
-	bold := "\033[1m"
-	dim := "\033[2m"
-	reset := "\033[0m"
+	green := output.BrandGreen
+	grey := output.BrandGreyMid
+	bold := output.Bold
+	reset := output.Reset
 
-	fmt.Fprintf(os.Stdout, "%s%s%s%s", bold, cyan, banner, reset)
-	fmt.Fprintf(os.Stdout, "  %sDerivatives Data Without The Spread%s            %sv%s%s\n", dim, reset, dim, version.Version, reset)
-	fmt.Fprintf(os.Stdout, "  Type %s'help'%s for commands, %s'quit'%s to exit\n\n", bold, reset, bold, reset)
+	fmt.Fprintf(os.Stdout, "\n  %s%s▲%s  %s%sLAEVITAS%s  %sv%s%s\n",
+		bold, green, reset,
+		bold, output.BrandGreyLight, reset,
+		grey, version.Version, reset,
+	)
+	fmt.Fprintf(os.Stdout, "  %sDerivatives data without the spread.%s\n", grey, reset)
+	fmt.Fprintf(os.Stdout, "  %sType %shelp%s%s for commands, %sexit%s%s to quit.%s\n\n",
+		grey, bold, reset, grey, bold, reset, grey, reset,
+	)
 }
 
 // replCompleter is the session-scoped completer with catalog caching.
@@ -108,7 +108,12 @@ func runInteractive() error {
 		return sq.Names()
 	}
 
-	prompt := "\033[36mLAEVITAS\033[0m > "
+	// Prompt: brand-glyph + chevron. Uses 8-color ANSI (\033[32m / \033[2m)
+	// rather than truecolor because chzyer/readline's Windows ANSI shim
+	// doesn't parse 24-bit SGR sequences and panics on the prompt redraw.
+	// Banner above can use truecolor freely — it's printed before readline
+	// starts and bypasses readline's parser.
+	prompt := "\033[32m▲\033[0m \033[2m›\033[0m "
 
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:          prompt,

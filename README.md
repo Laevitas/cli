@@ -76,6 +76,7 @@ laevitas predictions catalog --keyword bitcoin
 | `spot` | Spot markets — catalog, snapshot, OHLCVT, ticker, volume, L1/L2 orderbook, trades |
 | `predictions` | Prediction markets — catalog, categories, snapshot, OHLCVT, trades, ticker, orderbook |
 | `instruments` | Cross-product instrument registry — `list` + `detail` across all exchanges |
+| `analytics` | Computed cross-asset analytics — realized volatility |
 | `config` | Configuration — init, show, set |
 | `version` | Print version and build information |
 
@@ -158,8 +159,8 @@ Override with `-o json`, `-o table`, or `-o csv`.
 # Human-readable
 laevitas perps carry BTC-PERPETUAL
 
-# Machine-readable (piped)
-laevitas perps carry BTC-PERPETUAL | jq '.[0].funding_rate_close'
+# Machine-readable (piped)  — note: data lives under .data
+laevitas perps carry BTC-PERPETUAL | jq '.data[0].funding_rate_close'
 
 # Explicit JSON
 laevitas perps carry BTC-PERPETUAL -o json
@@ -167,6 +168,34 @@ laevitas perps carry BTC-PERPETUAL -o json
 # CSV for spreadsheets
 laevitas perps carry BTC-PERPETUAL -o csv > funding.csv
 ```
+
+### JSON envelope (v0.6.0+)
+
+Every JSON response is wrapped in a stable envelope so agents can parse one shape for both success and failure:
+
+```json
+// success
+{
+  "success": true,
+  "data": [ ... ],
+  "meta": { "next_cursor": "...", "count": 100 }
+}
+
+// failure (printed to stdout, exit code is non-zero)
+{
+  "success": false,
+  "error": {
+    "message": "API key invalid or expired...",
+    "code": "AUTH_INVALID",
+    "status": 401,
+    "endpoint": "/api/v1/perpetuals/carry"
+  }
+}
+```
+
+**Stable error codes for branching:** `AUTH_INVALID`, `AUTH_FORBIDDEN`, `RATE_LIMITED`, `PAYMENT_REQUIRED`, `BAD_REQUEST`, `NOT_FOUND`, `SERVER_ERROR`, `NETWORK_ERROR`, `UNKNOWN_ERROR`. Use `.error.code` rather than `.error.message` (which is human-readable and may change).
+
+`-o table` and `-o csv` are not enveloped — they format `.data` directly. The envelope is JSON-only.
 
 ## Agent Integration
 
@@ -184,32 +213,46 @@ The CLI is designed to be used by AI agents (Claude, GPT, Codex, etc.) as a nati
 
 ```bash
 # "What's the current BTC futures term structure?"
-laevitas futures snapshot --currency BTC -o json | jq '[.[] | {instrument: .instrument_name, basis: .mark_price - .index_price, days: .days_to_expiry, carry: .annualized_carry}]'
+laevitas futures snapshot --currency BTC -o json | jq '[.data[] | {instrument: .instrument_name, basis: .mark_price - .index_price, days: .days_to_expiry, carry: .annualized_carry}]'
 
 # "Is funding positive or negative right now?"
-laevitas perps carry BTC-PERPETUAL -o json -n 1 | jq '.[0].funding_rate_close'
+laevitas perps carry BTC-PERPETUAL -o json -n 1 | jq '.data[0].funding_rate_close'
 
 # "Show me the biggest BTC options trades today"
 laevitas options trades --currency BTC --sort premium_usd --sort-dir DESC -n 10 -o json
 
 # "What does the vol surface look like?"
-laevitas options vol-surface snapshot --currency BTC -o json | jq '[.[] | {maturity, atm_iv, skew_25d}]'
+laevitas options vol-surface snapshot --currency BTC -o json | jq '[.data[] | {maturity, atm_iv, skew_25d}]'
 
 # "What's the probability of Bitcoin reaching 250k?"
-laevitas predictions ohlcvt will-bitcoin-reach-250000-YES -o json -n 1 | jq '.[0].close'
+laevitas predictions ohlcvt will-bitcoin-reach-250000-YES -o json -n 1 | jq '.data[0].close'
 
 # Combined pipeline: find the highest-carry future and get its order book
-BEST=$(laevitas futures snapshot --currency BTC -o json | jq -r 'sort_by(.annualized_carry) | last | .instrument_name')
+BEST=$(laevitas futures snapshot --currency BTC -o json | jq -r '.data | sort_by(.annualized_carry) | last | .instrument_name')
 laevitas futures orderbook "$BEST" -o json
 
 # Spot reference price for derivatives basis calculation
-laevitas spot ohlcvt BTCUSDT -p 24h -o json -n 1 | jq '.[0].close'
+laevitas spot ohlcvt BTCUSDT -p 24h -o json -n 1 | jq '.data[0].close'
 
 # Browse all active BTC perpetuals across exchanges
 laevitas instruments list --market-type perpetual --base-currency BTC -o json
 
 # Full contract specification for a single instrument
 laevitas instruments detail BTC-PERPETUAL --exchange deribit -o json
+
+# Realized volatility (snapshot — latest reading)
+laevitas analytics rv --instrument BTC-PERPETUAL --window-days 30 -o json
+
+# Realized volatility (historical time-series, 30d daily)
+laevitas analytics rv --instrument BTC-PERPETUAL --window-days 30 -p 30d -r 1d -o json
+
+# Error-aware extraction — works for both success and failure
+RESP=$(laevitas perps carry BTC-PERPETUAL -p 1h -o json)
+if [ "$(echo "$RESP" | jq -r '.success')" = "true" ]; then
+  echo "$RESP" | jq '.data[0].funding_rate_close'
+else
+  echo "$RESP" | jq -r '"Error: \(.error.code) — \(.error.message)"'
+fi
 ```
 
 > **Note on examples:** instrument names like `BTC-26JUN26` in `--help` output are computed dynamically from today's date — the CLI substitutes a plausible near-term quarterly expiry at runtime. Examples in `--help` will always look current; they may not always match a *real* exchange listing exactly. Use `laevitas futures catalog --currency BTC` (or the equivalent `perps`/`options`/`spot` catalog) to discover real active instruments.

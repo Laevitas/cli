@@ -115,6 +115,7 @@ var tradesFlags struct {
 	Sort           string
 	BlockOnly      bool
 	OpeningOnly    bool
+	TopN           int
 }
 
 var tradesCmd = &cobra.Command{
@@ -136,6 +137,7 @@ or --currency for cross-instrument flow (max 7-day window).`,
 		params.Sort = tradesFlags.Sort
 		params.BlockOnly = tradesFlags.BlockOnly
 		params.OpeningOnly = tradesFlags.OpeningOnly
+		params.TopN = tradesFlags.TopN
 		if tradesFlags.MinNotional > 0 {
 			if params.Extra == nil {
 				params.Extra = map[string]string{}
@@ -426,6 +428,7 @@ func init() {
 	tradesCmd.Flags().StringVar(&tradesFlags.Sort, "sort", "", "Sort: timestamp, premium_usd, notional, amount")
 	tradesCmd.Flags().BoolVar(&tradesFlags.BlockOnly, "block-only", false, "Only block trades")
 	tradesCmd.Flags().BoolVar(&tradesFlags.OpeningOnly, "opening-only", false, "Only opening trades")
+	tradesCmd.Flags().IntVar(&tradesFlags.TopN, "top-n", 0, "Return top N trades (no pagination)")
 
 	cmdutil.AddCommonFlags(tradesSummaryCmd, &tradesSummaryFlags.CommonFlags)
 	tradesSummaryCmd.Flags().StringVar(&tradesSummaryFlags.GroupBy, "group-by", "", "Group axis (required): exchange, instrument_name, strike, maturity, option_type, direction, strategy")

@@ -2,6 +2,70 @@
 
 You have access to the `laevitas` CLI which provides real-time cryptocurrency derivatives data. Always use `-o json` for structured output.
 
+## Response shape (v0.6.0+)
+
+Every JSON response uses a stable envelope. Always parse `.success` first, then either `.data` (on success) or `.error` (on failure).
+
+**Success:**
+
+```json
+{
+  "success": true,
+  "data": [ ... ],
+  "meta": { "next_cursor": "...", "count": 100 }
+}
+```
+
+**Failure:**
+
+```json
+{
+  "success": false,
+  "error": {
+    "message": "API key invalid or expired...",
+    "code": "AUTH_INVALID",
+    "status": 401,
+    "endpoint": "/api/v1/perpetuals/carry"
+  }
+}
+```
+
+Errors are emitted to **stdout** (not stderr) when `-o json`, so a single jq pipeline works for both paths. Exit code is non-zero for any error.
+
+**Stable error codes** (use these for branching, not `.error.message`):
+
+| Code | When |
+|------|------|
+| `AUTH_INVALID` | 401 — API key missing/invalid |
+| `AUTH_FORBIDDEN` | 403 — wrong tier or revoked access |
+| `RATE_LIMITED` | 429 — back off, retry with delay |
+| `PAYMENT_REQUIRED` | 402 — x402 payment needed |
+| `BAD_REQUEST` | 4xx — fix params and retry |
+| `NOT_FOUND` | 404 — instrument or path doesn't exist |
+| `SERVER_ERROR` | 5xx — transient, retry with backoff |
+| `NETWORK_ERROR` | DNS/TCP/timeout — retry with backoff |
+| `UNKNOWN_ERROR` | fallback |
+
+**Reading data:** field paths now go through `.data`. Examples:
+
+```bash
+# bad row 0 mark price
+laevitas futures snapshot --currency BTC -o json | jq '.data[0].mark_price'
+
+# total record count from meta
+laevitas perps carry BTC-PERPETUAL -p 7d -o json | jq '.meta.count'
+
+# safe error-aware extraction
+RESP=$(laevitas perps carry BTC-PERPETUAL -p 1h -o json)
+if [ "$(echo "$RESP" | jq -r '.success')" = "true" ]; then
+  echo "$RESP" | jq '.data[0].funding_rate_close'
+else
+  echo "$RESP" | jq -r '.error.code'
+fi
+```
+
+Table (`-o table`) and CSV (`-o csv`) outputs are NOT enveloped — they format `.data` directly.
+
 ## Authentication
 
 The CLI must be configured with an API key:
@@ -96,6 +160,16 @@ laevitas instruments detail <instrument> --exchange EX
 ```
 Use `instruments list` for cross-product browsing (e.g. "every active BTC option"). Use `instruments detail` for a single instrument's full contract specification including raw exchange API data. The product-specific `catalog` commands are still the right call for product-scoped browsing — `instruments list` is for cross-product queries.
 
+### Analytics
+```bash
+# Snapshot mode (latest readings — no time flags)
+laevitas analytics realized-volatility --instrument <instrument> [--window-days 7|30|60|90|180|365] [--estimator close_to_close|parkinson|garman_klass] [--frequency daily|hourly] [--currency BTC]
+
+# Historical mode (time-series — pass any of -p / --start / --end / -n)
+laevitas analytics rv --instrument BTC-PERPETUAL --window-days 30 -p 30d -r 1d
+```
+Aliases: `analytics rv` ≡ `analytics realized-volatility`. Values are annualised percentages (e.g. `38.76` = 38.76%). Snapshot mode returns one row per `(estimator, frequency, window_days)` combination matching your filters; pass `--estimator` and `--frequency` to narrow to a single row. Historical mode paginates and accepts the standard time-series flags.
+
 ### Prediction Markets (Polymarket)
 ```bash
 laevitas predictions catalog [--keyword TERM] [--category CATEGORY] [-n LIMIT]
@@ -133,7 +207,7 @@ Apply to `ohlcvt`, `oi`, `carry`, `trades`, `volume`, `level1`, `orderbook`, `ti
 | `--cursor` | string | Pagination cursor from previous response |
 | `--sort-dir` | `ASC`, `DESC` | Default `DESC` (newest first). Pass `ASC` for chronological. Skipped automatically when `--cursor` is set. |
 
-**Default sort direction is DESC.** Row 0 of any time-series JSON response is the most recent record in the window — `jq '.[0]'` gives "now," not the oldest record. Pass `--sort-dir ASC` to opt into oldest-first when you actually want chronological iteration. Charts always render left-to-right in time regardless of sort direction.
+**Default sort direction is DESC.** Row 0 of any time-series JSON response is the most recent record in the window — `jq '.data[0]'` gives "now," not the oldest record. Pass `--sort-dir ASC` to opt into oldest-first when you actually want chronological iteration. Charts always render left-to-right in time regardless of sort direction.
 
 ### Catalog flags (paginated)
 
@@ -153,7 +227,7 @@ Apply to `ohlcvt`, `oi`, `carry`, `trades`, `volume`, `level1`, `orderbook`, `ti
 
 ### Snapshot flags
 
-**`snapshot` commands return a complete point-in-time view — they do NOT accept `-n`/`--limit`, `-p`/`--period`, `--start`/`--end`, `-r`/`--resolution`, or `--cursor`.** Passing any of these will fail with `unknown flag`. To trim a snapshot response, filter downstream with `jq` (e.g. `jq '.[:3]'`).
+**`snapshot` commands return a complete point-in-time view — they do NOT accept `-n`/`--limit`, `-p`/`--period`, `--start`/`--end`, `-r`/`--resolution`, or `--cursor`.** Passing any of these will fail with `unknown flag`. To trim a snapshot response, filter downstream with `jq` (e.g. `jq '.data[:3]'`).
 
 | Flag | Values | Description |
 |------|--------|-------------|
@@ -166,7 +240,7 @@ Apply to `ohlcvt`, `oi`, `carry`, `trades`, `volume`, `level1`, `orderbook`, `ti
 laevitas futures snapshot --currency BTC -n 3      # ✗ unknown flag
 
 # Right — fetch the full snapshot, trim downstream
-laevitas futures snapshot --currency BTC -o json | jq '.[:3]'
+laevitas futures snapshot --currency BTC -o json | jq '.data[:3]'
 ```
 
 ## Common Patterns
@@ -194,11 +268,11 @@ laevitas options vol-surface term-structure --currency BTC -o json
 laevitas predictions ohlcvt <instrument>-YES -p 7d -o json -n 1
 
 # Spot reference price (for derivatives basis calculations)
-laevitas spot ohlcvt BTCUSDT -p 1h -o json -n 1 | jq '.[0].close'
+laevitas spot ohlcvt BTCUSDT -p 1h -o json -n 1 | jq '.data[0].close'
 
 # Compute perp basis vs spot
-PERP=$(laevitas perps carry BTC-PERPETUAL -o json -n 1 | jq '.[0].mark_price')
-SPOT=$(laevitas spot ohlcvt BTCUSDT -o json -n 1 | jq '.[0].close')
+PERP=$(laevitas perps carry BTC-PERPETUAL -o json -n 1 | jq '.data[0].mark_price')
+SPOT=$(laevitas spot ohlcvt BTCUSDT -o json -n 1 | jq '.data[0].close')
 echo "basis: $(echo "$PERP - $SPOT" | bc)"
 
 # Browse all active BTC perps across exchanges

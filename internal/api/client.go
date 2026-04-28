@@ -106,6 +106,20 @@ func (c *Client) WalletAddress() string {
 	return c.paymentClient.Address()
 }
 
+// Stable error codes surfaced in the JSON error envelope. These are the
+// contract agents key off of — values must not change without a major bump.
+const (
+	ErrCodeAuthInvalid    = "AUTH_INVALID"
+	ErrCodeAuthForbidden  = "AUTH_FORBIDDEN"
+	ErrCodeRateLimited    = "RATE_LIMITED"
+	ErrCodePaymentReq     = "PAYMENT_REQUIRED"
+	ErrCodeBadRequest     = "BAD_REQUEST"
+	ErrCodeNotFound       = "NOT_FOUND"
+	ErrCodeServerError    = "SERVER_ERROR"
+	ErrCodeNetworkError   = "NETWORK_ERROR"
+	ErrCodeUnknown        = "UNKNOWN_ERROR"
+)
+
 // APIError represents a structured error from the API.
 type APIError struct {
 	StatusCode int    `json:"status_code"`
@@ -115,6 +129,28 @@ type APIError struct {
 
 func (e *APIError) Error() string {
 	return fmt.Sprintf("API error %d: %s", e.StatusCode, e.Message)
+}
+
+// Code returns the stable error code for this APIError, derived from
+// StatusCode. Used to populate the error envelope.
+func (e *APIError) Code() string {
+	switch {
+	case e.StatusCode == http.StatusUnauthorized:
+		return ErrCodeAuthInvalid
+	case e.StatusCode == http.StatusForbidden:
+		return ErrCodeAuthForbidden
+	case e.StatusCode == http.StatusTooManyRequests:
+		return ErrCodeRateLimited
+	case e.StatusCode == http.StatusPaymentRequired:
+		return ErrCodePaymentReq
+	case e.StatusCode == http.StatusNotFound:
+		return ErrCodeNotFound
+	case e.StatusCode >= 500:
+		return ErrCodeServerError
+	case e.StatusCode >= 400:
+		return ErrCodeBadRequest
+	}
+	return ErrCodeUnknown
 }
 
 // IsAuthError returns true for 401/403 responses.
@@ -138,6 +174,11 @@ func (e *NetworkError) Error() string {
 
 func (e *NetworkError) Unwrap() error {
 	return e.Err
+}
+
+// Code returns the stable error code for the JSON error envelope.
+func (e *NetworkError) Code() string {
+	return ErrCodeNetworkError
 }
 
 // Response wraps the raw API response with pagination info.
@@ -188,12 +229,21 @@ type RequestParams struct {
 	TopN           int
 	MinNotional    float64
 
-	// Cross-product instruments registry
-	MarketType string
-	Status     string
-	MarginType string
-	ExpiryFrom string
-	ExpiryTo   string
+	// Cross-product instruments registry. BaseCurrency is distinct from
+	// Currency: the registry endpoint uses ?base_currency, while product
+	// catalogs use ?currency. Both can coexist in a single request without
+	// clobbering each other.
+	MarketType   string
+	Status       string
+	MarginType   string
+	ExpiryFrom   string
+	ExpiryTo     string
+	BaseCurrency string
+
+	// Analytics: realized volatility
+	Frequency  string
+	WindowDays int
+	Estimator  string
 
 	// Extra allows arbitrary key-value params
 	Extra map[string]string
@@ -316,6 +366,18 @@ func (c *Client) buildURL(path string, params *RequestParams) string {
 	}
 	if params.ExpiryTo != "" {
 		q.Set("expiry_to", params.ExpiryTo)
+	}
+	if params.BaseCurrency != "" {
+		q.Set("base_currency", params.BaseCurrency)
+	}
+	if params.Frequency != "" {
+		q.Set("frequency", params.Frequency)
+	}
+	if params.WindowDays > 0 {
+		q.Set("window_days", fmt.Sprintf("%d", params.WindowDays))
+	}
+	if params.Estimator != "" {
+		q.Set("estimator", params.Estimator)
 	}
 
 	for k, v := range params.Extra {

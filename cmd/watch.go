@@ -398,6 +398,8 @@ func watchEndpointForCommand(cmd *cobra.Command) (string, error) {
 		// Cross-product instruments registry
 		"instruments list":   api.InstrumentsList,
 		"instruments detail": api.InstrumentsDetail,
+		// Analytics
+		"analytics realized-volatility": api.AnalyticsRealizedVolatility,
 	}
 
 	// Extract command key from full path "laevitas parent child [subchild]"
