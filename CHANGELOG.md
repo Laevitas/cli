@@ -96,6 +96,21 @@ that make every command read better.
   to `polymarket` unless the user explicitly chose a known prediction-market
   exchange.
 
+### Security
+
+- **Bumped Go toolchain from 1.25.7 to 1.25.9.** Closes four stdlib
+  vulnerabilities flagged by `govulncheck`:
+  - `GO-2026-4870` / `CVE-2026-32283` — TLS 1.3 KeyUpdate DoS in `crypto/tls`
+    (reachable from every HTTPS request the CLI makes).
+  - `GO-2026-4947` / `GO-2026-4946` — chain-building and policy-validation
+    issues in `crypto/x509` (reachable through TLS verification).
+  - `GO-2026-4869` — unbounded allocation for old GNU sparse archives in
+    `archive/tar` (reachable from `laevitas update`'s archive extraction).
+
+  One advisory remains open (`GO-2026-4647` against
+  `github.com/coinbase/x402/go`) — there is no patched upstream version yet,
+  so it ships as-is. Will be addressed when Coinbase publishes a fix.
+
 ### Coordinated with API v1.16.0
 
 `/api/v1/instruments` and `/api/v1/instruments/detail` were returning every
