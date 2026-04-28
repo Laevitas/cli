@@ -12,6 +12,11 @@ on:
 
 permissions:
   contents: read
+  # pages-action records a GitHub deployment so the commit/PR pages show
+  # the "deployed to cli (Production)" status. Without this, the action
+  # fails with "Resource not accessible by integration" before the
+  # Cloudflare deploy completes.
+  deployments: write
 
 jobs:
   deploy:
