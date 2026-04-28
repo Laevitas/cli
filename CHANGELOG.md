@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
-## [0.5.1] — 2026-04-28
+## [0.5.2] — 2026-04-28
 
 ### Fixed
 
