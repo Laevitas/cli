@@ -1,0 +1,14 @@
+# Cloudflare Pages headers (https://developers.cloudflare.com/pages/configuration/headers/).
+#
+# By default Pages serves .ps1 / .sh as application/octet-stream. PowerShell's
+# `Invoke-RestMethod` then returns a byte array instead of a string, breaking
+# the `irm <url> | iex` pattern users copy from cli.laevitas.ch. Force text
+# so irm/curl decode as UTF-8 string.
+
+/install.ps1
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=300
+
+/install.sh
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=300
