@@ -20,7 +20,7 @@ Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at
 
 ### Release engineering
 
-- **`cli.laevitas.ch` now has CI/CD.** New `.github/workflows/deploy-site.yml` copies the canonical root `install.{ps1,sh}` into `site/` and deploys the directory to Cloudflare Pages on every push to `main` that touches `site/**` or the install scripts. Requires repo secrets `CF_API_TOKEN` and `CF_ACCOUNT_ID`.
+- **`cli.laevitas.ch` now has CI/CD.** New `.github/workflows/deploy-site.yml` copies the canonical root `install.{ps1,sh}` into `site/` and deploys the `cli` Cloudflare Worker (assets-only, configured in `wrangler.jsonc`) on every push to `main` that touches `site/**`, the install scripts, or `wrangler.jsonc`. Requires repo secrets `CF_API_TOKEN` and `CF_ACCOUNT_ID`.
 - **Removed duplicate install scripts.** `site/install.ps1` and `site/install.sh` are deleted from git and `.gitignore`d; they are now generated at deploy time from the root copies, so the asset-naming convention has a single source of truth.
 
 ## [0.5.0] — 2026-04-27

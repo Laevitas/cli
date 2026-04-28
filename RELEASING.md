@@ -101,19 +101,21 @@ Once this secret is set, future tagged releases will automatically update the ta
 
 > The secret name is `HOMEBREW_TAP_TOKEN` for historical reasons even though it covers Scoop too — keeps the `.goreleaser.yaml` config readable.
 
-### 4. Cloudflare Pages secrets for `cli.laevitas.ch`
+### 4. Cloudflare Worker secrets for `cli.laevitas.ch`
 
-The `cli.laevitas.ch` landing page and install scripts are deployed from `site/` by [`.github/workflows/deploy-site.yml`](.github/workflows/deploy-site.yml). The workflow runs on every push to `main` that touches `site/**`, the root `install.{ps1,sh}`, or the workflow itself. Before the first push it needs two repo secrets:
+`cli.laevitas.ch` is served by a **Cloudflare Worker** named `cli` using the [Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/) feature — i.e. an assets-only Worker pointing at `./site`. It is deployed by [`.github/workflows/deploy-site.yml`](.github/workflows/deploy-site.yml) on every push to `main` that touches `site/**`, the root `install.{ps1,sh}`, [`wrangler.jsonc`](wrangler.jsonc), or the workflow itself. Before the first push the workflow needs two repo secrets:
 
-1. **Create a Cloudflare API token.** Cloudflare dashboard → My Profile → API Tokens → **Create Token** → use the **"Cloudflare Workers"** template (covers Pages too) or a custom token with `Account → Cloudflare Pages → Edit`. Scope to your account; no IP filter.
-2. **Grab your Account ID** from the right sidebar of any Workers/Pages dashboard page.
+1. **Create a Cloudflare API token.** Cloudflare dashboard → My Profile → API Tokens → **Create Token** → use the **"Edit Cloudflare Workers"** template, or a custom token with `Account → Workers Scripts → Edit`. Scope to your account; no IP filter.
+2. **Grab your Account ID** from the right sidebar of any Workers dashboard page.
 3. **In `laevitas/cli` → Settings → Secrets and variables → Actions**, add:
    - `CF_API_TOKEN` = the token from step 1
    - `CF_ACCOUNT_ID` = the ID from step 2
 
-The Pages project itself must be named `cli` (matches `--project-name=cli` in the workflow). If the dashboard shows a "disconnected from Git" banner on the existing project, **disconnect** the dashboard's own Git integration — CI now drives deploys, and leaving both wired up causes them to fight. The custom domain (`cli.laevitas.ch`) stays attached to the Pages project either way.
+The Worker name (`cli`) and the assets directory (`./site`) are both declared in [`wrangler.jsonc`](wrangler.jsonc). The custom domain (`cli.laevitas.ch`) is intentionally **not** declared in `wrangler.jsonc` — leaving it out means wrangler preserves whatever is already attached in the dashboard, so deploys can't accidentally detach the domain.
 
-The root `install.{ps1,sh}` are the source of truth. The workflow copies them into `site/` immediately before `wrangler pages deploy`, so there is no second copy to keep in sync. `site/install.{ps1,sh}` is `.gitignore`d to enforce this.
+If the dashboard shows a "disconnected from Git" banner on the Worker, **leave it disconnected** — CI drives deploys now, and reconnecting Cloudflare's own builder would fight this workflow.
+
+The root `install.{ps1,sh}` are the source of truth. The workflow copies them into `site/` immediately before `wrangler deploy`, so there is no second copy to keep in sync. `site/install.{ps1,sh}` is `.gitignore`d to enforce this.
 
 ---
 
