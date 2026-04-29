@@ -227,6 +227,54 @@ laevitas predictions metadata <instrument>
 ```
 Instrument format: `{market-slug}-YES` or `{market-slug}-NO`
 
+## Live streaming (v0.8.0+)
+
+`laevitas ws <market> <stream> <exchange:instrument>[,...]` opens a WebSocket subscription and emits NDJSON to stdout — one `{"channel": "...", "data": {...}}` per line. Designed to be piped through `jq` or redirected to a file.
+
+```bash
+laevitas ws perpetuals trades binance:BTCUSDT
+laevitas ws options ticker deribit:BTC-30JAN26-100000-C --tf 5m
+laevitas ws spot trades binance:BTCUSDT,coinbase:BTC-USD
+laevitas ws predictions trades polymarket:will-bitcoin-reach-250000-by-december-31-2026-YES
+```
+
+**Markets:** `perpetuals`, `futures`, `options`, `spot`, `predictions`.
+**Streams:** `trades`, `ticker`, `vt` (volume + trade OHLC).
+**Timeframes (ticker / vt only):** `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `12h`, `1d`. Default `1m`.
+
+**Exchanges per market:**
+
+| Market | Exchanges |
+|---|---|
+| perpetuals | deribit, binance, okx, bybit, hyperliquid, kraken, nado, bullish |
+| futures (dated) | deribit, binance, okx, bybit, kraken |
+| options | deribit, binance, okx, bybit, bullish, derive |
+| spot | binance, coinbase, bybit, okx, kraken |
+| predictions | polymarket |
+
+**Auth:** API key only on the streaming gateway today. x402 wallet auth is REST-only; calling `lvt ws` in wallet-only mode returns a clear error.
+
+**Reconnect:** automatic with exponential backoff. Lost messages during downtime are not replayed — assume gaps are possible. Reconnect events surface as `{"warning": "...", "timestamp": "..."}` lines on stderr in non-TTY mode (agent-parseable).
+
+**Discriminators for parsing:** the `data` shape varies by market. To dispatch on incoming events without inspecting the channel string:
+
+- `condition_id` present → predictions
+- `option_type` and `strike` present → options
+- `maturity == "PERPETUAL"` → perpetual
+- any other `maturity` value → dated future
+- `quote_currency` present (no `mark_price`) → spot
+
+```bash
+# stream + filter only large BTC perp trades
+laevitas ws perpetuals trades binance:BTCUSDT \
+  | jq -c 'select(.data.amount > 100000) | {time: .data.timestamp, price: .data.price, side: .data.direction}'
+
+# capture 60s of options trades into a file for offline analysis
+timeout 60 laevitas ws options trades deribit:BTC-30JAN26-100000-C > options.ndjson
+```
+
+`Ctrl-C` cleanly closes the connection and exits 0.
+
 ## Key Parameters
 
 ### Global flags (every command)

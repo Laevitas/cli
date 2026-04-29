@@ -125,7 +125,7 @@ var commandTree = map[string][]subCmd{
 // topLevelCommands includes both tree commands and REPL built-ins.
 var topLevelCommands = []string{
 	"futures", "perps", "options", "spot", "predictions", "instruments", "analytics",
-	"wallet", "config", "watch", "version", "search",
+	"ws", "wallet", "config", "watch", "version", "search",
 	"save", "run", "saves", "unsave",
 	"help", "quit", "exit", "clear",
 }
