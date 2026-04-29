@@ -118,6 +118,12 @@ const (
 	ErrCodeServerError    = "SERVER_ERROR"
 	ErrCodeNetworkError   = "NETWORK_ERROR"
 	ErrCodeUnknown        = "UNKNOWN_ERROR"
+
+	// x402-specific. Distinguish *why* a payment-required path failed so
+	// agents can branch deterministically without parsing human-readable text.
+	ErrCodeWalletNotConfigured = "WALLET_NOT_CONFIGURED" // 402 hit, no wallet key set
+	ErrCodeInsufficientBalance = "INSUFFICIENT_BALANCE"  // wallet exists, lacks USDC on Base
+	ErrCodePaymentRejected     = "PAYMENT_REJECTED"      // signed payment validated server-side and bounced
 )
 
 // APIError represents a structured error from the API.
@@ -161,6 +167,30 @@ func (e *APIError) IsAuthError() bool {
 // IsRateLimit returns true for 429 responses.
 func (e *APIError) IsRateLimit() bool {
 	return e.StatusCode == http.StatusTooManyRequests
+}
+
+// PaymentError represents an x402-specific failure. Carries a stable code so
+// the JSON error envelope can branch deterministically. Wraps the upstream
+// HTTP status and any server-supplied detail.
+type PaymentError struct {
+	StatusCode  int
+	CodeStr     string // one of ErrCodeWalletNotConfigured / InsufficientBalance / PaymentRejected
+	Message     string
+	Endpoint    string
+	WalletAddr  string // optional, included in envelope when known
+	ServerReply string // optional, raw server message body
+}
+
+func (e *PaymentError) Error() string {
+	return fmt.Sprintf("x402 %s: %s", e.CodeStr, e.Message)
+}
+
+// Code returns the stable error code for the JSON error envelope.
+func (e *PaymentError) Code() string {
+	if e.CodeStr != "" {
+		return e.CodeStr
+	}
+	return ErrCodePaymentReq
 }
 
 // NetworkError wraps connectivity failures with a user-friendly message.
@@ -559,9 +589,10 @@ func (c *Client) handlePaymentRequired(method, fullURL string, resp *http.Respon
 
 	// No wallet configured — can't pay
 	if c.paymentClient == nil {
-		return nil, &APIError{
+		return nil, &PaymentError{
 			StatusCode: http.StatusPaymentRequired,
-			Message:    "Payment required. Set a wallet key with `laevitas config set wallet_key <key>` or use an API key.",
+			CodeStr:    ErrCodeWalletNotConfigured,
+			Message:    "Payment required but no wallet is configured. Set a wallet key with `laevitas wallet set-key <hex>` or `LAEVITAS_WALLET_KEY=<hex>`, or configure an API key.",
 			Endpoint:   path,
 		}
 	}
@@ -575,15 +606,23 @@ func (c *Client) handlePaymentRequired(method, fullURL string, resp *http.Respon
 
 	paymentHeaders, err := c.paymentClient.HandlePaymentRequired(resp, body)
 	if err != nil {
-		// Provide specific guidance based on the failure
-		msg := fmt.Sprintf("x402 payment signing failed: %s\n", err)
-		msg += fmt.Sprintf("  Wallet: %s\n", walletAddr)
-		msg += "  Ensure your wallet has USDC on Base chain.\n"
-		msg += "  If this persists, try `laevitas config set wallet_key <key>` with a valid EVM private key (0x-prefixed)."
-		return nil, &APIError{
-			StatusCode: http.StatusPaymentRequired,
-			Message:    msg,
-			Endpoint:   path,
+		// The x402 SDK returns "insufficient_funds" / "insufficient_balance" when
+		// the wallet can't cover the payment. Distinguish that from generic
+		// signing failures so agents can branch on .error.code.
+		errStr := strings.ToLower(err.Error())
+		code := ErrCodePaymentRejected
+		humanMsg := fmt.Sprintf("x402 payment signing failed: %s\n  Wallet: %s\n  If this persists, verify the private key is a valid EVM key (0x-prefixed).", err, walletAddr)
+		if strings.Contains(errStr, "insufficient") {
+			code = ErrCodeInsufficientBalance
+			humanMsg = fmt.Sprintf("Insufficient USDC on Base for x402 payment.\n  Wallet: %s\n  Fund this address with USDC on Base mainnet, then retry.", walletAddr)
+		}
+		return nil, &PaymentError{
+			StatusCode:  http.StatusPaymentRequired,
+			CodeStr:     code,
+			Message:     humanMsg,
+			Endpoint:    path,
+			WalletAddr:  walletAddr,
+			ServerReply: string(body),
 		}
 	}
 
@@ -648,10 +687,13 @@ func (c *Client) handlePaymentRequired(method, fullURL string, resp *http.Respon
 
 	// Payment was signed but server rejected it — build a helpful error
 	msg := c.buildPaymentErrorMessage(retryResp.StatusCode, retryBody, walletAddr)
-	return nil, &APIError{
-		StatusCode: retryResp.StatusCode,
-		Message:    msg,
-		Endpoint:   path,
+	return nil, &PaymentError{
+		StatusCode:  retryResp.StatusCode,
+		CodeStr:     ErrCodePaymentRejected,
+		Message:     msg,
+		Endpoint:    path,
+		WalletAddr:  walletAddr,
+		ServerReply: string(retryBody),
 	}
 }
 

@@ -104,6 +104,14 @@ var commandTree = map[string][]subCmd{
 	"analytics": {
 		{Name: "realized-volatility"},
 	},
+	"wallet": {
+		{Name: "show"},
+		{Name: "init"},
+		{Name: "set-key"},
+		{Name: "unset"},
+		{Name: "address"},
+		{Name: "credits"},
+	},
 	"config": {
 		{Name: "init"},
 		{Name: "show"},
@@ -117,7 +125,7 @@ var commandTree = map[string][]subCmd{
 // topLevelCommands includes both tree commands and REPL built-ins.
 var topLevelCommands = []string{
 	"futures", "perps", "options", "spot", "predictions", "instruments", "analytics",
-	"config", "watch", "version", "search",
+	"wallet", "config", "watch", "version", "search",
 	"save", "run", "saves", "unsave",
 	"help", "quit", "exit", "clear",
 }

@@ -271,3 +271,66 @@ No test suite exists yet — verify manually against the live API.
 ### After corrections
 - Update this file so the same mistake doesn't happen twice.
 - Write rules that prevent the pattern, not just document the incident.
+
+### Shipping a release
+
+The canonical release flow. **Every release follows these steps in this order**, no shortcuts. The `/release` skill in `.claude/skills/release/` enforces it.
+
+**Pre-flight (in any order):**
+1. CHANGELOG.md has a `## [X.Y.Z] — YYYY-MM-DD` entry at the top.
+2. README.md and docs/SKILL.md mention every new command/flag/field.
+3. `go build -o laevitas-test.exe .` is clean (no errors, no `dirty` other than the pending changes).
+4. Smoke tests pass — at minimum: top-level `--help` lists new groups, JSON envelope on a representative command parses cleanly, error envelope on a forced auth failure carries the expected error code.
+
+**Branch + commit + push:**
+5. `git checkout -b release/vX.Y.Z` from latest `main`. Resolve any CHANGELOG conflicts with main → keep both blocks ordered newest-first.
+6. `git add` all the changed files explicitly (never `git add -A` — gitignored secrets like `.env` must not slip in).
+7. **Single commit** with a descriptive message. Multi-paragraph body summarising BREAKING / ADDED / CHANGED / FIXED / DEFERRED sections. Include `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`.
+8. `git push -u origin release/vX.Y.Z`.
+
+**PR + merge (USER does this in GitHub):**
+9. Open PR at `https://github.com/Laevitas/cli/pull/new/release/vX.Y.Z`. Title matches the release theme. Body points to CHANGELOG entry.
+10. CI runs (test + vet on the branch). Wait for green.
+11. Merge to `main`. Squash optional; merge commit fine since the release branch had a single commit anyway.
+
+**Tag + ship (Claude does this once main is updated):**
+12. `git checkout main && git pull` — verify HEAD is the merge commit and `go.mod`/CHANGELOG reflect the release.
+13. `git tag -a vX.Y.Z -m "vX.Y.Z"`.
+14. `git push origin vX.Y.Z` — fires the GoReleaser pipeline at `.github/workflows/release.yml`.
+
+**Pipeline auto-runs (~3-5 min):**
+- Cross-compile 6 binaries (linux/darwin/windows × amd64/arm64).
+- Generate `checksums.txt` (SHA-256).
+- Create the GitHub Release with archives + checksums attached.
+- Push a Cask formula to `Laevitas/homebrew-cli`.
+- Push a Scoop manifest to `Laevitas/scoop-bucket`.
+
+**Post-deploy verification:**
+15. `https://github.com/Laevitas/cli/actions` — Release workflow green.
+16. `https://github.com/Laevitas/cli/releases/tag/vX.Y.Z` — 6 archives present.
+17. `https://github.com/Laevitas/homebrew-cli/blob/main/Casks/laevitas.rb` — `version "X.Y.Z"`.
+18. End-to-end: `brew update && brew upgrade laevitas/cli/laevitas && laevitas version` — prints `vX.Y.Z`.
+
+**One-time setup (already done, here for reference):**
+- `Laevitas/homebrew-cli` and `Laevitas/scoop-bucket` repos exist (empty when created).
+- `HOMEBREW_TAP_TOKEN` secret in `Laevitas/cli` repo settings — fine-grained PAT with Contents:write on both tap repos.
+- See [RELEASING.md](RELEASING.md) for full one-time setup.
+
+**Common failure modes:**
+- **Pipeline fails at Homebrew step**: `HOMEBREW_TAP_TOKEN` expired or scope changed. Regenerate, update secret, re-run workflow.
+- **Pipeline succeeds but `brew upgrade` doesn't see the new version**: Homebrew tap repo didn't get the formula push. Check `https://github.com/Laevitas/homebrew-cli/commits/main` for a commit with the version. If absent, secret is the issue.
+- **`laevitas update` 404s on hosts ≤v0.4.0**: those binaries had a broken self-updater. One-time manual install needed: `curl -fsSL https://cli.laevitas.ch/install.sh | sh`. v0.5.2+ self-updater works for all future releases.
+
+**Never do:**
+- Tag from a feature branch. Always tag the merge commit on `main`.
+- Tag without merging first. Pipeline runs against the tagged commit, not your local branch.
+- Push a tag matching an existing one. If you need to redo, bump the patch version (e.g. v0.7.0 → v0.7.1) — never force-delete a published tag.
+- Skip the CHANGELOG conflict resolution. Letting both branches land independently produces a broken main.
+
+### Memory and skill enforcement
+
+This shipping flow is also recorded in:
+- `~/.claude/projects/c--Users-hnaas-OneDrive-Documents-GitHub-laevitas-cli/memory/release_shipping_flow.md` — Claude's persistent memory across sessions.
+- `.claude/skills/release/SKILL.md` — invokable as `/release` to walk through the flow with confirmation gates.
+
+Update all three (this section, the memory file, the skill) when the flow changes.
