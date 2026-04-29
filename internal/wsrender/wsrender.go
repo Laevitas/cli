@@ -266,6 +266,8 @@ func renderEvents(events []wsclient.Event, width int) string {
 		return renderTicker(events, width)
 	case strings.HasPrefix(ch, "ohlc.vt."):
 		return renderVT(events, width)
+	case strings.HasPrefix(ch, "liquidations."):
+		return renderLiquidations(events, width)
 	default:
 		return renderGeneric(events, width)
 	}
@@ -653,6 +655,44 @@ func renderVT(events []wsclient.Event, width int) string {
 	return renderTable(headers, rows, aligns, width)
 }
 
+// renderLiquidations formats forced-close events from the v1.21.0 channel.
+// Layout reads as a "who got rekt" tape: position_side is the human-relevant
+// field (LONG/SHORT — what was liquidated), direction is its inverse (the
+// forced order side) and isn't shown to keep the table tight.
+//
+// Color semantics: long liquidation = price dropped enough to forced-close
+// longs → red. Short liquidation = price ripped up → green. This matches
+// how a trader reads the tape, not how an exchange logs the order.
+func renderLiquidations(events []wsclient.Event, width int) string {
+	headers := []string{"TIME", "INSTRUMENT", "SIDE", "PRICE", "AMOUNT", "USD", "MARK"}
+	aligns := []colAlign{alignLeft, alignLeft, alignLeft, alignRight, alignRight, alignRight, alignRight}
+
+	rows := make([][]string, 0, len(events))
+	for i := len(events) - 1; i >= 0; i-- {
+		var d struct {
+			Timestamp      int64   `json:"timestamp"`
+			InstrumentName string  `json:"instrument_name"`
+			PositionSide   string  `json:"position_side"`
+			Price          float64 `json:"price"`
+			Amount         float64 `json:"amount"`
+			AmountUSD      float64 `json:"amount_usd"`
+			MarkPrice      float64 `json:"mark_price"`
+		}
+		_ = json.Unmarshal(events[i].Data, &d)
+
+		rows = append(rows, []string{
+			formatTime(d.Timestamp),
+			truncate(d.InstrumentName, 22),
+			colorPositionSide(d.PositionSide),
+			formatNumFull(d.Price),
+			formatNumFull(d.Amount),
+			formatNumFull(d.AmountUSD),
+			formatNumFull(d.MarkPrice),
+		})
+	}
+	return renderTable(headers, rows, aligns, width)
+}
+
 func renderGeneric(events []wsclient.Event, width int) string {
 	headers := []string{"CHANNEL", "DATA"}
 	aligns := []colAlign{alignLeft, alignLeft}
@@ -682,6 +722,21 @@ func colorSide(side string) string {
 		return output.Red + "sell" + output.Reset
 	default:
 		return output.BrandGreyMid + truncate(side, 4) + output.Reset
+	}
+}
+
+// colorPositionSide tags a liquidation row by which side of the book got
+// forced out. Longs liquidated on a drop → red; shorts liquidated on a
+// rally → green. The visual maps to "what just moved the price," not the
+// inverse forced-order direction.
+func colorPositionSide(side string) string {
+	switch strings.ToLower(side) {
+	case "long":
+		return output.Red + "LONG " + output.Reset
+	case "short":
+		return output.BrandGreen + "SHORT" + output.Reset
+	default:
+		return output.BrandGreyMid + truncate(side, 5) + output.Reset
 	}
 }
 

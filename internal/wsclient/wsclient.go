@@ -13,7 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,6 +39,32 @@ const (
 	reconnectMax = 30 * time.Second
 )
 
+// Server-defined close codes (API v1.18.0 / v1.19.0). Codes < 4000 fall
+// through to default reconnect handling.
+const (
+	closeAuthFailed     websocket.StatusCode = 4001
+	closeIdleTimeout    websocket.StatusCode = 4002
+	closeSlowConsumer   websocket.StatusCode = 4003
+	closeLifetimeMax    websocket.StatusCode = 4004
+	closeConnCap        websocket.StatusCode = 4005
+	closeRateExceeded   websocket.StatusCode = 4008
+)
+
+// fatalCloseError is returned by connectAndServe when the server closed the
+// connection with a code that the client should not retry (e.g. auth
+// failure). run() detects this and exits the connection loop.
+type fatalCloseError struct {
+	code   websocket.StatusCode
+	reason string
+}
+
+func (e *fatalCloseError) Error() string {
+	if e.reason != "" {
+		return fmt.Sprintf("ws closed (%d): %s", int(e.code), e.reason)
+	}
+	return fmt.Sprintf("ws closed (%d)", int(e.code))
+}
+
 // Event is a single inbound message from the gateway. Channel matches the
 // channel string the caller subscribed to; Data is the raw JSON payload of
 // the event (deferred unmarshal — different markets have different shapes,
@@ -53,9 +79,13 @@ type Config struct {
 	// URL is the wss:// endpoint. Defaults to NativeURL when empty.
 	URL string
 
-	// APIKey is sent as ?apiKey=... query param at upgrade time. Required for
-	// authenticated channels. The CLI passes whatever auth method resolved
-	// from config.
+	// APIKey is sent as the `apikey` header on the WebSocket upgrade request.
+	// Required for authenticated channels. The CLI passes whatever auth
+	// method resolved from config.
+	//
+	// Note: prior to API v1.18.0 the gateway accepted a ?apiKey=... query
+	// param. That auth path was removed; the header is now the only
+	// server-side method we use.
 	APIKey string
 
 	// Channels is the initial channel set. Resubscribed automatically on
@@ -84,6 +114,13 @@ type Client struct {
 	// errs surfaces non-fatal warnings (e.g. "reconnected after 4s; some
 	// messages may have been lost"). Caller can ignore or log.
 	errs chan error
+
+	// fatalRPC is set when the server returns a JSON-RPC error that the
+	// client can't recover from (auth rejected via rpc, not via close
+	// frame). The read loop checks it after each handleMessage and exits.
+	// Stored as a pointer so we can atomically swap between nil and an
+	// error without taking the main mutex.
+	fatalRPC atomic.Pointer[fatalCloseError]
 
 	// ctx is the parent lifecycle. Cancelling it stops the connection loop
 	// cleanly and closes events/errs.
@@ -153,9 +190,13 @@ func (c *Client) Close() error {
 
 // run is the connect-and-read loop. Reconnects with exponential backoff
 // until the context is cancelled.
+//
+// Close order matters: events closes first (so the caller's range loop
+// exits), then errs (so the caller can synchronously drain any final
+// warning — auth failures, conn caps — before reporting an exit reason).
 func (c *Client) run() {
-	defer close(c.events)
 	defer close(c.errs)
+	defer close(c.events)
 
 	backoff := time.Second
 	firstAttempt := true
@@ -183,6 +224,13 @@ func (c *Client) run() {
 			if errors.Is(err, context.Canceled) {
 				return
 			}
+			var fatal *fatalCloseError
+			if errors.As(err, &fatal) {
+				// Surface the message, then exit the loop — no point
+				// retrying an auth or quota failure.
+				c.softErr(fatal)
+				return
+			}
 			c.softErr(fmt.Errorf("connection lost: %w", err))
 			continue
 		}
@@ -194,12 +242,14 @@ func (c *Client) run() {
 // connectAndServe handles one full lifecycle: dial, subscribe, ping loop,
 // read loop. Returns nil on graceful shutdown, error otherwise.
 func (c *Client) connectAndServe() error {
-	dialURL, err := buildDialURL(c.cfg.URL, c.cfg.APIKey)
-	if err != nil {
-		return fmt.Errorf("building dial URL: %w", err)
+	var dialOpts *websocket.DialOptions
+	if c.cfg.APIKey != "" {
+		dialOpts = &websocket.DialOptions{
+			HTTPHeader: http.Header{"apikey": []string{c.cfg.APIKey}},
+		}
 	}
 
-	conn, _, err := websocket.Dial(c.ctx, dialURL, nil)
+	conn, _, err := websocket.Dial(c.ctx, c.cfg.URL, dialOpts)
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}
@@ -227,10 +277,42 @@ func (c *Client) connectAndServe() error {
 			if c.ctx.Err() != nil {
 				return nil // graceful shutdown
 			}
+			// Inspect close status — server signals auth/quota/lifetime
+			// problems via well-known codes (v1.18.0+).
+			if status := websocket.CloseStatus(err); status != -1 {
+				if fatal := c.classifyClose(status, err); fatal != nil {
+					return fatal
+				}
+			}
 			return err
 		}
 		c.handleMessage(msg)
+		if fatal := c.fatalRPC.Load(); fatal != nil {
+			return fatal
+		}
 	}
+}
+
+// classifyClose returns a *fatalCloseError for codes the client must not
+// reconnect on; nil for codes that are recoverable (run() will retry with
+// backoff). The soft warning is emitted for recoverable codes so the user
+// sees what happened.
+func (c *Client) classifyClose(status websocket.StatusCode, err error) error {
+	switch status {
+	case closeAuthFailed:
+		return &fatalCloseError{code: status, reason: "authentication rejected — check LAEVITAS_API_KEY (gateway requires the `apikey` upgrade header as of API v1.18.0)"}
+	case closeIdleTimeout:
+		c.softErr(fmt.Errorf("server closed idle connection (4002); reconnecting"))
+	case closeSlowConsumer:
+		c.softErr(fmt.Errorf("server dropped slow consumer (4003); reconnecting — consider narrowing channels"))
+	case closeLifetimeMax:
+		c.softErr(fmt.Errorf("server enforced 24h connection lifetime (4004); reconnecting"))
+	case closeConnCap:
+		return &fatalCloseError{code: status, reason: "connection cap reached on this API key (4005) — close other sessions"}
+	case closeRateExceeded:
+		c.softErr(fmt.Errorf("rate limit exceeded (4008); backing off"))
+	}
+	return nil
 }
 
 // pingLoop sends a JSON-RPC ping every pingInterval. coder/websocket's Read
@@ -316,6 +398,22 @@ func (c *Client) handleMessage(msg []byte) {
 	}
 	if err := json.Unmarshal(msg, &reply); err == nil {
 		if len(reply.Error) > 0 {
+			// Some auth failures arrive as RPC errors rather than close
+			// frames (see v1.18.0 gateway). If the error envelope decodes
+			// to an "Authentication required" / "Invalid API key" payload,
+			// promote it to a fatal so the read loop stops retrying.
+			var detail struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			}
+			_ = json.Unmarshal(reply.Error, &detail)
+			if detail.Code == 401 || detail.Code == 403 {
+				c.fatalRPC.Store(&fatalCloseError{
+					code:   closeAuthFailed,
+					reason: fmt.Sprintf("authentication rejected (rpc %d: %s) — check LAEVITAS_API_KEY", detail.Code, detail.Message),
+				})
+				return
+			}
 			c.softErr(fmt.Errorf("server error on rpc id=%d: %s", reply.ID, reply.Error))
 		}
 		// result frames (subscribe ack, pong) are intentionally silent on
@@ -336,21 +434,6 @@ func (c *Client) softErr(err error) {
 		// errs channel is full → drop. This is a diagnostic stream, not a
 		// reliable log. The events channel is what the caller cares about.
 	}
-}
-
-// buildDialURL appends ?apiKey=... when APIKey is set. Preserves any
-// existing query in the configured URL.
-func buildDialURL(rawURL, apiKey string) (string, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return "", err
-	}
-	if apiKey != "" {
-		q := u.Query()
-		q.Set("apiKey", apiKey)
-		u.RawQuery = q.Encode()
-	}
-	return u.String(), nil
 }
 
 func truncate(b []byte, n int) string {

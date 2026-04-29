@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -35,11 +36,25 @@ var marketExchanges = map[string][]string{
 }
 
 // validStreams maps the user-facing stream name to its channel-string prefix.
-// `trades` is single-token; `ticker` and `vt` are nested under `ohlc.`.
+// `trades` is single-token; `ticker` and `vt` are nested under `ohlc.`;
+// `liquidations` is single-token and only valid for perpetuals/futures
+// (see streamsByMarket).
 var validStreams = map[string]string{
-	"trades": "trades",
-	"ticker": "ohlc.ticker",
-	"vt":     "ohlc.vt",
+	"trades":       "trades",
+	"ticker":       "ohlc.ticker",
+	"vt":           "ohlc.vt",
+	"liquidations": "liquidations",
+}
+
+// streamsByMarket gates streams that don't apply to every market. A stream
+// not listed here is implicitly available to every market in marketExchanges.
+// Liquidations only exist on linear/inverse derivatives — spot / options /
+// predictions don't have a forced-close concept.
+var streamsByMarket = map[string]map[string]struct{}{
+	"liquidations": {
+		"perpetuals": {},
+		"futures":    {},
+	},
 }
 
 // validTimeframes is the documented timeframe set. Only ticker/vt accept --tf.
@@ -59,14 +74,17 @@ var Cmd = &cobra.Command{
 	Long: `Open a WebSocket subscription to one or more channels and emit NDJSON
 to stdout — one JSON object per line.
 
-Channel grammar follows the v1.17.0 matrix:
+Channel grammar:
   trades.{market}.{exchange}.{instrument}
   ohlc.ticker.{market}.{exchange}.{instrument}.{tf}
   ohlc.vt.{market}.{exchange}.{instrument}.{tf}
+  liquidations.{market}.{exchange}.{instrument}
 
   market    perpetuals | futures | options | spot | predictions
-  stream    trades | ticker | vt
+  stream    trades | ticker | vt | liquidations
   tf        1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d  (only for ticker / vt)
+
+  liquidations is only available for perpetuals and futures.
 
 Multiple <exchange:instrument> pairs can be passed comma-separated; they
 share a single connection.
@@ -81,6 +99,9 @@ Pipe through jq for filtering, or redirect to a file for replay.`,
 
   # Spot trades, append to a file
   lvt ws spot trades binance:BTCUSDT > btc-spot.ndjson
+
+  # Live forced-close events (liquidations) on the most active perps
+  lvt ws perpetuals liquidations binance:BTCUSDT,bybit:BTCUSDT,okx:BTC-USDT-SWAP
 
   # Polymarket prediction market trades
   lvt ws predictions trades polymarket:will-bitcoin-reach-250000-by-december-31-2026-YES`,
@@ -109,10 +130,21 @@ func run(cmd *cobra.Command, args []string) error {
 	// Validate the stream.
 	streamPrefix, ok := validStreams[streamName]
 	if !ok {
-		return fmt.Errorf("unknown stream %q. Valid: trades, ticker, vt", streamName)
+		return fmt.Errorf("unknown stream %q. Valid: trades, ticker, vt, liquidations", streamName)
 	}
 
-	// Validate --tf only for OHLC streams; reject explicit --tf with `trades`.
+	// Some streams only apply to a subset of markets (e.g. liquidations is
+	// derivatives-only). Reject the combination here so the user gets a
+	// targeted error instead of a generic "invalid channel" from the server.
+	if allowedMarkets, restricted := streamsByMarket[streamName]; restricted {
+		if _, ok := allowedMarkets[market]; !ok {
+			markets := sortedKeysSet(allowedMarkets)
+			return fmt.Errorf("stream %q is only available for: %s", streamName, strings.Join(markets, ", "))
+		}
+	}
+
+	// Validate --tf only for OHLC streams; reject explicit --tf with `trades`
+	// or `liquidations` (neither buckets by timeframe).
 	tf := flags.Timeframe
 	usesTimeframe := streamName == "ticker" || streamName == "vt"
 	if usesTimeframe {
@@ -120,10 +152,7 @@ func run(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("invalid --tf %q. Valid: 1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d", tf)
 		}
 	} else if cmd.Flags().Changed("tf") {
-		// Trades doesn't bucket by timeframe — flagging the misuse loudly
-		// avoids agents thinking they got a "1m trades" stream that doesn't
-		// exist.
-		return fmt.Errorf("--tf only applies to ticker and vt streams, not trades")
+		return fmt.Errorf("--tf only applies to ticker and vt streams, not %s", streamName)
 	}
 
 	// Build the channel list. Reject any exchange that's not in the matrix
@@ -232,18 +261,28 @@ func run(cmd *cobra.Command, args []string) error {
 // every non-TTY context (pipes, redirects, agents) and when the user
 // explicitly asked for -o json.
 func runNDJSON(ctx context.Context, cli *wsclient.Client) error {
-	// Drain soft errors (reconnects, server warnings) on stderr.
-	go func() {
-		for e := range cli.Errs() {
-			if output.IsTTY() {
-				fmt.Fprintf(os.Stderr, "%s⚠ %s%s\n", output.Yellow, e, output.Reset)
-			} else {
-				warning := map[string]interface{}{
-					"warning":   e.Error(),
-					"timestamp": time.Now().UTC().Format(time.RFC3339),
-				}
-				_ = json.NewEncoder(os.Stderr).Encode(warning)
+	emitErr := func(e error) {
+		if output.IsTTY() {
+			fmt.Fprintf(os.Stderr, "%s⚠ %s%s\n", output.Yellow, e, output.Reset)
+		} else {
+			warning := map[string]interface{}{
+				"warning":   e.Error(),
+				"timestamp": time.Now().UTC().Format(time.RFC3339),
 			}
+			_ = json.NewEncoder(os.Stderr).Encode(warning)
+		}
+	}
+
+	// Drain soft errors on stderr while events flow. Track the most recent
+	// one — wsclient closes events first, then errs, so we'll synchronously
+	// drain any final fatal warning after the events loop exits.
+	var lastErr atomic.Value // string
+	errsDone := make(chan struct{})
+	go func() {
+		defer close(errsDone)
+		for e := range cli.Errs() {
+			lastErr.Store(e.Error())
+			emitErr(e)
 		}
 	}()
 
@@ -254,8 +293,15 @@ func runNDJSON(ctx context.Context, cli *wsclient.Client) error {
 		}
 	}
 
+	// Events closed → wait for the errs goroutine to finish so the fatal
+	// warning (if any) is reflected in lastErr before we report.
+	<-errsDone
+
 	if ctx.Err() != nil {
 		return nil
+	}
+	if v := lastErr.Load(); v != nil {
+		return fmt.Errorf("%s", v.(string))
 	}
 	return fmt.Errorf("stream ended unexpectedly")
 }
@@ -356,6 +402,19 @@ func sortedKeys(m map[string][]string) []string {
 		out = append(out, k)
 	}
 	// Deterministic order for the error message.
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && out[j] < out[j-1]; j-- {
+			out[j], out[j-1] = out[j-1], out[j]
+		}
+	}
+	return out
+}
+
+func sortedKeysSet(m map[string]struct{}) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
 	for i := 1; i < len(out); i++ {
 		for j := i; j > 0 && out[j] < out[j-1]; j-- {
 			out[j], out[j-1] = out[j-1], out[j]

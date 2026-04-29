@@ -77,7 +77,7 @@ laevitas predictions catalog --keyword bitcoin
 | `predictions` | Prediction markets — catalog, categories, snapshot, OHLCVT, trades, ticker, orderbook |
 | `instruments` | Cross-product instrument registry — `list` + `detail` across all exchanges |
 | `analytics` | Computed cross-asset analytics — realized volatility |
-| `ws` | Live WebSocket streams — trades, OHLC ticker, OHLC vt across all 5 markets |
+| `ws` | Live WebSocket streams — trades, OHLC ticker, OHLC vt, liquidations across all 5 markets |
 | `wallet` | x402 wallet — show, init, set-key, address, credits |
 | `config` | Configuration — init, show, set |
 | `version` | Print version and build information |
@@ -256,6 +256,9 @@ laevitas ws options ticker deribit:BTC-30JAN26-100000-C,deribit:BTC-30JAN26-1100
 
 # Append a live spot tape to a file for later replay
 laevitas ws spot trades binance:BTCUSDT > btc-spot.ndjson
+
+# Live forced-close events (liquidations) on the most active perps
+laevitas ws perpetuals liquidations binance:BTCUSDT,bybit:BTCUSDT,okx:BTC-USDT-SWAP
 
 # Error-aware extraction — works for both success and failure
 RESP=$(laevitas perps carry BTC-PERPETUAL -p 1h -o json)

@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.8.1] — 2026-04-29
+
+Streaming hot-fix + liquidations channel. The gateway shipped two changes
+the same week: v1.18.0 retired query-string auth on the WS upgrade, and
+v1.21.0 added a dedicated `liquidations` channel for forced-close events
+on perpetuals and futures. v0.8.1 adapts to both — the auth path is the
+priority because v0.8.0 hosts cannot subscribe to anything without it.
+
+### Fixed
+
+- **WS upgrade auth.** The streaming gateway removed `?apiKey=...` query
+  string authentication in API v1.18.0. v0.8.0 used that path exclusively,
+  so every subscribe started returning 401 the moment the gateway picked
+  up the new build. v0.8.1 sends the API key as the `apikey` upgrade
+  header instead, matching the v1.18.0 / v1.19.0 contract. **Upgrade
+  required** for any host running v0.8.0 against the current gateway.
+- **Auth failures now exit cleanly.** When the server rejects a key —
+  either via close code 4001 or via a JSON-RPC `{code: 401}` error frame —
+  the client no longer reconnects in a tight loop. It emits the warning,
+  then exits non-zero with the same message so consumers can branch on it.
+- **Server close codes are surfaced individually.** v0.8.0 collapsed every
+  disconnect into "connection lost; reconnecting." v0.8.1 distinguishes
+  4001 (auth — fatal), 4002 (idle), 4003 (slow consumer), 4004 (24h
+  lifetime), 4005 (conn cap — fatal), 4008 (rate limit). Each one now
+  prints a specific message so the cause is obvious.
+
+### Added
+
+- **`liquidations` stream** for `lvt ws perpetuals` and `lvt ws futures`.
+  Channel grammar: `liquidations.{market}.{exchange}.{instrument}`. Emits
+  the v1.21.0 forced-close event shape — `position_side`, `direction`,
+  `price`, `amount`, `amount_usd`, `mark_price`, `index_price`, plus the
+  usual instrument metadata. Live-table mode color-codes the
+  `position_side` column (red `LONG`, green `SHORT`) so the directional
+  bias of each flush reads at a glance; NDJSON mode emits the raw
+  envelope unchanged.
+- **Per-stream market allowlist.** Streams that don't apply to every
+  market (today: just `liquidations`, which only exists on derivatives)
+  are gated client-side. `lvt ws spot liquidations binance:BTCUSDT` now
+  errors with `stream "liquidations" is only available for: futures,
+  perpetuals` instead of opening a doomed subscription.
+
+### Changed
+
+- The `--tf` rejection message now names the actual stream the user
+  passed (`--tf only applies to ticker and vt streams, not liquidations`)
+  instead of always saying "trades."
+
 ## [0.8.0] — 2026-04-29
 
 WebSocket release. The streaming gateway hit v1.17.0 with a coverage matrix
