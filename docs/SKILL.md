@@ -2,7 +2,18 @@
 
 You have access to the `laevitas` CLI which provides real-time cryptocurrency derivatives data. Always use `-o json` for structured output.
 
-## Response shape (v0.6.0+)
+## Authentication
+
+Two options, equivalent for data access:
+
+- **API key** — `LAEVITAS_API_KEY=<key>` env var (preferred for agents) or `laevitas config set api_key <key>`.
+- **x402 wallet** — `LAEVITAS_WALLET_KEY=0x<hex>` env var or `laevitas wallet set-key 0x<hex>`. Pays per request in USDC on Base. After the first on-chain payment, the API issues a JWT credit token cached at `~/.config/laevitas/x402-token` and used for subsequent requests until it expires. Check state any time with `laevitas wallet show -o json`.
+
+Set `LAEVITAS_AUTH=auto|api-key|x402` to control which path the CLI prefers when both are configured. Default is `auto` (API key first, wallet fallback on 401/402).
+
+Read `meta.auth` on every response to confirm which path served the request: `api-key`, `credit` (cached x402 token), or `on-chain` (fresh x402 payment).
+
+## Response shape (v0.6.0+, extended in v0.7.0)
 
 Every JSON response uses a stable envelope. Always parse `.success` first, then either `.data` (on success) or `.error` (on failure).
 
@@ -12,7 +23,13 @@ Every JSON response uses a stable envelope. Always parse `.success` first, then 
 {
   "success": true,
   "data": [ ... ],
-  "meta": { "next_cursor": "...", "count": 100 }
+  "meta": {
+    "next_cursor": "...",
+    "count": 100,
+    "auth": "api-key",
+    "credits_remaining": 950,
+    "latency_ms": 247
+  }
 }
 ```
 
@@ -39,7 +56,10 @@ Errors are emitted to **stdout** (not stderr) when `-o json`, so a single jq pip
 | `AUTH_INVALID` | 401 — API key missing/invalid |
 | `AUTH_FORBIDDEN` | 403 — wrong tier or revoked access |
 | `RATE_LIMITED` | 429 — back off, retry with delay |
-| `PAYMENT_REQUIRED` | 402 — x402 payment needed |
+| `PAYMENT_REQUIRED` | 402 — x402 payment needed and no wallet path was attempted |
+| `WALLET_NOT_CONFIGURED` | 402 — payment needed, wallet path requested, but no key set. Run `laevitas wallet set-key 0x<hex>` or set `LAEVITAS_WALLET_KEY`. |
+| `INSUFFICIENT_BALANCE` | 402 — wallet exists but lacks USDC on Base. The error envelope includes `wallet_address`; fund that address. |
+| `PAYMENT_REJECTED` | 4xx after signing — server validated the signed payment and bounced it. Verify wallet config; not retryable without intervention. |
 | `BAD_REQUEST` | 4xx — fix params and retry |
 | `NOT_FOUND` | 404 — instrument or path doesn't exist |
 | `SERVER_ERROR` | 5xx — transient, retry with backoff |
@@ -66,13 +86,37 @@ fi
 
 Table (`-o table`) and CSV (`-o csv`) outputs are NOT enveloped — they format `.data` directly.
 
-## Authentication
+## Budget-aware loop with x402
 
-The CLI must be configured with an API key:
+Agents on the wallet path can self-throttle by reading `.meta.credits_remaining` after every request:
+
 ```bash
-export LAEVITAS_API_KEY="<key>"
-# or: laevitas config set api_key <key>
+export LAEVITAS_WALLET_KEY=0x...
+BUDGET=100
+
+while ...; do
+  RESP=$(laevitas perps carry BTC-PERPETUAL -p 1h -o json)
+  if [ "$(echo "$RESP" | jq -r '.success')" = "false" ]; then
+    code=$(echo "$RESP" | jq -r '.error.code')
+    case "$code" in
+      INSUFFICIENT_BALANCE) echo "fund $(echo "$RESP" | jq -r '.error.wallet_address')"; exit 2 ;;
+      WALLET_NOT_CONFIGURED) echo "set LAEVITAS_WALLET_KEY"; exit 2 ;;
+      RATE_LIMITED) sleep 2; continue ;;
+      *) echo "$RESP" | jq -r '.error.message'; exit 1 ;;
+    esac
+  fi
+
+  # Process the data, then check the budget threshold
+  echo "$RESP" | jq '.data[0]'
+  remaining=$(echo "$RESP" | jq -r '.meta.credits_remaining // empty')
+  if [ -n "$remaining" ] && [ "$remaining" -lt "$BUDGET" ]; then
+    echo "credits below threshold ($remaining); stopping"
+    break
+  fi
+done
 ```
+
+`laevitas wallet show -o json` returns the same envelope shape and can be called pre-flight to confirm wallet state without spending credits.
 
 ## Available Data
 

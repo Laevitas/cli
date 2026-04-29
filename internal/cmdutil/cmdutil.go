@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/laevitas/cli/internal/api"
 	"github.com/laevitas/cli/internal/config"
 	"github.com/laevitas/cli/internal/output"
+	"github.com/laevitas/cli/internal/x402"
 )
 
 // ─── Global state (set by root command) ─────────────────────────────────────
@@ -194,22 +196,64 @@ func MustClient() (*api.Client, *config.Config) {
 	return client, cfg
 }
 
-// promptOnboarding runs the first-run API key setup inline.
-// Returns true if a key was successfully configured.
+// promptOnboarding runs first-run authentication setup. Two paths:
+//
+//  1. API key — paste a key from app.laevitas.ch.
+//  2. x402 wallet — paste an EVM private key; pays per-request in USDC on Base.
+//
+// Returns true if either path succeeded.
 func promptOnboarding(cfg *config.Config) bool {
+	bold := output.Bold
+	green := output.BrandGreen
+	grey := output.BrandGreyMid
+	reset := output.Reset
+
 	fmt.Println()
-	fmt.Println("  Welcome to LAEVITAS CLI! You need an API key to get started.")
-	fmt.Println("  Get your key at \033[1mhttps://app.laevitas.ch/settings/api\033[0m")
+	fmt.Printf("  %s%s▲%s  %sWelcome to LAEVITAS CLI%s\n", bold, green, reset, bold, reset)
+	fmt.Println()
+	fmt.Printf("  %sChoose how to authenticate:%s\n", grey, reset)
+	fmt.Println()
+	fmt.Printf("    %s1.%s  %sAPI key%s     %s— get one at https://app.laevitas.ch/settings/api%s\n", bold, reset, bold, reset, grey, reset)
+	fmt.Printf("    %s2.%s  %sx402 wallet%s %s— pay-per-request in USDC on Base, no signup%s\n", bold, reset, bold, reset, grey, reset)
+	fmt.Printf("    %s3.%s  %sSkip%s        %s— configure later via `laevitas config init`%s\n", bold, reset, bold, reset, grey, reset)
 	fmt.Println()
 
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Print("  Paste your API key: ")
-	key, err := reader.ReadString('\n')
+	fmt.Print("  Choose [1/2/3]: ")
+	choiceRaw, err := reader.ReadString('\n')
 	if err != nil {
 		output.Errorf("Reading input: %s", err)
 		return false
 	}
-	key = strings.TrimSpace(key)
+	choice := strings.TrimSpace(choiceRaw)
+
+	switch choice {
+	case "1", "":
+		return onboardAPIKey(cfg, reader)
+	case "2":
+		return onboardWallet(cfg, reader)
+	case "3":
+		fmt.Println()
+		fmt.Printf("  %sSkipping. Run %slaevitas config init%s%s when ready.%s\n", grey, bold, reset, grey, reset)
+		return false
+	default:
+		output.Errorf("Unrecognised choice %q. Run again to retry.", choice)
+		return false
+	}
+}
+
+// onboardAPIKey is the API-key branch of the first-run flow. Validates against
+// the live API by hitting Health; warns on failure but keeps the key (the user
+// may have a transient network issue).
+func onboardAPIKey(cfg *config.Config, reader *bufio.Reader) bool {
+	fmt.Println()
+	fmt.Print("  Paste your API key: ")
+	keyRaw, err := reader.ReadString('\n')
+	if err != nil {
+		output.Errorf("Reading input: %s", err)
+		return false
+	}
+	key := strings.TrimSpace(keyRaw)
 	if key == "" {
 		output.Errorf("No API key provided.")
 		return false
@@ -220,21 +264,67 @@ func promptOnboarding(cfg *config.Config) bool {
 		output.Errorf("Saving config: %s", err)
 		return false
 	}
-
 	output.Successf("API key saved to ~/.config/laevitas/config.json")
 
-	// Verify API key
 	fmt.Print("  Verifying API key... ")
 	client := api.NewClient(cfg)
-	_, err = client.Get(api.Health, nil)
-	if err != nil {
+	_, verifyErr := client.Get(api.Health, nil)
+	if verifyErr != nil {
 		fmt.Println("✗")
-		output.Warnf("API key verification failed: %v", err)
+		output.Warnf("API key verification failed: %v", verifyErr)
 	} else {
 		fmt.Println("✓")
 		output.Successf("API key is valid")
 	}
 
+	fmt.Println()
+	return true
+}
+
+// onboardWallet is the x402 branch. Validates the private key by deriving the
+// address before saving. No network call — funds get checked at first request.
+func onboardWallet(cfg *config.Config, reader *bufio.Reader) bool {
+	bold := output.Bold
+	grey := output.BrandGreyMid
+	reset := output.Reset
+
+	fmt.Println()
+	fmt.Printf("  %sx402 wallet setup%s\n", bold, reset)
+	fmt.Printf("  %sYou'll need a hex-encoded EVM private key holding USDC on Base.%s\n", grey, reset)
+	fmt.Printf("  %sGenerate a fresh key with: cast wallet new   (or any EVM wallet).%s\n", grey, reset)
+	fmt.Println()
+	fmt.Print("  Paste private key (input is echoed): ")
+	keyRaw, err := reader.ReadString('\n')
+	if err != nil {
+		output.Errorf("Reading input: %s", err)
+		return false
+	}
+	key := strings.TrimSpace(keyRaw)
+	if key == "" {
+		output.Errorf("No key provided.")
+		return false
+	}
+
+	pc, err := x402.NewPaymentClient(key)
+	if err != nil {
+		output.Errorf("Invalid wallet key: %v", err)
+		return false
+	}
+
+	cfg.WalletKey = key
+	// New wallet voids any cached credit token from a previous setup.
+	config.ClearCreditToken()
+	if err := config.Save(cfg); err != nil {
+		output.Errorf("Saving config: %s", err)
+		return false
+	}
+
+	output.Successf("Wallet saved to ~/.config/laevitas/config.json")
+	fmt.Printf("  Address: %s\n", pc.Address())
+	fmt.Println()
+	fmt.Printf("  %sFund the address above with USDC on Base mainnet.%s\n", grey, reset)
+	fmt.Printf("  %sFirst request will trigger an on-chain payment;%s\n", grey, reset)
+	fmt.Printf("  %ssubsequent requests use a cached credit token.%s\n", grey, reset)
 	fmt.Println()
 	return true
 }
@@ -321,7 +411,7 @@ func RunAndPrint(client *api.Client, endpoint string, params *api.RequestParams)
 	// JSON output: wrap in success envelope. Table/CSV: pass through.
 	printPayload := data
 	if p.Format == output.FormatJSON {
-		if wrapped, ok := wrapSuccessEnvelope(data); ok {
+		if wrapped, ok := wrapSuccessEnvelope(data, &client.LastMeta); ok {
 			printPayload = wrapped
 		}
 	}
@@ -379,55 +469,74 @@ func RunAndPrint(client *api.Client, endpoint string, params *api.RequestParams)
 }
 
 // printRequestMeta shows a compact metadata line on stderr after each request.
+//
+// Format: `▲ <auth> · <latency> · <records> · <exchange> · <credits>`
+//
+// The leading brand-green ▲ is a visual signal that the line is request meta,
+// not data. Auth method is colored by kind so x402 paths stand out from
+// API-key requests at a glance. Low credit balances flip to yellow.
 func printRequestMeta(client *api.Client, endpoint string, params *api.RequestParams, recordCount, totalCount int) {
 	meta := client.LastMeta
 	if meta.PaymentMethod == "" {
 		return
 	}
 
-	var parts []string
+	// Color helpers, scoped to this function so the rest of the line stays grey.
+	dim := output.BrandGreyMid
+	bold := output.Bold
+	reset := output.Reset
+	green := output.BrandGreen
+	yellow := output.Yellow
 
-	// Auth type + payment method
+	// Auth method gets bold + colored prefix so the eye lands on it first.
+	var authStr string
 	switch meta.PaymentMethod {
 	case api.PaymentMethodOnChain:
-		parts = append(parts, "x402 on-chain")
+		authStr = fmt.Sprintf("%s%sx402 on-chain%s", bold, green, reset)
 	case api.PaymentMethodCredit:
-		parts = append(parts, "x402 credit")
+		authStr = fmt.Sprintf("%s%sx402 credit%s", bold, green, reset)
 	default:
-		parts = append(parts, "api-key")
+		authStr = fmt.Sprintf("%sapi-key%s", bold, reset)
 	}
 
-	// Latency
-	parts = append(parts, formatDuration(meta.Duration))
+	// Build the rest of the segments in dim grey.
+	var parts []string
+	parts = append(parts, authStr)
+	parts = append(parts, dim+formatDuration(meta.Duration)+reset)
 
-	// Record count
 	if totalCount > 0 && totalCount != recordCount && recordCount > 0 {
-		parts = append(parts, fmt.Sprintf("%d of %d records", recordCount, totalCount))
+		parts = append(parts, fmt.Sprintf("%s%d of %d records%s", dim, recordCount, totalCount, reset))
 	} else if recordCount > 0 {
-		parts = append(parts, fmt.Sprintf("%d records", recordCount))
+		parts = append(parts, fmt.Sprintf("%s%d records%s", dim, recordCount, reset))
 	}
 
-	// Exchange
 	if params != nil && params.Exchange != "" {
-		parts = append(parts, params.Exchange)
+		parts = append(parts, dim+params.Exchange+reset)
 	}
 
-	// Credits remaining (x402 only)
+	// Credits remaining: color yellow when low so the user notices before the
+	// next on-chain payment fires. Threshold is intentionally conservative —
+	// at 50, agents have a few requests of headroom before refresh.
 	if meta.Credits != "" {
-		parts = append(parts, fmt.Sprintf("%s credits remaining", meta.Credits))
+		creditColor := dim
+		if n, err := strconv.Atoi(meta.Credits); err == nil && n < 50 {
+			creditColor = yellow
+		}
+		parts = append(parts, fmt.Sprintf("%s%s credits%s", creditColor, meta.Credits, reset))
 	}
 
-	// Verbose: show endpoint, response size, retries
+	// Verbose adds endpoint, body size, retry count — diagnostic surface.
 	if Verbose {
-		parts = append(parts, endpoint)
-		parts = append(parts, formatBytes(meta.ResponseSize))
+		parts = append(parts, dim+endpoint+reset)
+		parts = append(parts, dim+formatBytes(meta.ResponseSize)+reset)
 		if meta.Retries > 0 {
-			parts = append(parts, fmt.Sprintf("%d retries", meta.Retries))
+			parts = append(parts, fmt.Sprintf("%s%d retries%s", dim, meta.Retries, reset))
 		}
 	}
 
-	line := strings.Join(parts, " · ")
-	fmt.Fprintf(os.Stderr, "\033[2m%s\033[0m\n", line)
+	separator := dim + " · " + reset
+	line := strings.Join(parts, separator)
+	fmt.Fprintf(os.Stderr, "%s%s▲%s  %s\n", bold, green, reset, line)
 }
 
 // formatDuration formats a duration for display (e.g. "247ms", "1.2s").
@@ -457,10 +566,15 @@ func formatBytes(b int) string {
 // (sometimes plus "count"). We normalise to a single shape so agents always see
 // the same envelope regardless of which endpoint they hit.
 //
+// reqMeta carries client-side request-time facts (auth method, latency,
+// remaining x402 credits) that the agent surface needs alongside whatever
+// meta the API itself returned. These get merged into the envelope's meta
+// block so a single .meta.* path covers both server- and client-side info.
+//
 // Returns (payload, true) on success. On any unmarshal failure we return
 // (nil, false) and the caller falls back to printing the raw bytes — the
 // envelope is best-effort, never a hard requirement.
-func wrapSuccessEnvelope(data []byte) ([]byte, bool) {
+func wrapSuccessEnvelope(data []byte, reqMeta *api.RequestMeta) ([]byte, bool) {
 	out := map[string]interface{}{"success": true}
 
 	// Try envelope-shaped first: {"data": ..., "meta": ..., "count": ...}
@@ -471,7 +585,7 @@ func wrapSuccessEnvelope(data []byte) ([]byte, bool) {
 	}
 	if err := json.Unmarshal(data, &env); err == nil && len(env.Data) > 0 {
 		out["data"] = env.Data
-		meta := buildMeta(env.Meta, env.Count)
+		meta := buildMeta(env.Meta, env.Count, reqMeta)
 		if meta != nil {
 			out["meta"] = meta
 		}
@@ -482,14 +596,20 @@ func wrapSuccessEnvelope(data []byte) ([]byte, bool) {
 	// Fall back: bare array or any other JSON value.
 	var bare json.RawMessage = data
 	out["data"] = bare
+	if meta := buildMeta(nil, nil, reqMeta); meta != nil {
+		out["meta"] = meta
+	}
 	b, err := json.Marshal(out)
 	return b, err == nil
 }
 
-// buildMeta normalises the meta block. It keeps any meta fields the upstream
-// API sent and adds count if present at the top level. Returns nil when there
-// is nothing to report so callers can omit the key entirely.
-func buildMeta(rawMeta json.RawMessage, count *int) map[string]interface{} {
+// buildMeta normalises the meta block. Merges three sources:
+//   - rawMeta: the API's own meta block (next_cursor, total, count).
+//   - count:   API's top-level count field, when present (older shape).
+//   - reqMeta: client-side request meta (auth method, latency, x402 credits).
+//
+// Returns nil when there is nothing to report so callers can omit the key.
+func buildMeta(rawMeta json.RawMessage, count *int, reqMeta *api.RequestMeta) map[string]interface{} {
 	meta := map[string]interface{}{}
 	if len(rawMeta) > 0 {
 		var parsed map[string]interface{}
@@ -501,6 +621,26 @@ func buildMeta(rawMeta json.RawMessage, count *int) map[string]interface{} {
 	}
 	if count != nil {
 		meta["count"] = *count
+	}
+	if reqMeta != nil {
+		// Auth method always reported when present so agents can confirm which
+		// path served the request (api-key, x402 credit, x402 on-chain).
+		if reqMeta.PaymentMethod != "" {
+			meta["auth"] = reqMeta.PaymentMethod
+		}
+		// x402 credits-remaining is critical for budget-aware agents. Surface
+		// as a string when the API sent a non-numeric value, otherwise as int.
+		if reqMeta.Credits != "" {
+			if n, err := strconv.Atoi(reqMeta.Credits); err == nil {
+				meta["credits_remaining"] = n
+			} else {
+				meta["credits_remaining"] = reqMeta.Credits
+			}
+		}
+		// Latency is useful for client-side telemetry. Always emit when known.
+		if reqMeta.Duration > 0 {
+			meta["latency_ms"] = reqMeta.Duration.Milliseconds()
+		}
 	}
 	if len(meta) == 0 {
 		return nil
@@ -530,6 +670,16 @@ func printErrorEnvelope(p *output.Printer, err error) {
 		errObj["message"] = apiErr.Message
 		if apiErr.Endpoint != "" {
 			errObj["endpoint"] = apiErr.Endpoint
+		}
+	} else if payErr, ok := err.(*api.PaymentError); ok {
+		errObj["code"] = payErr.Code()
+		errObj["status"] = payErr.StatusCode
+		errObj["message"] = payErr.Message
+		if payErr.Endpoint != "" {
+			errObj["endpoint"] = payErr.Endpoint
+		}
+		if payErr.WalletAddr != "" {
+			errObj["wallet_address"] = payErr.WalletAddr
 		}
 	} else if netErr, ok := err.(*api.NetworkError); ok {
 		errObj["code"] = netErr.Code()

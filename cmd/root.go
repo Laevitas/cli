@@ -16,6 +16,7 @@ import (
 	"github.com/laevitas/cli/cmd/predictions"
 	"github.com/laevitas/cli/cmd/spot"
 	"github.com/laevitas/cli/cmd/update"
+	"github.com/laevitas/cli/cmd/wallet"
 	"github.com/laevitas/cli/internal/cmdutil"
 	internalConfig "github.com/laevitas/cli/internal/config"
 	"github.com/laevitas/cli/internal/output"
@@ -143,6 +144,7 @@ Twitter: https://twitter.com/laevitas1` + "\033[0m" + `
 	rootCmd.AddCommand(predictions.Cmd)
 	rootCmd.AddCommand(instruments.Cmd)
 	rootCmd.AddCommand(analytics.Cmd)
+	rootCmd.AddCommand(wallet.Cmd)
 	rootCmd.AddCommand(watchCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(update.Cmd)

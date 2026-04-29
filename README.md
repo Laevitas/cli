@@ -77,6 +77,7 @@ laevitas predictions catalog --keyword bitcoin
 | `predictions` | Prediction markets — catalog, categories, snapshot, OHLCVT, trades, ticker, orderbook |
 | `instruments` | Cross-product instrument registry — `list` + `detail` across all exchanges |
 | `analytics` | Computed cross-asset analytics — realized volatility |
+| `wallet` | x402 wallet — show, init, set-key, address, credits |
 | `config` | Configuration — init, show, set |
 | `version` | Print version and build information |
 
@@ -271,6 +272,41 @@ The laevitas CLI provides crypto derivatives data. Key commands:
 Always use -o json for structured output. Use --help on any command for details.
 ```
 
+## Authentication
+
+Two paths, configurable via the same `wallet` and `config` commands.
+
+### API key
+
+```sh
+laevitas config init                       # interactive, picks API key path
+laevitas config set api_key <key>          # non-interactive
+LAEVITAS_API_KEY=<key> laevitas …          # env override
+```
+
+### x402 wallet (pay-per-request, USDC on Base)
+
+Pay per request with an EVM wallet — no signup, no API key. Each request triggers an on-chain payment if no credit token is cached; subsequent requests use the cached token until it expires.
+
+```sh
+laevitas wallet                            # show address, credits, auth mode
+laevitas wallet init                       # interactive: paste private key
+laevitas wallet set-key 0x<hex>            # non-interactive
+laevitas wallet address                    # pipe-friendly address
+laevitas wallet credits                    # pipe-friendly credit count
+
+LAEVITAS_WALLET_KEY=0x<hex> laevitas …     # env override (preferred for agents)
+LAEVITAS_AUTH=x402 laevitas …              # force wallet path even if API key is configured
+```
+
+When both are set, the `auth` config field decides:
+
+- `auto` (default) — API key first, wallet as fallback on 401/402.
+- `api-key` — always use API key, ignore wallet.
+- `x402` — always use wallet, ignore API key.
+
+Set via `laevitas config set auth <mode>` or `LAEVITAS_AUTH`.
+
 ## Configuration
 
 Config is stored at `~/.config/laevitas/config.json`:
@@ -278,17 +314,23 @@ Config is stored at `~/.config/laevitas/config.json`:
 ```json
 {
   "api_key": "your-api-key",
+  "wallet_key": "0x...",
+  "auth": "auto",
   "base_url": "https://apiv2.laevitas.ch",
   "exchange": "deribit",
   "output": "auto"
 }
 ```
 
+The cached x402 credit token (when present) lives separately at `~/.config/laevitas/x402-token`.
+
 Environment variables override config file values:
 
 | Variable | Description |
 |----------|-------------|
 | `LAEVITAS_API_KEY` | API key |
+| `LAEVITAS_WALLET_KEY` | Hex-encoded EVM private key for x402 |
+| `LAEVITAS_AUTH` | `auto` / `api-key` / `x402` |
 | `LAEVITAS_BASE_URL` | API base URL |
 | `LAEVITAS_EXCHANGE` | Default exchange |
 | `LAEVITAS_OUTPUT` | Default output format |

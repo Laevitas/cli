@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.7.0] — 2026-04-29
+
+x402 release. The pay-per-request authentication path was fully plumbed
+internally as of 0.5.0 but never surfaced — users had to know the magic words
+(`config set wallet_key`) to access it. v0.7.0 turns it into a first-class
+command group, makes its state visible in every JSON response, and gives
+agents stable error codes to branch on. WebSocket streaming was scoped for
+this release but deferred — the underlying API channel matrix is being
+reshaped on the API side.
+
+### Added — `wallet` command group
+
+- **`laevitas wallet`** (or `wallet show`) — display address, auth mode,
+  cached credit token state (with expiration parsed from the JWT), API key
+  presence, and most-recent credits-remaining count. Pretty terminal output
+  for humans (`-o table`/`-o auto` in a TTY); JSON envelope for agents
+  (`-o json`/`-o auto` when piped).
+- **`laevitas wallet init`** — interactive setup. Prompts for an EVM
+  private key, validates by deriving the address before saving, and clears
+  any stale credit token from a previous wallet.
+- **`laevitas wallet set-key <hex>`** — non-interactive equivalent for
+  scripts. Validates and saves in one step.
+- **`laevitas wallet unset`** — clear the wallet key and any cached credit
+  token. Use before sharing a config dump or rotating wallets.
+- **`laevitas wallet address`** — print just the address (pipe-friendly,
+  exits non-zero with an empty line if no wallet is configured).
+- **`laevitas wallet credits`** — print credits remaining from the most
+  recent x402 response (prints `unknown` until the next data request).
+
+### Added — agent surface
+
+- **`meta.auth`, `meta.credits_remaining`, `meta.latency_ms`** in every
+  success JSON envelope. Agents can now read auth method and credit balance
+  from any response without parsing stderr or inspecting headers.
+- **Three new stable error codes** in the JSON error envelope:
+  - `WALLET_NOT_CONFIGURED` — wallet path requested but no key set
+  - `INSUFFICIENT_BALANCE` — wallet exists but doesn't have USDC on Base
+  - `PAYMENT_REJECTED` — server validated and rejected the signed payment
+- New `PaymentError` type in `internal/api/client.go` with a `Code()` method
+  that maps to the codes above; `printErrorEnvelope` recognises it and
+  surfaces `wallet_address` in the error block when available.
+
+### Changed — UI
+
+- **First-run onboarding offers a choice.** Old flow assumed an API key.
+  New flow presents three paths: (1) API key, (2) x402 wallet, (3) skip.
+  The wallet path validates the private key by deriving the address before
+  saving and prints the address so the user knows where to send USDC.
+- **Improved request-meta footer.** Format is now
+  `▲ <auth> · <latency> · <records> · <exchange> · <credits>` with the
+  brand-green ▲ glyph at the start, auth method bolded, and credits
+  rendered in yellow when below 50 remaining.
+
+### Internal
+
+- New file `cmd/wallet/wallet.go`.
+- `cmd/root.go` and `internal/completer/completer.go` extended for the
+  wallet group.
+- `internal/cmdutil/cmdutil.go` — `wrapSuccessEnvelope` now takes a
+  `*api.RequestMeta` and threads request-time fields into the envelope's
+  meta block via `buildMeta`. `promptOnboarding` rewritten as a chooser
+  that delegates to `onboardAPIKey` or `onboardWallet`.
+- `internal/api/client.go` — `handlePaymentRequired` returns typed
+  `PaymentError` instead of generic `APIError`; signing failures with
+  "insufficient" in the error string get classified as
+  `INSUFFICIENT_BALANCE`.
+
+### Deferred
+
+- **WebSocket streaming (`laevitas stream`).** Scoped for v0.7.0; deferred
+  pending an API-side reshape of the channel matrix. The current WS surface
+  only supports `futures` (umbrella) and `options` markets, and only
+  `trades`/`ohlc.ticker`/`ohlc.vt` channel types — too narrow to ship a
+  generic `stream` command against. Will land in a follow-on release once
+  the underlying matrix expands.
+
 ## [0.6.0] — 2026-04-28
 
 Major release. Two headline changes: a stable JSON envelope (breaking for any
