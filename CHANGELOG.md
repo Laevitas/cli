@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.8.0] — 2026-04-29
+
+WebSocket release. The streaming gateway hit v1.17.0 with a coverage matrix
+finally broad enough to ship a generic `ws` command against — all five
+markets (perpetuals, futures, options, spot, predictions), all three channel
+types (trades, ohlc.ticker, ohlc.vt), all eight timeframes. v0.8.0 adds the
+`lvt ws` command that subscribes to those channels and emits NDJSON to
+stdout — pipe-friendly, agent-friendly, raw-tape friendly.
+
+### Added
+
+- **`laevitas ws <market> <stream> <exchange:instrument>[,...]`** — subscribe
+  to live channels via the native WebSocket gateway at
+  `wss://apiv2.laevitas.ch/ws`. Two output modes, picked automatically:
+  - **TTY (interactive shell)** — live-updating table renders in raw
+    terminal mode with brand-styled header (channel + update count + rate),
+    rolling window of the most recent events, per-channel-type column
+    layouts (trades / ticker / vt / spot trades / options trades /
+    predictions trades), green/red coloring on side and price direction,
+    `q` to quit.
+  - **Pipe / non-TTY** — NDJSON, one `{"channel": "...", "data": {...}}`
+    per line. Pipe-friendly for agents and `jq`/`grep`/`tee`.
+
+  Override with `-o json` (force NDJSON even in a TTY, e.g. when piping
+  through `tee` to keep both a file and a live view) or `-o table` (force
+  live mode even when piped — rarely useful, mostly for debugging).
+  Multiple `<exchange:instrument>` pairs share a single connection.
+- **Client-side validation** of every channel before opening the socket:
+  market in `{perpetuals, futures, options, spot, predictions}`, stream in
+  `{trades, ticker, vt}`, exchange in the per-market list from the API
+  matrix, timeframe in `{1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d}`. Typos get
+  rejected with explicit "valid options for X are: ..." errors instead of
+  silent gateway timeouts.
+- **`--tf <timeframe>`** flag — required for `ticker` / `vt` streams,
+  rejected loudly when used with `trades`. Default `1m`.
+- **Auto-reconnect** with exponential backoff (1s → 30s, then steady) and
+  full re-subscription on each reconnect. Reconnect events surface on
+  stderr in TTY mode, as JSON warnings on non-TTY for agent log parsing.
+- **App-level ping** every 25s plus a 60s receive timeout, so a hung
+  connection (TCP-stuck, no data, no PINGs) gets detected and reconnected
+  rather than silently dropping events.
+- **Deprecation nudge** when a perpetual instrument is subscribed via the
+  legacy `futures` channel (`lvt ws futures trades binance:BTCUSDT`) —
+  prints a one-line stderr warning recommending `perpetuals` and continues
+  to subscribe so the user still gets data while the legacy alias is alive
+  one more minor.
+- **`Ctrl-C` graceful shutdown** — closes the socket cleanly, exits 0.
+- **TTY header** before the data stream starts: `▲ subscribed: N channels,
+  Ctrl-C to exit` followed by the resolved channel list. Skipped when piped
+  so NDJSON output stays clean.
+
+### Internal
+
+- New `internal/wsclient/` package — thin native-WS client wrapping
+  `github.com/coder/websocket`. Owns the JSON-RPC subscribe/unsubscribe/ping
+  protocol, reconnect loop, and channel-based event delivery.
+- New `internal/wsrender/` package — live-table renderer used by the TTY
+  path. Built on `github.com/charmbracelet/bubbletea` (alt-screen + frame
+  diffing) so Windows Terminal in raw mode redraws cleanly instead of
+  scrolling. Owns the per-channel column layouts (trades / ticker / vt /
+  spot / options / predictions) and the rolling event buffer. Soft errors
+  from the wsclient surface in the table footer rather than on stderr
+  (which would corrupt the rendered frame).
+- New transitive deps from Bubble Tea: `bubbletea`, `muesli/ansi`,
+  `muesli/cancelreader`, `muesli/termenv` (upgraded), `xo/terminfo`,
+  `mattn/go-runewidth` (upgraded).
+- New `cmd/ws/ws.go` — cobra command + validation tables. Validation
+  tables (`marketExchanges`, `validStreams`, `validTimeframes`) are
+  hardcoded from the v1.17.0 matrix and need to be updated in lockstep when
+  the matrix expands.
+- `cmd/root.go` and `internal/completer/completer.go` — register `ws` as a
+  top-level command. No `commandTree` entry because `ws` takes positional
+  args, not subcommands.
+- New transitive dependency: `github.com/coder/websocket v1.8.14`.
+
+### Not yet supported
+
+- **x402 wallet auth on WS.** The streaming gateway only accepts API-key
+  auth today (query param `?apiKey=...`). Calling `lvt ws` while in
+  `LAEVITAS_AUTH=x402` mode returns a clear error pointing at the gap.
+  Will land when the gateway accepts the same auth methods as REST.
+- **Auto-route shorthand (`lvt ws binance:BTCUSDT`).** Looking up the
+  market via `/instruments/detail` to skip a positional arg is queued for
+  v0.8.x; for now the user passes `<market> <stream> <exchange:instrument>`
+  explicitly.
+
 ## [0.7.0] — 2026-04-29
 
 x402 release. The pay-per-request authentication path was fully plumbed
