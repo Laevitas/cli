@@ -236,11 +236,12 @@ laevitas ws perpetuals trades binance:BTCUSDT
 laevitas ws options ticker deribit:BTC-30JAN26-100000-C --tf 5m
 laevitas ws spot trades binance:BTCUSDT,coinbase:BTC-USD
 laevitas ws predictions trades polymarket:will-bitcoin-reach-250000-by-december-31-2026-YES
+laevitas ws perpetuals liquidations binance:BTCUSDT,bybit:BTCUSDT,okx:BTC-USDT-SWAP
 ```
 
 **Markets:** `perpetuals`, `futures`, `options`, `spot`, `predictions`.
-**Streams:** `trades`, `ticker`, `vt` (volume + trade OHLC).
-**Timeframes (ticker / vt only):** `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `12h`, `1d`. Default `1m`.
+**Streams:** `trades`, `ticker`, `vt` (volume + trade OHLC), `liquidations` (perpetuals / futures only — forced-close events).
+**Timeframes (ticker / vt only):** `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `12h`, `1d`. Default `1m`. Trades and liquidations don't bucket by timeframe — passing `--tf` errors.
 
 **Exchanges per market:**
 
@@ -256,13 +257,14 @@ laevitas ws predictions trades polymarket:will-bitcoin-reach-250000-by-december-
 
 **Reconnect:** automatic with exponential backoff. Lost messages during downtime are not replayed — assume gaps are possible. Reconnect events surface as `{"warning": "...", "timestamp": "..."}` lines on stderr in non-TTY mode (agent-parseable).
 
-**Discriminators for parsing:** the `data` shape varies by market. To dispatch on incoming events without inspecting the channel string:
+**Discriminators for parsing:** the `data` shape varies by market and stream. To dispatch on incoming events without inspecting the channel string:
 
 - `condition_id` present → predictions
 - `option_type` and `strike` present → options
 - `maturity == "PERPETUAL"` → perpetual
 - any other `maturity` value → dated future
 - `quote_currency` present (no `mark_price`) → spot
+- `position_side` and `category == "forced"` → liquidation (`position_side` ∈ {`long`, `short`} = the side that was liquidated; `direction` is the inverse forced-order side)
 
 ```bash
 # stream + filter only large BTC perp trades
