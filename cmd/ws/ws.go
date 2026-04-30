@@ -37,23 +37,31 @@ var marketExchanges = map[string][]string{
 
 // validStreams maps the user-facing stream name to its channel-string prefix.
 // `trades` is single-token; `ticker` and `vt` are nested under `ohlc.`;
-// `liquidations` is single-token and only valid for perpetuals/futures
-// (see streamsByMarket).
+// `liquidations` and `book` are single-token and constrained to a subset
+// of markets (see streamsByMarket).
 var validStreams = map[string]string{
 	"trades":       "trades",
 	"ticker":       "ohlc.ticker",
 	"vt":           "ohlc.vt",
 	"liquidations": "liquidations",
+	"book":         "book",
 }
 
 // streamsByMarket gates streams that don't apply to every market. A stream
 // not listed here is implicitly available to every market in marketExchanges.
-// Liquidations only exist on linear/inverse derivatives — spot / options /
-// predictions don't have a forced-close concept.
+//   - liquidations: forced-close events exist on derivatives only.
+//   - book: L2 order book is published for spot / perps / futures /
+//     predictions. Options excluded — venues don't expose L2 for options.
 var streamsByMarket = map[string]map[string]struct{}{
 	"liquidations": {
 		"perpetuals": {},
 		"futures":    {},
+	},
+	"book": {
+		"spot":        {},
+		"perpetuals":  {},
+		"futures":     {},
+		"predictions": {},
 	},
 }
 
@@ -65,6 +73,11 @@ var validTimeframes = map[string]struct{}{
 
 var flags struct {
 	Timeframe string
+	// Layout overrides the auto-detected book view. Empty / "auto" keeps
+	// auto-detect (single pair → ladder, multi → scan); "scan" forces the
+	// summary grid; "ladder" forces the depth ladder (only valid with one
+	// channel). Ignored for non-book streams.
+	Layout string
 }
 
 // Cmd is the top-level `ws` command.
@@ -79,15 +92,40 @@ Channel grammar:
   ohlc.ticker.{market}.{exchange}.{instrument}.{tf}
   ohlc.vt.{market}.{exchange}.{instrument}.{tf}
   liquidations.{market}.{exchange}.{instrument}
+  book.{market}.{exchange}.{instrument}
 
   market    perpetuals | futures | options | spot | predictions
-  stream    trades | ticker | vt | liquidations
+  stream    trades | ticker | vt | liquidations | book
   tf        1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d  (only for ticker / vt)
 
   liquidations is only available for perpetuals and futures.
+  book is available for spot, perpetuals, futures, and predictions
+       (options is not supported — venues don't expose L2 for options).
 
 Multiple <exchange:instrument> pairs can be passed comma-separated; they
 share a single connection.
+
+Wildcards: '*' is accepted in the market, exchange, or instrument
+position to subscribe to every value at once. One wildcard pattern counts
+as one subscription against the server's 200/connection cap. Examples:
+  *                  any market           (e.g. trades.*.binance.BTCUSDT)
+  binance:*          all binance instruments for the chosen market
+  *:BTCUSDT          BTCUSDT across every exchange that lists it
+  *:*                everything (firehose — see warning below)
+
+Wildcards are NOT accepted in the stream position or the --tf timeframe;
+the server rejects those because the payload shape differs per stream
+type and per timeframe. PowerShell users: quote '*' so the shell doesn't
+expand it to filenames before laevitas sees it.
+
+In a TTY the book stream renders a live trading view: a multi-pair scan
+table when several books are subscribed, a centre-price ladder when one
+is. Press Enter on a scan row to drill into the ladder, Esc to return.
+Use --layout=scan or --layout=ladder to override the auto-detect.
+
+In any TUI surface, press '?' or 'h' for the keybinding overlay (q to
+quit, p to pause, ↑↓/jk to navigate, PgUp/PgDn to page, g/G for top/end,
++/- to change ladder depth tier).
 
 Output is NDJSON — every event is a single line of {"channel", "data"}.
 Pipe through jq for filtering, or redirect to a file for replay.`,
@@ -103,51 +141,191 @@ Pipe through jq for filtering, or redirect to a file for replay.`,
   # Live forced-close events (liquidations) on the most active perps
   lvt ws perpetuals liquidations binance:BTCUSDT,bybit:BTCUSDT,okx:BTC-USDT-SWAP
 
+  # Single-pair order book — opens straight into the centre-price ladder
+  lvt ws book perpetuals binance:BTCUSDT
+
+  # Multi-pair order book scan — list view; press Enter to drill into a ladder
+  lvt ws book perpetuals binance:BTCUSDT,bybit:BTCUSDT,okx:BTC-USDT-SWAP
+
+  # Wildcard — every BTCUSDT perp book across every supported exchange
+  lvt ws perpetuals book "*:BTCUSDT"
+
+  # Wildcard — every perpetual liquidation across every exchange
+  lvt ws perpetuals liquidations "*:*"
+
   # Polymarket prediction market trades
   lvt ws predictions trades polymarket:will-bitcoin-reach-250000-by-december-31-2026-YES`,
-	Args: cobra.ExactArgs(3),
+	Args: validateArgs,
 	RunE: run,
+}
+
+// validateArgs runs before run() and catches the most common PowerShell
+// gotcha: an unquoted `*` in argv gets expanded by the shell into the
+// list of files in cwd. Cobra's ExactArgs(3) check would normally fire
+// with "accepts 3 arg(s), received 12" — true but unhelpful. We catch
+// that case here and surface the actual fix.
+func validateArgs(cmd *cobra.Command, args []string) error {
+	if len(args) > 3 && looksLikeShellGlob(args) {
+		return fmt.Errorf(
+			"the shell expanded `*` into %d files before laevitas saw it. Quote the wildcard:\n  lvt ws \"*\" trades \"*:*\"",
+			len(args),
+		)
+	}
+	if err := cobra.ExactArgs(3)(cmd, args); err != nil {
+		return err
+	}
+	return nil
+}
+
+// looksLikeShellGlob heuristically detects the PowerShell glob-expansion
+// case: argv contains entries that match real files in cwd. We only need
+// to be confident that the user meant `*`, not 100% accurate, because
+// cobra's "accepts 3 arg(s)" is the fallback.
+func looksLikeShellGlob(args []string) bool {
+	matches := 0
+	for _, a := range args {
+		// Skip the few tokens that are valid args even though they
+		// happen to live as filenames (rare but plausible: "main.go"
+		// is not a market name; "trades" is).
+		if _, err := os.Stat(a); err == nil {
+			matches++
+		}
+	}
+	// More than half of argv pointing at real files = glob expansion.
+	return matches >= len(args)/2 && matches >= 2
+}
+
+// looksFirehose returns a warning string when any constructed channel has
+// `*` in two or more segments — those patterns can deliver thousands of
+// events/sec, which exceeds what most terminals (and the 20 msg/s
+// inbound cap before close code 4008) can sustain on a slow consumer.
+//
+// The threshold is conservative: a single `*` in the instrument slot
+// (e.g. `book.perpetuals.binance.*`) is fine — that's "every binance
+// perp", which is bounded and useful. Two or more `*` (`book.*.*.*`,
+// `trades.*.binance.*`) is when the volume genuinely opens up.
+//
+// Returns empty string if no warning is warranted.
+func looksFirehose(channels []string) string {
+	for _, ch := range channels {
+		stars := strings.Count(ch, ".*") + strings.Count(ch, "*.")
+		// `.*` and `*.` overlap on `*.*`, so dedupe by counting segments.
+		segs := strings.Split(ch, ".")
+		wildSegs := 0
+		for _, s := range segs {
+			if s == "*" {
+				wildSegs++
+			}
+		}
+		_ = stars
+		if wildSegs >= 2 {
+			return fmt.Sprintf("pattern %q has %d wildcard segments — this can deliver thousands of events/sec. If your terminal can't drain fast enough, the server will close the connection with 4003 (slow consumer).", ch, wildSegs)
+		}
+	}
+	return ""
+}
+
+// detectGlobExpansion is the second-line check, invoked from run() once
+// cobra has accepted exactly three args. Catches the case where the shell
+// expanded `*` to a single match (cwd had exactly one file), so cobra's
+// arg-count check passed but args[0] is a filename like "go.mod" instead
+// of a market or `*`. Validation downstream would otherwise produce
+// `unknown market "go.mod"`, which is true but unhelpful.
+func detectGlobExpansion(args []string) error {
+	if len(args) < 2 {
+		return nil
+	}
+	for i, a := range args[:2] {
+		if a == "" || a == "*" {
+			continue
+		}
+		// Only consider it a glob match if the arg points at a real file
+		// AND looks file-y (contains a dot or path separator). "trades"
+		// happens to be a valid stream name; we don't want to false-flag
+		// it just because someone has a "trades" file in cwd.
+		if !strings.ContainsAny(a, "./\\") {
+			continue
+		}
+		if _, err := os.Stat(a); err == nil {
+			slot := []string{"market", "stream"}[i]
+			return fmt.Errorf(
+				"%s argument %q looks like a file, not a wildcard. The shell may have expanded `*` — quote it:\n  lvt ws \"*\" trades \"*:*\"",
+				slot, a,
+			)
+		}
+	}
+	return nil
 }
 
 func init() {
 	Cmd.Flags().StringVar(&flags.Timeframe, "tf", "1m", "Timeframe for ticker / vt streams (1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d)")
+	Cmd.Flags().StringVar(&flags.Layout, "layout", "auto", "Book view layout: auto (default), scan (multi-pair grid), or ladder (centre-price depth ladder, single pair only)")
 }
 
 // run is the cobra entry point. Validates everything client-side, builds the
 // channel list, opens the connection, and pumps events to stdout until the
 // user hits Ctrl-C or the connection becomes unrecoverable.
 func run(cmd *cobra.Command, args []string) error {
+	// PowerShell expands an unquoted `*` in an argv slot to whatever files
+	// happen to live in cwd. Detect that as "user typed * but the shell
+	// ate it" rather than letting a confusing error like
+	//   unknown market "go.mod"
+	// come back. We only flag market and stream — pairs are quoted by the
+	// `:` so PowerShell rarely mangles them.
+	if err := detectGlobExpansion(args); err != nil {
+		return err
+	}
+
 	market := strings.ToLower(strings.TrimSpace(args[0]))
 	streamName := strings.ToLower(strings.TrimSpace(args[1]))
 	pairs := strings.Split(args[2], ",")
 
-	// Validate the market.
-	allowedExchanges, ok := marketExchanges[market]
-	if !ok {
-		return fmt.Errorf("unknown market %q. Valid: %s", market, strings.Join(sortedKeys(marketExchanges), ", "))
+	// Validate the market. `*` is a NATS-style wildcard accepted on the
+	// streaming gateway (API v1.23.0+); skip the concrete-market lookup
+	// and let the server resolve the pattern. Concrete market names still
+	// go through the whitelist.
+	var allowedExchanges []string
+	if market != "*" {
+		var ok bool
+		allowedExchanges, ok = marketExchanges[market]
+		if !ok {
+			return fmt.Errorf("unknown market %q. Valid: %s, or * for any market", market, strings.Join(sortedKeys(marketExchanges), ", "))
+		}
 	}
 
-	// Validate the stream.
+	// Validate the stream. Wildcards are NOT allowed in the stream / channel
+	// position — the server explicitly rejects this because each stream type
+	// has a different payload shape. Reject client-side for fast feedback.
+	if streamName == "*" {
+		return fmt.Errorf("wildcards not allowed in the stream position. Pick one of: trades, ticker, vt, liquidations, book")
+	}
 	streamPrefix, ok := validStreams[streamName]
 	if !ok {
-		return fmt.Errorf("unknown stream %q. Valid: trades, ticker, vt, liquidations", streamName)
+		return fmt.Errorf("unknown stream %q. Valid: trades, ticker, vt, liquidations, book", streamName)
 	}
 
 	// Some streams only apply to a subset of markets (e.g. liquidations is
 	// derivatives-only). Reject the combination here so the user gets a
 	// targeted error instead of a generic "invalid channel" from the server.
-	if allowedMarkets, restricted := streamsByMarket[streamName]; restricted {
-		if _, ok := allowedMarkets[market]; !ok {
-			markets := sortedKeysSet(allowedMarkets)
-			return fmt.Errorf("stream %q is only available for: %s", streamName, strings.Join(markets, ", "))
+	// Skipped for the wildcard market — the server filters per-event.
+	if market != "*" {
+		if allowedMarkets, restricted := streamsByMarket[streamName]; restricted {
+			if _, ok := allowedMarkets[market]; !ok {
+				markets := sortedKeysSet(allowedMarkets)
+				return fmt.Errorf("stream %q is only available for: %s", streamName, strings.Join(markets, ", "))
+			}
 		}
 	}
 
-	// Validate --tf only for OHLC streams; reject explicit --tf with `trades`
-	// or `liquidations` (neither buckets by timeframe).
+	// Validate --tf only for OHLC streams; reject explicit --tf with anything
+	// else (none of the other streams bucket by timeframe). Wildcards are
+	// not allowed in the timeframe position — server explicitly rejects.
 	tf := flags.Timeframe
 	usesTimeframe := streamName == "ticker" || streamName == "vt"
 	if usesTimeframe {
+		if tf == "*" {
+			return fmt.Errorf("wildcards not allowed in the --tf position. Subscribe per timeframe (1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d)")
+		}
 		if _, ok := validTimeframes[tf]; !ok {
 			return fmt.Errorf("invalid --tf %q. Valid: 1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d", tf)
 		}
@@ -155,9 +333,24 @@ func run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--tf only applies to ticker and vt streams, not %s", streamName)
 	}
 
-	// Build the channel list. Reject any exchange that's not in the matrix
-	// for this market — server would 400 us anyway, but a clean client-side
-	// error tells the user exactly what's wrong.
+	// --layout is book-only. Reject the flag on other streams so users don't
+	// silently set it and wonder why nothing changed.
+	if cmd.Flags().Changed("layout") && streamName != "book" {
+		return fmt.Errorf("--layout only applies to the book stream, not %s", streamName)
+	}
+	switch strings.ToLower(flags.Layout) {
+	case "", "auto", "scan", "ladder":
+		// ok
+	default:
+		return fmt.Errorf("invalid --layout %q. Valid: auto, scan, ladder", flags.Layout)
+	}
+	if strings.ToLower(flags.Layout) == "ladder" && len(pairs) > 1 {
+		return fmt.Errorf("--layout=ladder requires a single exchange:instrument; got %d", len(pairs))
+	}
+
+	// Build the channel list. For concrete markets and exchanges, reject
+	// combinations the server would 400 anyway. Wildcard market or
+	// wildcard exchange skips the whitelist (server resolves the pattern).
 	channels := make([]string, 0, len(pairs))
 	deprecationNudges := make([]string, 0)
 	for _, p := range pairs {
@@ -165,24 +358,40 @@ func run(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		if !contains(allowedExchanges, exchange) {
-			return fmt.Errorf(
-				"exchange %q not available for market %q. Valid for %s: %s",
-				exchange, market, market, strings.Join(allowedExchanges, ", "),
-			)
+		// Whitelist exchange only when both market and exchange are
+		// concrete. With market == "*" we don't know which whitelist to
+		// apply; with exchange == "*" we're explicitly asking for all of
+		// them.
+		if market != "*" && exchange != "*" {
+			if !contains(allowedExchanges, exchange) {
+				return fmt.Errorf(
+					"exchange %q not available for market %q. Valid for %s: %s, or * for any exchange",
+					exchange, market, market, strings.Join(allowedExchanges, ", "),
+				)
+			}
 		}
 
 		// Deprecation hint: API supports a legacy alias where perpetual
 		// instruments fire on the `futures` channel for one minor. If the
 		// user types `futures trades binance:BTCUSDT`, we still subscribe
 		// (server forwards) but warn so the next minor doesn't break them.
-		if market == "futures" && looksLikePerp(instrument) {
+		// Doesn't apply when either side is a wildcard.
+		if market == "futures" && exchange != "*" && instrument != "*" && looksLikePerp(instrument) {
 			deprecationNudges = append(deprecationNudges,
 				fmt.Sprintf("%s:%s looks like a perpetual; the legacy futures alias will be removed next minor — use `lvt ws perpetuals %s %s:%s`", exchange, instrument, streamName, exchange, instrument))
 		}
 
 		ch := buildChannel(streamPrefix, market, exchange, instrument, tf, usesTimeframe)
 		channels = append(channels, ch)
+	}
+
+	// Firehose warning: patterns with `*` in two or more positions can
+	// emit thousands of events/sec on a popular channel type. The server
+	// will cut us with close code 4003 if we can't drain fast enough.
+	// Print the heads-up on stderr before dialing — non-blocking, just
+	// makes the "why am I getting 4003?" question answer itself.
+	if firehoseWarning := looksFirehose(channels); firehoseWarning != "" && output.IsTTY() {
+		fmt.Fprintf(os.Stderr, "%s⚠ %s%s\n", output.Yellow, firehoseWarning, output.Reset)
 	}
 
 	// Resolve auth — same path as REST commands. We respect LAEVITAS_AUTH so a
@@ -252,6 +461,32 @@ func run(cmd *cobra.Command, args []string) error {
 	defer cli.Close()
 
 	if useLiveTable {
+		// Book stream gets its own scan/ladder TUI; trades, ticker, vt,
+		// liquidations stay on the rolling-table renderer that's served
+		// them since v0.8.0.
+		if streamName == "book" {
+			layout := strings.ToLower(flags.Layout)
+			if layout == "" || layout == "auto" {
+				// Single concrete subscription → ladder (deep-dive on
+				// one book). Multi-pair OR any wildcard → scan, because
+				// a wildcard expands to an unknown-but-likely-many set
+				// of concrete pairs and the user explicitly asked for
+				// breadth.
+				hasWildcard := false
+				for _, ch := range channels {
+					if strings.Contains(ch, "*") {
+						hasWildcard = true
+						break
+					}
+				}
+				if len(channels) == 1 && !hasWildcard {
+					layout = "ladder"
+				} else {
+					layout = "scan"
+				}
+			}
+			return runBookTable(ctx, cli, channels, layout)
+		}
 		return runLiveTable(ctx, cli, channels)
 	}
 	return runNDJSON(ctx, cli)
@@ -332,6 +567,32 @@ func runLiveTable(ctx context.Context, cli *wsclient.Client, channels []string) 
 	// Run blocks until the user presses 'q' / Ctrl-C or the stream closes.
 	if err := table.Run(); err != nil {
 		return fmt.Errorf("live table: %w", err)
+	}
+	return nil
+}
+
+// runBookTable is the book-stream variant of runLiveTable. Same plumbing —
+// drain errs, pump events, block on Run — but the renderer is the
+// snapshot-replacing BookTable instead of the rolling-tape LiveTable.
+//
+// Layout is "scan" or "ladder" by the time we get here; auto-detect happens
+// in the caller.
+func runBookTable(ctx context.Context, cli *wsclient.Client, channels []string, layout string) error {
+	table := wsrender.NewBookTable(channels, layout)
+
+	go func() {
+		for e := range cli.Errs() {
+			table.SetLastError(e.Error())
+		}
+	}()
+	go func() {
+		for ev := range cli.Events() {
+			table.Push(ev)
+		}
+	}()
+
+	if err := table.Run(); err != nil {
+		return fmt.Errorf("book view: %w", err)
 	}
 	return nil
 }

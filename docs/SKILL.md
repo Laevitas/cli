@@ -237,11 +237,42 @@ laevitas ws options ticker deribit:BTC-30JAN26-100000-C --tf 5m
 laevitas ws spot trades binance:BTCUSDT,coinbase:BTC-USD
 laevitas ws predictions trades polymarket:will-bitcoin-reach-250000-by-december-31-2026-YES
 laevitas ws perpetuals liquidations binance:BTCUSDT,bybit:BTCUSDT,okx:BTC-USDT-SWAP
+laevitas ws perpetuals book binance:BTCUSDT
+laevitas ws perpetuals book "*:BTCUSDT"     # wildcard — all venues
 ```
 
 **Markets:** `perpetuals`, `futures`, `options`, `spot`, `predictions`.
-**Streams:** `trades`, `ticker`, `vt` (volume + trade OHLC), `liquidations` (perpetuals / futures only — forced-close events).
-**Timeframes (ticker / vt only):** `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `12h`, `1d`. Default `1m`. Trades and liquidations don't bucket by timeframe — passing `--tf` errors.
+**Streams:** `trades`, `ticker`, `vt` (volume + trade OHLC), `liquidations` (perpetuals / futures only — forced-close events), `book` (L2 order book — perpetuals / futures / spot / predictions; options not supported).
+**Timeframes (ticker / vt only):** `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `12h`, `1d`. Default `1m`. Trades, liquidations, and book don't bucket by timeframe — passing `--tf` errors.
+
+**Wildcards (`*`):** accepted per-segment in market, exchange, and instrument positions; rejected in stream, OHLC dataType, and `--tf` (server-enforced rules). One wildcard pattern counts as one subscription. The wire `channel` field on each event is always the resolved concrete path, so dispatch logic that keys off `msg.channel` keeps working unchanged.
+
+```bash
+laevitas ws perpetuals book "*:BTCUSDT"        # BTCUSDT perp on every exchange
+laevitas ws "*" trades "binance:BTCUSDT"        # binance BTCUSDT across markets
+laevitas ws perpetuals liquidations "*:*"       # every perp liquidation everywhere
+```
+
+PowerShell users must quote `*` so the shell doesn't expand it to filenames. Patterns with two or more `*` segments can deliver thousands of events/sec; if your consumer can't drain fast enough the server closes with code 4003 (slow consumer).
+
+**TUI keybindings (live-table mode):** every renderer (rolling tape, book scan, book ladder) shares one keymap. Press `?` in any view for a context-aware overlay.
+
+| Action | Keys |
+|---|---|
+| quit | `q` `Q` `Ctrl+C` |
+| pause / resume | `p` `P` |
+| help overlay | `?` `h` `H` |
+| back / close help | `Esc` |
+| select up / down (lists) | `↑` `k` / `↓` `j` |
+| page up / down (lists) | `PgUp` `b` / `PgDn` `f` |
+| top / bottom (lists) | `g` / `G` (or `Home` / `End`) |
+| drill into selected | `Enter` |
+| ladder depth tier | `+` / `-` (cycles 10 → 20 → 50) |
+| scroll | mouse wheel up / down |
+
+Click events are not consumed — the terminal keeps native click-drag-to-select for copy-paste (hold `Shift` while dragging on most terminals, or `Alt` in VS Code, to bypass any TUI mouse capture).
+
+For agent piping (`-o json` or non-TTY), the TUI is bypassed entirely — events stream as NDJSON to stdout, one event per line. Keybindings only apply when a real terminal is attached.
 
 **Exchanges per market:**
 

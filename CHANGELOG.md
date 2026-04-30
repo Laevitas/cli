@@ -7,6 +7,142 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.8.2] — 2026-04-29
+
+L2 order book streaming, channel wildcards, and a long-standing
+default-exchange bug that was silently scoping every cross-product query
+to a single venue.
+
+### Added
+
+- **`book` stream** for `lvt ws perpetuals|futures|spot|predictions`.
+  Channel grammar: `book.{market}.{exchange}.{instrument}`. Options is
+  not supported — venues don't expose L2 for options. Two views:
+  - **Ladder** (single-pair): centre-price Bloomberg DEPT layout — bids
+    on the left growing toward the price column, asks on the right
+    growing away from it, spread separator centred. Sizes log-scaled so
+    a single 50 BTC level doesn't visually swallow every smaller quote.
+    Header shows MID + 8-tick microprice sparkline (colored by net
+    direction), spread bps, imbalance, and tier liquidity. Levels that
+    grew or shrank by ≥10% since the last snapshot get a `↑` / `↓`
+    glyph for ~250ms; levels holding ≥30% of their side's tier
+    liquidity get a `▲` "whale" badge.
+  - **Scan** (multi-pair): one summary row per discovered (exchange,
+    instrument), sorted alphabetically. Columns: PAIR, BID SZ, BID,
+    SPREAD, BPS, ASK, ASK SZ, MICRO, IMB10, UPD. Arrow keys / `j`/`k`
+    to move the cursor; `Enter` to drill into the ladder for that row;
+    `Esc` to return.
+
+  Auto-layout picks ladder for a single concrete pair, scan for any
+  multi-pair or wildcard subscription. Override with `--layout=scan` or
+  `--layout=ladder`. NDJSON mode emits the wire envelope unchanged for
+  scripting and replay.
+
+- **Channel wildcards** (`*` per segment) on every stream.
+  One wildcard pattern counts as one subscription against the server's
+  200-per-connection cap; the resolved concrete channel arrives on each
+  event so existing renderer dispatch keeps working unchanged.
+
+  Examples:
+  ```
+  lvt ws perpetuals book "*:BTCUSDT"             # BTCUSDT perp on every venue
+  lvt ws "*" trades "binance:BTCUSDT"            # binance BTCUSDT across markets
+  lvt ws perpetuals liquidations "*:*"           # every perp liquidation
+  ```
+
+  Wildcards are rejected client-side in the three positions the server
+  explicitly disallows: stream name (`*` channel-type breaks payload
+  shape), OHLC `dataType`, and OHLC `--tf`. PowerShell users: quote `*`
+  so the shell doesn't expand it to filenames before laevitas sees it.
+  When laevitas detects probable shell-glob expansion (e.g. cwd had a
+  matching file), it surfaces a targeted error pointing to the quoting
+  fix.
+
+  Patterns with two or more wildcard segments (`trades.*.*.*`,
+  `book.*.*.*`) print a stderr warning before dialing — those can
+  deliver thousands of events per second and trip the server's
+  slow-consumer disconnect (close code 4003).
+
+- **EXCHANGE column** appears between TIME and INSTRUMENT in trades,
+  liquidations, ticker, and vt views whenever any subscribed pattern
+  has `*` in the exchange position. Decided once at subscribe time
+  from the channel patterns — column structure is fixed for the
+  session, never flickers in/out depending on which venue happened to
+  fire most recently. Concrete single-venue subs render unchanged (no
+  EXCHANGE column).
+
+- **Predictions object-level normalizer.** The `book.predictions.*`
+  channel currently emits levels as `{price, size}` objects on the
+  producer side while every other market emits `[price, size]` tuples
+  (producer fix in flight per the API team). The CLI accepts both
+  forms transparently so prediction books render today.
+
+### Fixed
+
+- **Cross-product endpoints no longer silently scope to the default
+  exchange.** `perps catalog --currency CL` would return zero results
+  because the CLI was injecting `exchange=deribit` (the config
+  default) into every call, including catalog endpoints that span
+  every venue. Same bug on `futures catalog`, `options catalog`, and
+  `instruments list`. The fix introduces a `cmdutil.ExchangeExplicit`
+  flag that distinguishes "user explicitly passed `--exchange`" from
+  "exchange came from config defaults"; `ToParams()` now only injects
+  the exchange in the explicit case. Concrete-instrument commands
+  (snapshot, ohlcvt, etc.) keep their existing default behaviour
+  because they require an exchange.
+- **`--exchange ""` now actually clears.** Previously the empty-string
+  override was silently dropped before reaching the API client.
+- **Footer no longer mislabels cross-product calls.** When the CLI
+  isn't filtering by exchange, the footer's `· deribit` segment is
+  suppressed. The tag only shows when the request actually carried
+  one.
+- **Book wildcard scan navigation works.** Cursor bounds were checked
+  against the subscription list rather than the discovered pairs, so
+  arrow-down was a no-op for any wildcard subscription. Now bounded
+  against the live discovered set; rows populate as venues fire and
+  the cursor extends to match.
+- **Book wildcard auto-layout.** Any subscription containing `*`
+  defaults to scan view regardless of pattern count — single
+  concrete-pair → ladder, anything else → scan.
+
+### Changed
+
+- **`Push` on the book renderer** now diffs against the previous
+  snapshot under the same lock to record per-level direction (`+1`
+  built, `-1` eaten/pulled), used by the flash glyphs. The microprice
+  ring buffer is updated in the same critical section.
+- **Standardised TUI keybindings across every surface.** Same key
+  vocabulary, same wording, same order — defined once in
+  `internal/wsrender/keymap.go` and consumed by every renderer
+  (rolling tape, book scan, book ladder). Keys mirror the k9s + less
+  + vim conventions:
+
+  | Action | Keys |
+  |---|---|
+  | quit | `q` `Q` `Ctrl+C` |
+  | pause / resume | `p` `P` |
+  | help overlay | `?` `h` `H` |
+  | back / close help | `Esc` |
+  | select previous | `↑` `k` |
+  | select next | `↓` `j` |
+  | page up | `PgUp` `b` |
+  | page down | `PgDn` `f` |
+  | top / bottom | `g` / `G` (or `Home` / `End`) |
+  | drill into selected | `Enter` |
+  | depth tier (ladder) | `+` / `-` |
+  | wheel scroll | mouse wheel up / down |
+
+  Press `?` in any TUI surface for a context-aware overlay listing
+  the active keys. Mouse wheel adds natural scrolling on lists; click
+  events are deliberately NOT consumed so the terminal keeps its
+  native click-drag-to-select for copy-paste (hold `Shift` while
+  dragging on most terminals, or `Alt` in VS Code, to bypass any
+  remaining mouse capture).
+- **Rolling-tape ring buffer bumped to 100 events** (was 18). On tall
+  iTerm / Windows Terminal / VS Code windows the table now fills the
+  screen instead of leaving the bottom 70% blank. Trimmed at render
+  time per terminal height; ~50 KB resident memory cost.
+
 ## [0.8.1] — 2026-04-29
 
 Streaming hot-fix + liquidations channel. The gateway shipped two changes

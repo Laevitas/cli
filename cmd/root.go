@@ -64,10 +64,19 @@ API Reference:  https://apiv2.laevitas.ch/redoc`,
 			fmt.Fprintf(os.Stderr, "Invalid output format: %s (use: auto, json, table, csv)\n", outputFormat)
 			os.Exit(1)
 		}
-		// Push globals into cmdutil so subcommands can access them
+		// Push globals into cmdutil so subcommands can access them.
 		cmdutil.OutputFormat = outputFormat
-		if exchange != "" {
+		// `cmdutil.Exchange` already carries the config-file default
+		// (loaded by cmdutil's config bootstrap). The user can override
+		// or clear it via --exchange / LAEVITAS_EXCHANGE; the
+		// ExchangeExplicit flag tells cross-product endpoints whether
+		// this came from the user or just from the default. We treat
+		// `--exchange ""` as "user explicitly asked to clear it" — the
+		// previous code dropped that case silently which made it
+		// impossible to scope a query across all venues from the CLI.
+		if cmd.Flags().Changed("exchange") || os.Getenv("LAEVITAS_EXCHANGE") != "" {
 			cmdutil.Exchange = exchange
+			cmdutil.ExchangeExplicit = true
 		}
 		cmdutil.Verbose = verbose
 		cmdutil.NoChart = noChart
