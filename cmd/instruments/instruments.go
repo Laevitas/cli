@@ -50,7 +50,11 @@ var listCmd = &cobra.Command{
 		params.Resolution = ""
 		params.SortDir = ""
 
-		params.Exchange = cmdutil.Exchange
+		// Cross-product registry — only filter by exchange when the
+		// user explicitly asked for one. See cmdutil.ExchangeExplicit.
+		if cmdutil.ExchangeExplicit {
+			params.Exchange = cmdutil.Exchange
+		}
 		params.MarketType = listFlags.MarketType
 		// The instruments registry uses ?base_currency, not ?currency. Wire the
 		// flag through the dedicated BaseCurrency field so we don't accidentally

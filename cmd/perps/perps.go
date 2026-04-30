@@ -38,7 +38,13 @@ var catalogCmd = &cobra.Command{
 		params.End = ""
 		params.Resolution = ""
 		params.SortDir = ""
-		params.Exchange = cmdutil.Exchange
+		// Catalog is a cross-exchange registry. Only filter by exchange
+		// when the user explicitly asked for one — otherwise the
+		// config default (e.g. "deribit") would hide every other
+		// venue's listings.
+		if cmdutil.ExchangeExplicit {
+			params.Exchange = cmdutil.Exchange
+		}
 		params.Maturity = catalogFlags.Maturity
 		cmdutil.RunAndPrint(client, api.PerpsCatalog, params)
 	},

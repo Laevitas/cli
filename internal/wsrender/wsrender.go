@@ -27,9 +27,16 @@ import (
 	"github.com/laevitas/cli/internal/wsclient"
 )
 
-// maxRows caps how many recent events the renderer keeps. Sized so the table
-// fits on a default 80x24 terminal with header + separator + footer.
-const maxRows = 18
+// maxRows caps how many recent events the renderer keeps in the rolling
+// ring buffer. Sized to comfortably fill a tall terminal (iTerm / Windows
+// Terminal / VS Code typically run 40-60 rows). The renderer trims to
+// the actual visible height per frame, so the only cost on a small
+// terminal is ~50 KB of resident memory holding events that won't render
+// — a non-issue.
+//
+// Was 18 for a default 80x24 terminal; on bigger windows that left ~70%
+// of the screen blank. v0.8.2 bumped to 100.
+const maxRows = 100
 
 // LiveTable is the live-updating terminal renderer. The cmd layer wires
 // events from wsclient.Events into Push; Run starts the Bubble Tea program
@@ -113,6 +120,13 @@ type model struct {
 	table  *LiveTable
 	width  int
 	height int
+
+	// paused freezes the visible buffer in place (events keep arriving
+	// in lt.events but renderEvents is called with a frozen snapshot).
+	paused      bool
+	pausedSnap  []wsclient.Event
+	// helpOpen toggles the keybinding overlay in the body.
+	helpOpen bool
 }
 
 func newModel(lt *LiveTable) model {
@@ -137,10 +151,53 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// 'q', 'Q', Ctrl+C all quit.
-		switch msg.String() {
-		case "q", "Q", "ctrl+c":
+		// Route through the shared classifyKey vocabulary (keymap.go)
+		// so every TUI surface dispatches identically. Rolling tape
+		// only acts on the "always" bindings — list/ladder actions
+		// fall through to no-op.
+		switch classifyKey(msg.String()) {
+		case actQuit:
 			return m, tea.Quit
+		case actPause:
+			m.paused = !m.paused
+			if m.paused {
+				ev, _, _, _ := m.table.snapshot()
+				m.pausedSnap = ev
+			} else {
+				m.pausedSnap = nil
+			}
+			return m, nil
+		case actHelp:
+			m.helpOpen = !m.helpOpen
+			return m, nil
+		case actEsc:
+			// Esc closes help if open; otherwise no-op (rolling tape
+			// has no drill-down to back out of).
+			if m.helpOpen {
+				m.helpOpen = false
+			}
+			return m, nil
+		}
+	case tea.MouseMsg:
+		// Wheel events on the rolling tape toggle pause. Rolling tape
+		// isn't a scrollable list — but pausing on wheel-up matches
+		// what users instinctively do (stop the tape so they can read
+		// it). Click events are NOT consumed so the terminal keeps
+		// native click-drag-to-select for copy-paste.
+		switch classifyMouse(msg.Button) {
+		case actWheelUp:
+			if !m.paused {
+				m.paused = true
+				ev, _, _, _ := m.table.snapshot()
+				m.pausedSnap = ev
+			}
+			return m, nil
+		case actWheelDown:
+			if m.paused {
+				m.paused = false
+				m.pausedSnap = nil
+			}
+			return m, nil
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -154,10 +211,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	events, updates, elapsed, lastErr := m.table.snapshot()
+	if m.paused && m.pausedSnap != nil {
+		events = m.pausedSnap
+	}
 
 	width := m.width
 	if width <= 0 {
 		width = 100
+	}
+
+	if m.helpOpen {
+		return renderHelpOverlay("rolling tape", width)
 	}
 
 	// Cap the visible body to fit the current terminal height so the table
@@ -200,19 +264,71 @@ func (m model) View() string {
 		if len(shown) > visibleRows {
 			shown = shown[len(shown)-visibleRows:]
 		}
-		b.WriteString(renderEvents(shown, width))
+		b.WriteString(renderEvents(shown, width, showExchangeColumn(m.table.channels)))
 	}
 
-	// Footer — keypress hint + soft error if present
+	// Footer — keypress hint + soft error if present. Hint mirrors the
+	// standard keybinding vocabulary (see renderHelpOverlay) so users
+	// only have to learn it once across every TUI surface.
 	b.WriteByte('\n')
 	b.WriteString(output.BrandGreyMid)
 	if lastErr != "" {
 		b.WriteString("⚠ " + truncate(lastErr, width-20) + "  ")
 	}
-	b.WriteString("press 'q' to quit")
+	if m.paused {
+		b.WriteString(output.Yellow + "PAUSED   " + output.BrandGreyMid)
+	}
+	b.WriteString(footerHints("tape"))
 	b.WriteString(output.Reset)
 
 	return b.String()
+}
+
+// ─── help overlay ───────────────────────────────────────────────────────────
+
+// renderHelpOverlay is the canonical keybinding reference shown when the
+// user presses `?`. Used by every TUI surface — sections and bindings
+// come from keymap.go (the single source of truth), so adding a new
+// binding propagates here automatically.
+//
+// surface is the human-readable name of the active view ("rolling tape",
+// "book scan", "book ladder").
+func renderHelpOverlay(surface string, width int) string {
+	bold := output.Bold
+	green := output.BrandGreen
+	grey := output.BrandGreyMid
+	light := output.BrandGreyLight
+	reset := output.Reset
+
+	var b strings.Builder
+	b.WriteString(bold + green + "▲  laevitas — " + surface + " keybindings" + reset)
+	b.WriteString("\n\n")
+
+	for _, section := range bindingsForSurface(surface) {
+		b.WriteString(bold + light + section.title + reset + "\n")
+		for _, it := range section.bindings {
+			b.WriteString("  ")
+			b.WriteString(green + padRight(it.keys, 18) + reset)
+			b.WriteString(grey + it.desc + reset)
+			b.WriteByte('\n')
+		}
+		b.WriteByte('\n')
+	}
+
+	b.WriteString(grey + "Press ? or esc to return." + reset)
+	b.WriteByte('\n')
+	b.WriteString(grey + "Tip: hold Shift while dragging to copy text from this view (Alt in VS Code)." + reset)
+	return b.String()
+}
+
+// padRight pads s with spaces on the right so it occupies exactly width
+// runes of visible space. Used by renderHelpOverlay for the keys column.
+func padRight(s string, width int) string {
+	w := visibleWidth(s)
+	if w >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-w)
 }
 
 // ─── header ─────────────────────────────────────────────────────────────────
@@ -245,8 +361,13 @@ func renderHeader(channels []string, updates int64, elapsed time.Duration, width
 
 // ─── per-channel renderers ──────────────────────────────────────────────────
 
-// renderEvents picks a column layout per channel type and formats every row.
-func renderEvents(events []wsclient.Event, width int) string {
+// renderEvents picks a column layout per channel type and formats every
+// row. exchangeCol is decided once from the subscription list (see
+// showExchangeColumn) and tells the child renderer whether to insert an
+// EXCHANGE column. We don't decide per-frame from event content — that
+// caused the column to flicker in/out depending on which venue happened
+// to fire most recently.
+func renderEvents(events []wsclient.Event, width int, exchangeCol bool) string {
 	if len(events) == 0 {
 		return ""
 	}
@@ -257,17 +378,17 @@ func renderEvents(events []wsclient.Event, width int) string {
 	case strings.HasPrefix(ch, "trades.predictions."):
 		return renderPredictionsTrades(events, width)
 	case strings.HasPrefix(ch, "trades.spot."):
-		return renderSpotTrades(events, width)
+		return renderSpotTrades(events, width, exchangeCol)
 	case strings.HasPrefix(ch, "trades.options."):
-		return renderOptionsTrades(events, width)
+		return renderOptionsTrades(events, width, exchangeCol)
 	case strings.HasPrefix(ch, "trades."): // perpetuals + futures
-		return renderDerivTrades(events, width)
+		return renderDerivTrades(events, width, exchangeCol)
 	case strings.HasPrefix(ch, "ohlc.ticker."):
-		return renderTicker(events, width)
+		return renderTicker(events, width, exchangeCol)
 	case strings.HasPrefix(ch, "ohlc.vt."):
-		return renderVT(events, width)
+		return renderVT(events, width, exchangeCol)
 	case strings.HasPrefix(ch, "liquidations."):
-		return renderLiquidations(events, width)
+		return renderLiquidations(events, width, exchangeCol)
 	default:
 		return renderGeneric(events, width)
 	}
@@ -399,9 +520,89 @@ func visibleWidth(s string) int {
 
 // ─── per-channel renderers ──────────────────────────────────────────────────
 
-func renderDerivTrades(events []wsclient.Event, width int) string {
+// exchangeFromChannel pulls the exchange segment out of a wire channel.
+// Channel grammar:
+//
+//	{stream}.{market}.{exchange}.{instrument}[.{tf}]
+//	ohlc.{dataType}.{market}.{exchange}.{instrument}.{tf}
+//
+// Exchange is segment 2 for trades / liquidations / book, segment 3 for
+// ohlc.*. Returns empty string if the channel isn't recognisable.
+func exchangeFromChannel(ch string) string {
+	parts := strings.Split(ch, ".")
+	if len(parts) < 4 {
+		return ""
+	}
+	if parts[0] == "ohlc" {
+		if len(parts) < 5 {
+			return ""
+		}
+		return parts[3]
+	}
+	return parts[2]
+}
+
+// showExchangeColumn returns true when any subscribed pattern has a
+// wildcard in the exchange position — meaning the user has explicitly
+// asked for events from many venues, and a stable EXCHANGE column makes
+// rows unambiguous.
+//
+// This is decided once from the subscription list (not from the rolling
+// event window), so the column structure is fixed for the session. We
+// avoided that earlier and the column appeared / disappeared depending
+// on which exchange happened to fire in the last 18 events.
+func showExchangeColumn(channels []string) bool {
+	for _, ch := range channels {
+		ex := exchangeFromChannel(ch)
+		if ex == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+// insertExchangeHeader / insertExchangeAlign / insertExchange place the
+// EXCHANGE column right after TIME. The natural read order is when →
+// where → what, so EXCHANGE belongs between TIME and INSTRUMENT, not at
+// the leftmost edge. Every per-channel renderer follows the same TIME-
+// first column convention, so this one helper works for all of them.
+func insertExchangeHeader(headers []string) []string {
+	out := make([]string, 0, len(headers)+1)
+	out = append(out, headers[0])      // TIME
+	out = append(out, "EXCHANGE")
+	out = append(out, headers[1:]...)
+	return out
+}
+
+func insertExchangeAlign(aligns []colAlign) []colAlign {
+	out := make([]colAlign, 0, len(aligns)+1)
+	out = append(out, aligns[0])
+	out = append(out, alignLeft)
+	out = append(out, aligns[1:]...)
+	return out
+}
+
+// insertExchange inserts the venue name into row[1], pushing the rest
+// right. Falls back to "—" when the channel doesn't carry a recognisable
+// exchange segment, so the column never collapses to empty.
+func insertExchange(row []string, exchange string) []string {
+	if exchange == "" {
+		exchange = "—"
+	}
+	out := make([]string, 0, len(row)+1)
+	out = append(out, row[0])
+	out = append(out, exchange)
+	out = append(out, row[1:]...)
+	return out
+}
+
+func renderDerivTrades(events []wsclient.Event, width int, exchangeCol bool) string {
 	headers := []string{"TIME", "INSTRUMENT", "PRICE", "AMOUNT", "SIDE", "OI", "BASIS"}
 	aligns := []colAlign{alignLeft, alignLeft, alignRight, alignRight, alignLeft, alignRight, alignRight}
+	if exchangeCol {
+		headers = insertExchangeHeader(headers)
+		aligns = insertExchangeAlign(aligns)
+	}
 
 	rows := make([][]string, 0, len(events))
 	for i := len(events) - 1; i >= 0; i-- {
@@ -420,7 +621,7 @@ func renderDerivTrades(events []wsclient.Event, width int) string {
 		// movement together; SIDE column gets a stronger badge.
 		priceColored := directionPriceColor(d.Direction) + formatNumFull(d.Price) + output.Reset
 
-		rows = append(rows, []string{
+		row := []string{
 			formatTime(d.Timestamp),
 			truncate(d.InstrumentName, 22),
 			priceColored,
@@ -428,17 +629,25 @@ func renderDerivTrades(events []wsclient.Event, width int) string {
 			colorSide(d.Direction),
 			formatNumFull(d.OpenInterest),
 			formatNumFull(d.Basis),
-		})
+		}
+		if exchangeCol {
+			row = insertExchange(row, exchangeFromChannel(events[i].Channel))
+		}
+		rows = append(rows, row)
 	}
 	return renderTable(headers, rows, aligns, width)
 }
 
-func renderSpotTrades(events []wsclient.Event, width int) string {
+func renderSpotTrades(events []wsclient.Event, width int, exchangeCol bool) string {
 	// CCY dropped — quote currency is implied by the channel name (e.g.
 	// `binance:BTCUSDT` → USDT). Keeping it as a column added clutter
 	// without information.
 	headers := []string{"TIME", "INSTRUMENT", "PRICE", "AMOUNT", "SIDE", "QUOTE"}
 	aligns := []colAlign{alignLeft, alignLeft, alignRight, alignRight, alignLeft, alignRight}
+	if exchangeCol {
+		headers = insertExchangeHeader(headers)
+		aligns = insertExchangeAlign(aligns)
+	}
 
 	rows := make([][]string, 0, len(events))
 	for i := len(events) - 1; i >= 0; i-- {
@@ -453,21 +662,29 @@ func renderSpotTrades(events []wsclient.Event, width int) string {
 		_ = json.Unmarshal(events[i].Data, &d)
 
 		priceColored := directionPriceColor(d.Direction) + formatNumFull(d.Price) + output.Reset
-		rows = append(rows, []string{
+		row := []string{
 			formatTime(d.Timestamp),
 			truncate(d.InstrumentName, 22),
 			priceColored,
 			formatNumFull(d.Amount),
 			colorSide(d.Direction),
 			formatNumFull(d.QuoteAmount),
-		})
+		}
+		if exchangeCol {
+			row = insertExchange(row, exchangeFromChannel(events[i].Channel))
+		}
+		rows = append(rows, row)
 	}
 	return renderTable(headers, rows, aligns, width)
 }
 
-func renderOptionsTrades(events []wsclient.Event, width int) string {
+func renderOptionsTrades(events []wsclient.Event, width int, exchangeCol bool) string {
 	headers := []string{"TIME", "INSTRUMENT", "SIDE", "PRICE", "IV", "DELTA", "PREMIUM_USD"}
 	aligns := []colAlign{alignLeft, alignLeft, alignLeft, alignRight, alignRight, alignRight, alignRight}
+	if exchangeCol {
+		headers = insertExchangeHeader(headers)
+		aligns = insertExchangeAlign(aligns)
+	}
 
 	rows := make([][]string, 0, len(events))
 	for i := len(events) - 1; i >= 0; i-- {
@@ -482,7 +699,7 @@ func renderOptionsTrades(events []wsclient.Event, width int) string {
 		}
 		_ = json.Unmarshal(events[i].Data, &d)
 
-		rows = append(rows, []string{
+		row := []string{
 			formatTime(d.Timestamp),
 			truncate(d.InstrumentName, 30),
 			colorSide(d.Direction),
@@ -490,7 +707,11 @@ func renderOptionsTrades(events []wsclient.Event, width int) string {
 			fmt.Sprintf("%.1f", d.IV),
 			fmt.Sprintf("%+.3f", d.Delta),
 			formatNumFull(d.PremiumUSD),
-		})
+		}
+		if exchangeCol {
+			row = insertExchange(row, exchangeFromChannel(events[i].Channel))
+		}
+		rows = append(rows, row)
 	}
 	return renderTable(headers, rows, aligns, width)
 }
@@ -528,9 +749,13 @@ func renderPredictionsTrades(events []wsclient.Event, width int) string {
 	return renderTable(headers, rows, aligns, width)
 }
 
-func renderTicker(events []wsclient.Event, width int) string {
+func renderTicker(events []wsclient.Event, width int, exchangeCol bool) string {
 	headers := []string{"TIME", "INSTRUMENT", "OPEN", "HIGH", "LOW", "CLOSE", "OI"}
 	aligns := []colAlign{alignLeft, alignLeft, alignRight, alignRight, alignRight, alignRight, alignRight}
+	if exchangeCol {
+		headers = insertExchangeHeader(headers)
+		aligns = insertExchangeAlign(aligns)
+	}
 
 	rows := make([][]string, 0, len(events))
 	for i := len(events) - 1; i >= 0; i-- {
@@ -562,7 +787,7 @@ func renderTicker(events []wsclient.Event, width int) string {
 			closeStr = output.Red + closeStr + output.Reset
 		}
 
-		rows = append(rows, []string{
+		row := []string{
 			formatTime(d.Timestamp),
 			truncate(d.InstrumentName, 22),
 			formatNumFull(open),
@@ -570,12 +795,16 @@ func renderTicker(events []wsclient.Event, width int) string {
 			formatNumFull(low),
 			closeStr,
 			formatNumFull(d.OIClose),
-		})
+		}
+		if exchangeCol {
+			row = insertExchange(row, exchangeFromChannel(events[i].Channel))
+		}
+		rows = append(rows, row)
 	}
 	return renderTable(headers, rows, aligns, width)
 }
 
-func renderVT(events []wsclient.Event, width int) string {
+func renderVT(events []wsclient.Event, width int, exchangeCol bool) string {
 	// LIQ LONG/SHORT shows liquidations by position side, not by trade
 	// direction. The API field naming is confusing on purpose:
 	//   liquidation_sell_volume = forced sells = LONGS being liquidated
@@ -588,6 +817,10 @@ func renderVT(events []wsclient.Event, width int) string {
 		alignLeft, alignLeft,
 		alignRight, alignRight, alignRight, alignRight, alignRight,
 		alignRight, alignLeft, alignLeft,
+	}
+	if exchangeCol {
+		headers = insertExchangeHeader(headers)
+		aligns = insertExchangeAlign(aligns)
 	}
 
 	rows := make([][]string, 0, len(events))
@@ -639,7 +872,7 @@ func renderVT(events []wsclient.Event, width int) string {
 			formatNumFull(d.LiqBuyVolume),
 		)
 
-		rows = append(rows, []string{
+		row := []string{
 			formatTime(d.Timestamp),
 			truncate(d.InstrumentName, 22),
 			formatNumFull(d.Open),
@@ -650,7 +883,11 @@ func renderVT(events []wsclient.Event, width int) string {
 			formatNumFull(totalVolume),
 			buySell,
 			liqLongShort,
-		})
+		}
+		if exchangeCol {
+			row = insertExchange(row, exchangeFromChannel(events[i].Channel))
+		}
+		rows = append(rows, row)
 	}
 	return renderTable(headers, rows, aligns, width)
 }
@@ -663,9 +900,13 @@ func renderVT(events []wsclient.Event, width int) string {
 // Color semantics: long liquidation = price dropped enough to forced-close
 // longs → red. Short liquidation = price ripped up → green. This matches
 // how a trader reads the tape, not how an exchange logs the order.
-func renderLiquidations(events []wsclient.Event, width int) string {
+func renderLiquidations(events []wsclient.Event, width int, exchangeCol bool) string {
 	headers := []string{"TIME", "INSTRUMENT", "SIDE", "PRICE", "AMOUNT", "USD", "MARK"}
 	aligns := []colAlign{alignLeft, alignLeft, alignLeft, alignRight, alignRight, alignRight, alignRight}
+	if exchangeCol {
+		headers = insertExchangeHeader(headers)
+		aligns = insertExchangeAlign(aligns)
+	}
 
 	rows := make([][]string, 0, len(events))
 	for i := len(events) - 1; i >= 0; i-- {
@@ -680,7 +921,7 @@ func renderLiquidations(events []wsclient.Event, width int) string {
 		}
 		_ = json.Unmarshal(events[i].Data, &d)
 
-		rows = append(rows, []string{
+		row := []string{
 			formatTime(d.Timestamp),
 			truncate(d.InstrumentName, 22),
 			colorPositionSide(d.PositionSide),
@@ -688,7 +929,11 @@ func renderLiquidations(events []wsclient.Event, width int) string {
 			formatNumFull(d.Amount),
 			formatNumFull(d.AmountUSD),
 			formatNumFull(d.MarkPrice),
-		})
+		}
+		if exchangeCol {
+			row = insertExchange(row, exchangeFromChannel(events[i].Channel))
+		}
+		rows = append(rows, row)
 	}
 	return renderTable(headers, rows, aligns, width)
 }

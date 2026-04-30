@@ -23,8 +23,16 @@ import (
 var (
 	OutputFormat string
 	Exchange     string
-	Verbose      bool
-	NoChart      bool
+	// ExchangeExplicit is true when the user explicitly passed --exchange
+	// (or LAEVITAS_EXCHANGE). When false, Exchange holds the config
+	// default (e.g. "deribit") that the user never asked for —
+	// cross-product endpoints (catalogs, instruments registry) must
+	// suppress sending it so the API returns every venue's listing.
+	// Concrete-instrument commands (snapshot, ohlcvt, etc.) still need
+	// some exchange so they fall back to the default unconditionally.
+	ExchangeExplicit bool
+	Verbose          bool
+	NoChart          bool
 
 	// InteractiveMode is true when running inside the REPL.
 	// Commands should avoid os.Exit and return errors instead.
@@ -142,7 +150,12 @@ func (f *CommonFlags) ToParams() *api.RequestParams {
 		Currency:   f.Currency,
 		SortDir:    sortDir,
 	}
-	if Exchange != "" {
+	// Only inject Exchange when the user explicitly asked for one.
+	// Cross-product endpoints (catalogs, registry) call ToParams() too
+	// and would otherwise inherit the config default — which silently
+	// scopes a multi-venue query to a single venue. Concrete-instrument
+	// commands that need an exchange set it themselves below this call.
+	if ExchangeExplicit && Exchange != "" {
 		p.Exchange = Exchange
 	}
 	return p
