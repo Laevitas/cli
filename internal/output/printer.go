@@ -134,13 +134,14 @@ var (
 			Foreground(lipgloss.Color("245")). // medium gray
 			Italic(true)
 
-	positiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))  // green
-	negativeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))  // red
+	positiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))   // green
+	negativeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))   // red
 	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // dim gray for timestamps
 )
 
 func (p *Printer) printTable(data interface{}) error {
 	rows := toRows(data)
+	rows = compactOrderbookRows(rows)
 	if len(rows) == 0 {
 		fmt.Fprintln(p.Writer, "No data.")
 		return nil
@@ -815,6 +816,73 @@ func mapToRows(v reflect.Value) [][]string {
 		rows = append(rows, []string{k, formatValue(val.Interface())})
 	}
 	return rows
+}
+
+// compactOrderbookRows makes historical orderbook metric tables readable.
+// The REST orderbook endpoint returns the full metric payload: OHLC/avg for
+// bid/ask liquidity, imbalance, and microprice across several depth tiers.
+// That is valuable in JSON/CSV, but it creates a 60+ column table. For table
+// output, show the most useful "latest close at 10 levels" view and leave the
+// full payload available via `-o json` or `-o csv`.
+func compactOrderbookRows(rows [][]string) [][]string {
+	if len(rows) < 2 {
+		return rows
+	}
+
+	headers := rows[0]
+	index := make(map[string]int, len(headers))
+	for i, h := range headers {
+		index[h] = i
+	}
+	if _, ok := index["bid_liq_10_close"]; !ok {
+		return rows
+	}
+	if _, ok := index["ask_liq_10_close"]; !ok {
+		return rows
+	}
+	if _, ok := index["imbalance_10_close"]; !ok {
+		return rows
+	}
+
+	preferred := []string{
+		"date",
+		"minute",
+		"exchange",
+		"instrument_name",
+		"currency",
+		"bid_liq_10_close",
+		"ask_liq_10_close",
+		"imbalance_10_close",
+		"microprice_close",
+		"snapshot_count",
+	}
+
+	cols := make([]int, 0, len(preferred))
+	outHeaders := make([]string, 0, len(preferred))
+	seen := map[int]bool{}
+	for _, h := range preferred {
+		if i, ok := index[h]; ok && !seen[i] {
+			cols = append(cols, i)
+			outHeaders = append(outHeaders, h)
+			seen[i] = true
+		}
+	}
+	if len(cols) == len(headers) {
+		return rows
+	}
+
+	out := make([][]string, 0, len(rows))
+	out = append(out, outHeaders)
+	for _, row := range rows[1:] {
+		next := make([]string, len(cols))
+		for j, i := range cols {
+			if i < len(row) {
+				next[j] = row[i]
+			}
+		}
+		out = append(out, next)
+	}
+	return out
 }
 
 // formatValue converts a raw value to its string representation.

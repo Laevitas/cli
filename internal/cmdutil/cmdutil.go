@@ -71,6 +71,33 @@ func AddCommonFlags(cmd *cobra.Command, f *CommonFlags) {
 	cmd.Flags().StringVar(&f.SortDir, "sort-dir", "", "Sort direction: ASC or DESC (default DESC — newest first)")
 }
 
+// SingleInstrumentArg validates commands that take exactly one instrument and
+// turns the common "exchange instrument" mistake into an actionable hint.
+func SingleInstrumentArg(cmd *cobra.Command, args []string) error {
+	if len(args) == 1 {
+		return nil
+	}
+	if len(args) == 2 && looksLikeExchange(args[0]) {
+		return fmt.Errorf(
+			"%s accepts one instrument argument; pass exchange as a flag: %s %s --exchange %s",
+			cmd.CommandPath(),
+			cmd.CommandPath(),
+			args[1],
+			strings.ToLower(args[0]),
+		)
+	}
+	return cobra.ExactArgs(1)(cmd, args)
+}
+
+func looksLikeExchange(s string) bool {
+	switch strings.ToLower(s) {
+	case "binance", "deribit", "coinbase", "bybit", "okx", "kraken", "polymarket":
+		return true
+	default:
+		return false
+	}
+}
+
 // parsePeriod converts a shorthand like "24h", "3d", "30d" into a time.Duration.
 // Supports: Nh (hours), Nd (days), Nw (weeks).
 func parsePeriod(s string) (time.Duration, bool) {

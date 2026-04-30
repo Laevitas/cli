@@ -1,21 +1,37 @@
 # Laevitas CLI — Agent Skill
 
-You have access to the `laevitas` CLI which provides real-time cryptocurrency derivatives data. Always use `-o json` for structured output.
+You have access to the `laevitas` CLI for cryptocurrency market data. It has two output contracts:
+
+- **REST commands** (`futures`, `perps`, `options`, `spot`, `predictions`, `instruments`, `analytics`, `wallet`) use `-o json` and return a stable JSON envelope.
+- **WebSocket commands** (`ws`) stream newline-delimited JSON (NDJSON), one event per line, when piped or forced with `-o json`.
+
+For REST automation, always use `-o json`, parse `.success` first, then read `.data` or `.error`.
+
+## Operating Rules for LLMs
+
+1. Use `laevitas`, not `lvt`, unless the user explicitly says they created a local alias.
+2. For REST commands, never read top-level array paths like `.[0]`; read `.data[0]`.
+3. For REST errors, branch on `.error.code`, not `.error.message`.
+4. For WebSocket commands, parse one JSON object per line; there is no REST-style `.success` envelope.
+5. Use catalog or `instruments list` to discover real instrument names before fetching time-series data.
+6. Do not pass time-series flags to snapshots. Snapshot commands do not accept `-n`, `--period`, `--start`, `--end`, `--resolution`, or `--cursor`.
 
 ## Authentication
 
-Two options, equivalent for data access:
+Two REST auth options are available:
 
-- **API key** — `LAEVITAS_API_KEY=<key>` env var (preferred for agents) or `laevitas config set api_key <key>`.
-- **x402 wallet** — `LAEVITAS_WALLET_KEY=0x<hex>` env var or `laevitas wallet set-key 0x<hex>`. Pays per request in USDC on Base. After the first on-chain payment, the API issues a JWT credit token cached at `~/.config/laevitas/x402-token` and used for subsequent requests until it expires. Check state any time with `laevitas wallet show -o json`.
+- **API key** — `LAEVITAS_API_KEY=<key>` env var or `laevitas config set api_key <key>`. Required for WebSocket streaming today.
+- **x402 wallet** — `LAEVITAS_WALLET_KEY=0x<hex>` env var or `laevitas wallet set-key 0x<hex>`. Pays per REST request in USDC on Base. After the first on-chain payment, the API issues a JWT credit token cached at `~/.config/laevitas/x402-token` and used for subsequent requests until it expires. Check state any time with `laevitas wallet show -o json`.
 
 Set `LAEVITAS_AUTH=auto|api-key|x402` to control which path the CLI prefers when both are configured. Default is `auto` (API key first, wallet fallback on 401/402).
 
-Read `meta.auth` on every response to confirm which path served the request: `api-key`, `credit` (cached x402 token), or `on-chain` (fresh x402 payment).
+Read `.meta.auth` on every REST response to confirm which path served the request: `api-key`, `credit` (cached x402 token), or `on-chain` (fresh x402 payment).
+
+WebSocket auth is API-key only for now. If `LAEVITAS_AUTH=x402` is set, use REST commands or switch to API-key auth before calling `laevitas ws`.
 
 ## Response shape (v0.6.0+, extended in v0.7.0)
 
-Every JSON response uses a stable envelope. Always parse `.success` first, then either `.data` (on success) or `.error` (on failure).
+Every REST JSON response uses a stable envelope. Always parse `.success` first, then either `.data` (on success) or `.error` (on failure).
 
 **Success:**
 
@@ -69,7 +85,7 @@ Errors are emitted to **stdout** (not stderr) when `-o json`, so a single jq pip
 **Reading data:** field paths now go through `.data`. Examples:
 
 ```bash
-# bad row 0 mark price
+# first futures mark price
 laevitas futures snapshot --currency BTC -o json | jq '.data[0].mark_price'
 
 # total record count from meta
@@ -154,6 +170,8 @@ laevitas perps metadata <instrument>
 ```
 Deribit instruments: `BTC-PERPETUAL`, `ETH-PERPETUAL`
 Binance instruments: `BTCUSDT`, `ETHUSDT`, `SOLUSDT` (use `--exchange binance`)
+
+Orderbook note: `futures orderbook` and `perps orderbook` are historical metrics endpoints. Table output is compacted to latest-close liquidity, imbalance, microprice, and snapshot count; use `-o json` or `-o csv` for the full wide metrics payload. For a live human-readable book ladder, use `laevitas ws perpetuals book binance:BTCUSDT` or `laevitas ws futures book deribit:<instrument>`.
 
 ### Options
 ```bash
@@ -284,7 +302,7 @@ For agent piping (`-o json` or non-TTY), the TUI is bypassed entirely — events
 | spot | binance, coinbase, bybit, okx, kraken |
 | predictions | polymarket |
 
-**Auth:** API key only on the streaming gateway today. x402 wallet auth is REST-only; calling `lvt ws` in wallet-only mode returns a clear error.
+**Auth:** API key only on the streaming gateway today. x402 wallet auth is REST-only; calling `laevitas ws` in wallet-only mode returns a clear error.
 
 **Reconnect:** automatic with exponential backoff. Lost messages during downtime are not replayed — assume gaps are possible. Reconnect events surface as `{"warning": "...", "timestamp": "..."}` lines on stderr in non-TTY mode (agent-parseable).
 
@@ -308,14 +326,125 @@ timeout 60 laevitas ws options trades deribit:BTC-30JAN26-100000-C > options.ndj
 
 `Ctrl-C` cleanly closes the connection and exits 0.
 
+## TUI dashboards (v0.8.3+)
+
+The `laevitas dash` command group hosts multi-pane live dashboards. These
+are **TTY-only** — pipe-friendly NDJSON consumers should keep using
+`laevitas ws` (which is unchanged and emits the same shape it always has).
+
+**Agents should not invoke `dash` for data extraction.** Use it for
+reference, screenshots, or as documentation; for parsing, use `ws` (NDJSON
+streams) or REST endpoints (JSON envelope).
+
+### `dash book` — multi-venue order book
+
+```bash
+# Currency mode — resolves per-venue contracts via the instruments
+# registry. Per-venue quote-currency cascade USDT → USDC → USD.
+laevitas dash book perpetuals BTC --margin linear
+laevitas dash book perpetuals ETH --margin inverse
+laevitas dash book perpetuals BTC --margin linear --quote USDC   # strict quote
+laevitas dash book spot BTC
+
+# Literal mode — exact instrument name; only venues that name the
+# contract that way contribute.
+laevitas dash book perpetuals BTCUSDT
+laevitas dash book futures BTC-26JUN26
+```
+
+Markets supported: `perpetuals`, `futures`, `spot`, `predictions`. Options
+is rejected (no L2 data on the streaming gateway).
+
+The dashboard renders:
+
+- An **aggregated centre-price ladder** with cumulative liquidity columns
+  on each side, segmented bars coloured by per-venue contribution, and a
+  microprice sparkline next to MID.
+- A **venue strip** of bordered cards (one per venue) with each venue's
+  best bid/ask, spread, imbalance, and instrument name; plus a CONSOLIDATED
+  cross-venue summary card with ARB detection on crossed books.
+- Toggle to **split-ladder mode** (`m`) — one narrow per-venue column
+  side-by-side instead of the merged ladder.
+
+#### Keys (every dashboard surface uses the same vocabulary)
+
+| Key | Action |
+|---|---|
+| `+` / `-` | Cycle price grouping |
+| `d` | Cycle stats depth tier (10 → 20 → 50) |
+| `c` | Recenter viewport on the spread |
+| `m` | Toggle aggregated ↔ split ladder |
+| `v` | Venue picker |
+| `j/k`, `↑/↓`, `PgUp/PgDn`, `g/G` | Scroll / page / top / bottom |
+| `p` | Pause |
+| `?` / `h` | Help overlay |
+| `q` / `Esc` | Quit |
+
+#### Resolver behaviour (currency mode)
+
+When the user passes a bare currency (`BTC`, `ETH`) or supplies
+`--margin`/`--quote`, the CLI calls `GET /api/v1/instruments` with the
+canonical filters and picks **one contract per venue**:
+
+1. Server-side filter: `base_currency=BTC&market_type=perpetual&margin_type=linear&status=active`.
+2. Drop sub-exchange forks (rows with `sub_exchange != ""`).
+3. Per-venue cascade: prefer `USDT` > `USDC` > `USD` > first available.
+4. Tie-break: prefer instrument names containing a separator (`-`, `_`,
+   `:`) so e.g. hyperliquid's `ETH-USD` is picked over the bare `ETH` alias.
+5. Build per-venue WS channels: `book.<market>.<exchange>.<instrument_name>`.
+
+Venues that don't list the requested product (coinbase has no USDT perp;
+deribit has only USDC linear; hyperliquid has no inverse perp) are absent
+from the resolver output and won't appear in "waiting on …".
+
+#### Stale-venue annotation
+
+The "waiting on …" footer compares received snapshots against the
+expected-venue set (resolver output in currency mode; exact-name registry
+lookup in literal mode). Three stages:
+
+- 0–5s after first venue arrives: plain `waiting on: derive, hyperliquid`.
+- 5–30s: stale annotation `waiting on: derive (stale 12s), hyperliquid (stale 12s)`.
+- 30s+: dropped from the list entirely (proven not coming on this run).
+
+Stage gate fires only after the connection is proven healthy (≥1 snapshot
+received), so connection latency doesn't false-alarm as per-venue silence.
+
 ## Key Parameters
+
+### Market type tokens (canonical + aliases)
+
+Wherever the CLI takes a market type (`--market-type`, `ws <market>`, `dash book <market>`), the CLI accepts any common alias and normalises internally. **Always check `--help` for what an individual flag accepts** — the alias table is wide:
+
+| Canonical (use this when generating commands) | Also accepted |
+|---|---|
+| `perpetuals` | `perp`, `perps`, `perpetual`, `swap`, `swaps` |
+| `futures` | `fut`, `future`, `dated` |
+| `options` | `opt`, `opts`, `option` |
+| `spot` | `spot` |
+| `predictions` | `prediction`, `predict`, `poly`, `polymarket` |
+
+For agents: emit the **canonical** form. The aliases are for human convenience.
+
+Margin types follow the same rule:
+
+| Canonical | Aliases |
+|---|---|
+| `linear` | `lin`, `usdt`, `usdc`, `stable` |
+| `inverse` | `inv`, `coin`, `coins`, `crypto` |
+
+REST API filter `?market_type=` uses the **singular** form (`perpetual`, `future`, `option`, `prediction`, `spot`); WS channels use the **plural** form (`book.perpetuals.<venue>.<instrument>`). The CLI handles the translation — you don't need to.
 
 ### Global flags (every command)
 
 | Flag | Values | Description |
 |------|--------|-------------|
-| `-o` | `json`, `table`, `csv` | Output format (always use `json` for parsing) |
-| `--exchange` | `deribit`, `binance` | Exchange |
+| `-o` | `auto`, `json`, `table`, `csv` | Output format (always use `json` for REST parsing) |
+| `--exchange` | market-dependent | Exchange filter or override |
+| `--no-chart` | boolean | Disable inline charts in table output |
+| `--wide` | boolean | Disable table column truncation |
+| `--width` | integer | Override table width |
+| `--verbose` | boolean | Redacted HTTP diagnostics |
 
 ### Time-series flags
 
@@ -414,8 +543,9 @@ Instrument names like `BTC-26JUN26` or `BTC-26JUN26-100000-C` shown in `--help` 
 ## Error Handling
 
 - Exit code 0 = success, non-zero = error
-- JSON errors: `{"error": "message"}`
-- Common: 401 (bad API key), 429 (rate limited), 400 (bad params)
+- REST JSON errors: `{"success": false, "error": {"code": "...", "message": "..."}}`
+- Common codes: `AUTH_INVALID`, `AUTH_FORBIDDEN`, `RATE_LIMITED`, `PAYMENT_REQUIRED`, `WALLET_NOT_CONFIGURED`, `INSUFFICIENT_BALANCE`, `PAYMENT_REJECTED`, `BAD_REQUEST`, `NOT_FOUND`, `SERVER_ERROR`, `NETWORK_ERROR`, `UNKNOWN_ERROR`
+- WebSocket commands stream NDJSON; runtime warnings are diagnostic messages, not REST error envelopes.
 
 ## Versioning & Release
 

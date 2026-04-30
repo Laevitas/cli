@@ -55,6 +55,18 @@ func Colorize(text, color string, noColor bool) string {
 	return color + text + Reset
 }
 
+// HelpStyleStrings returns the ANSI escape codes the keymap package
+// needs to render its help overlay. Keeps the keymap package free
+// of any output / lipgloss imports — the dependency points one
+// direction (consumers depend on output, not the other way around).
+//
+// Returned as a tuple of named strings rather than a struct so the
+// keymap package can declare its own struct shape without importing
+// our types. Order matches keymap.HelpStyle field order.
+func HelpStyleStrings() (bold, green, grey, lightGrey, reset string) {
+	return Bold, BrandGreen, BrandGreyMid, BrandGreyLight, Reset
+}
+
 // IsTTY returns true if stdout is an interactive terminal.
 func IsTTY() bool {
 	return term.IsTerminal(int(os.Stdout.Fd()))

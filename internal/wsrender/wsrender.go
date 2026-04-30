@@ -1,5 +1,5 @@
 // Package wsrender implements the live-updating terminal renderer for
-// `lvt ws`. It owns a small rolling buffer of recent events and dispatches
+// `laevitas ws`. It owns a small rolling buffer of recent events and dispatches
 // per-channel-type to format columns appropriately (trades vs ticker vs vt
 // vs predictions).
 //
@@ -15,7 +15,6 @@ package wsrender
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +22,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/laevitas/cli/internal/keymap"
 	"github.com/laevitas/cli/internal/output"
 	"github.com/laevitas/cli/internal/wsclient"
 )
@@ -286,39 +286,43 @@ func (m model) View() string {
 
 // ─── help overlay ───────────────────────────────────────────────────────────
 
-// renderHelpOverlay is the canonical keybinding reference shown when the
-// user presses `?`. Used by every TUI surface — sections and bindings
-// come from keymap.go (the single source of truth), so adding a new
-// binding propagates here automatically.
+// renderHelpOverlay delegates to the shared keymap.RenderHelpOverlay
+// using the surface→capabilities map in this package's keymap.go.
+// Kept under the local name so existing callers (tape model, book
+// model) don't all change in the same commit; new code calls
+// keymap.RenderHelpOverlay directly.
 //
-// surface is the human-readable name of the active view ("rolling tape",
-// "book scan", "book ladder").
+// surface is one of "rolling tape", "book scan", "book ladder".
+// Falls back to a Help-only capability for any unknown surface.
 func renderHelpOverlay(surface string, width int) string {
-	bold := output.Bold
-	green := output.BrandGreen
-	grey := output.BrandGreyMid
-	light := output.BrandGreyLight
-	reset := output.Reset
+	caps := surfaceCapabilities(helpSurfaceTag(surface))
+	bold, green, grey, light, reset := output.HelpStyleStrings()
+	style := keymapHelpStyle(bold, green, grey, light, reset)
+	return keymap.RenderHelpOverlay(surface, caps, style, width)
+}
 
-	var b strings.Builder
-	b.WriteString(bold + green + "▲  laevitas — " + surface + " keybindings" + reset)
-	b.WriteString("\n\n")
-
-	for _, section := range bindingsForSurface(surface) {
-		b.WriteString(bold + light + section.title + reset + "\n")
-		for _, it := range section.bindings {
-			b.WriteString("  ")
-			b.WriteString(green + padRight(it.keys, 18) + reset)
-			b.WriteString(grey + it.desc + reset)
-			b.WriteByte('\n')
-		}
-		b.WriteByte('\n')
+// helpSurfaceTag normalises a human-readable surface name back to
+// the legacy tag surfaceCapabilities understands. Two distinct
+// inputs feed renderHelpOverlay — the model's mode-specific name
+// ("rolling tape" / "book scan" / "book ladder") and the
+// FooterHints tags ("tape" / "scan" / "ladder") — so this stays a
+// small switch rather than spreading the mapping across files.
+func helpSurfaceTag(humanName string) string {
+	switch humanName {
+	case "rolling tape":
+		return "tape"
+	case "book scan":
+		return "scan"
+	case "book ladder":
+		return "ladder"
 	}
+	return ""
+}
 
-	b.WriteString(grey + "Press ? or esc to return." + reset)
-	b.WriteByte('\n')
-	b.WriteString(grey + "Tip: hold Shift while dragging to copy text from this view (Alt in VS Code)." + reset)
-	return b.String()
+// keymapHelpStyle is a tiny adapter so wsrender doesn't have to
+// import internal/keymap's struct directly at every call site.
+func keymapHelpStyle(bold, green, grey, light, reset string) keymap.HelpStyle {
+	return keymap.HelpStyle{Bold: bold, Green: green, Grey: grey, LightGrey: light, Reset: reset}
 }
 
 // padRight pads s with spaces on the right so it occupies exactly width
@@ -1005,33 +1009,14 @@ func formatTime(ts int64) string {
 	return t.Format("15:04:05")
 }
 
-// formatNum renders a float with thousand separators and N decimal places.
+// formatNum is a shim to output.FormatNum. Kept under the local name
+// so existing call sites don't need editing in the same commit; new
+// renderers should call output.FormatNum directly.
 func formatNum(v float64, decimals int) string {
 	if v == 0 {
 		return "—"
 	}
-	formatted := fmt.Sprintf("%.*f", decimals, v)
-	parts := strings.SplitN(formatted, ".", 2)
-	intPart := parts[0]
-	negative := strings.HasPrefix(intPart, "-")
-	if negative {
-		intPart = intPart[1:]
-	}
-	var withCommas strings.Builder
-	for i, c := range intPart {
-		if i > 0 && (len(intPart)-i)%3 == 0 {
-			withCommas.WriteByte(',')
-		}
-		withCommas.WriteRune(c)
-	}
-	out := withCommas.String()
-	if negative {
-		out = "-" + out
-	}
-	if len(parts) == 2 {
-		out += "." + parts[1]
-	}
-	return out
+	return output.FormatNum(v, decimals)
 }
 
 // formatBigNum renders large numbers with K/M/B suffixes.
@@ -1060,93 +1045,11 @@ func formatBigNum(v float64) string {
 	}
 }
 
-// formatNumFull renders v with thousand separators on the integer part and
-// preserves whatever decimal precision the API sent. Empty cells render as
-// `—` so the column doesn't show a misleading 0.
-//
-// strconv.FormatFloat with precision -1 picks the shortest representation
-// that round-trips back to the same float64. That's correct for clean
-// values (0.0001 stays 0.0001, 6135.69 stays 6135.69) but exposes ugly
-// float64 artifacts when the API value was the result of a sum or other
-// math on the server (e.g. 5.658 stored as 5.6579999999999995).
-//
-// To kill those artifacts without losing real precision, we detect the
-// trailing-9s / trailing-0s pattern and round to 8 decimal places — wide
-// enough for BTC satoshi precision, narrow enough to clean up float
-// reconstruction noise.
-func formatNumFull(v float64) string {
-	if v == 0 {
-		return "—"
-	}
-
-	raw := strconv.FormatFloat(v, 'f', -1, 64)
-	if isFloatArtifact(raw) {
-		// Round to 8 decimals, then strip trailing zeros — same shape the
-		// API would have emitted if the value hadn't been the result of
-		// imprecise math.
-		rounded := strconv.FormatFloat(v, 'f', 8, 64)
-		rounded = trimTrailingZeros(rounded)
-		raw = rounded
-	}
-
-	intPart := raw
-	decPart := ""
-	if idx := strings.IndexByte(raw, '.'); idx >= 0 {
-		intPart = raw[:idx]
-		decPart = raw[idx:]
-	}
-	negative := strings.HasPrefix(intPart, "-")
-	if negative {
-		intPart = intPart[1:]
-	}
-	var withCommas strings.Builder
-	for i, c := range intPart {
-		if i > 0 && (len(intPart)-i)%3 == 0 {
-			withCommas.WriteByte(',')
-		}
-		withCommas.WriteRune(c)
-	}
-	out := withCommas.String() + decPart
-	if negative {
-		out = "-" + out
-	}
-	return out
-}
-
-// isFloatArtifact returns true when the decimal portion of `raw` looks like
-// a float64 reconstruction artifact (long run of trailing 9s or 0s).
-// Conservative — only fires when the decimal part is unusually long, so
-// values the API genuinely sent at high precision are preserved.
-func isFloatArtifact(raw string) bool {
-	idx := strings.IndexByte(raw, '.')
-	if idx < 0 {
-		return false
-	}
-	decimals := raw[idx+1:]
-	if len(decimals) < 12 {
-		// API normally sends ≤8 decimals; anything past 12 is almost
-		// certainly a reconstruction artifact.
-		return false
-	}
-	// Tail of the decimal part: 4+ consecutive 9s or 0s near the end is
-	// the classic float64 signature.
-	tail := decimals
-	if len(tail) > 6 {
-		tail = tail[len(tail)-6:]
-	}
-	return strings.Contains(tail, "999999") || strings.Contains(tail, "000000")
-}
-
-// trimTrailingZeros removes trailing zeros from the decimal portion of `s`
-// and the trailing decimal point if all decimals are zero.
-func trimTrailingZeros(s string) string {
-	if !strings.ContainsRune(s, '.') {
-		return s
-	}
-	s = strings.TrimRight(s, "0")
-	s = strings.TrimSuffix(s, ".")
-	return s
-}
+// formatNumFull is a shim to output.FormatNumFull. Same intent as
+// formatNum's shim: keep call sites in this file unchanged while
+// the canonical implementation lives in internal/output for the
+// dashboard panels to share.
+func formatNumFull(v float64) string { return output.FormatNumFull(v) }
 
 func truncate(s string, max int) string {
 	if max <= 0 {

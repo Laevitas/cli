@@ -7,7 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
-## [0.8.2] — 2026-04-29
+## [0.8.3] — 2026-04-30
+
+Multi-venue aggregated book dashboard, currency-driven contract resolution,
+shared ladder primitives, and unified market-type vocabulary across CLI /
+WS / REST.
+
+### Added
+
+- **`laevitas dash book <market> <symbol-or-currency>`** — multi-venue order
+  book dashboard.
+  - Aggregated centre-price ladder, segmented bars coloured by per-venue
+    contribution, cumulative liquidity columns on each side
+    (CUM_BID … PRICE … CUM_ASK).
+  - Per-venue strip cards bordered in venue brand colour; CONSOLIDATED
+    cross-venue summary with ARB detection on crossed books.
+  - Two presentations toggled by `m`:
+    - **Aggregated**: one merged ladder, segmented bars by venue.
+    - **Split**: one narrow per-venue ladder column side-by-side.
+  - Header sparkline (~60-tick microprice ring) + smart "waiting on" footer
+    that annotates stale venues (`venue (stale 12s)`) past 5s and drops them
+    past 30s, gated on connection-health proof.
+  - Keys: `+/-` group, `d` depth, `c` recenter, `m` mode, `v` venues,
+    `p` pause, `j/k`/`PgUp`/`PgDn`/`g/G` scroll, `?` help, `q` quit.
+- **Currency-driven contract resolution.** `laevitas dash book perpetuals BTC
+  --margin linear` resolves to each venue's canonical contract (BTCUSDT on
+  binance, BTC-USDT-SWAP on okx, BTC-USD on hyperliquid, …) via the
+  instruments registry. Per-venue quote-currency cascade `USDT → USDC → USD`,
+  override with `--quote`. Spot mode (`dash book spot BTC`) follows the same
+  cascade. Legacy literal mode (`dash book perpetuals BTCUSDT`) still works.
+- **Shared `internal/ladder` package.** Group-tick cycle, depth-tier cycle,
+  bucketing, `Viewport` scroll/page/recenter, `MicroRing` sparkline buffer,
+  `HeaderLine` and `StatsLine` renderers. Two surfaces (`laevitas ws book`
+  and `laevitas dash book`), one implementation.
+- **Shared `internal/output/layout.go`.** `JoinSideBySide`, `PadRightAnsi`,
+  `TruncateAnsi`, `VisibleWidth` — ANSI- and unicode-cell-aware via lipgloss.
+  Replaces three near-identical local copies in `wsrender` and `panels`.
+- **Market-type aliases.** Every CLI flag and positional that accepts a
+  market type now normalises any common alias (perp / perpetual /
+  perpetuals / swap / fut / future / futures / opt / option / options /
+  spot / predictions / poly / …) to the canonical plural form. Same for
+  margin types (linear / lin / usdt / inverse / inv / coin / …). The
+  REST/WS layer translation is hidden — internal code only sees one form.
+  See README "Market type aliases" and `internal/api/markets.go`.
+- `--margin` short alias for `--margin-type` on `instruments list`.
+
+### Changed
+
+- `laevitas ws perpetuals book <pair>` (legacy single-venue ladder) and
+  `laevitas dash book` now share an identical two-line top header
+  (`▲ <surface>  <pair>  N snapshots  X.X/s  PAUSED` + stats line) and
+  identical footer hints / help overlay via `internal/keymap`. Moving
+  between surfaces reads the same metrics in the same order.
+- `+/-` is now price grouping on both book surfaces (was depth-tier on the
+  legacy ladder); `d` cycles depth tier, `c` recenters viewport.
+- Em-dash `—` zero-placeholder replaced with ASCII `-` everywhere — the
+  em-dash glyph is East-Asian-Ambiguous Unicode and breaks bordered-card
+  width math on Windows Terminal and similar.
+
+### Fixed
+
+- Bordered cards in the venue strip no longer escape their borders when
+  wrapping wide content. Cause was a custom byte-counting `stripAnsiLen`
+  helper that over-counted multi-byte UTF-8 glyphs (e.g. `▮` segmented bar);
+  replaced with `lipgloss.Width` everywhere.
+- Venue card content is composed via `lipgloss.JoinHorizontal` instead of
+  `+`-concatenated styled strings, fixing nested-ANSI width measurement
+  drift in the CONSOLIDATED block.
+- "Waiting on …" footer no longer mentions venues that don't list the
+  active contract (coinbase has no USDT perp; deribit has only USDC linear;
+  hyperliquid has no inverse perp). Expected-venue list comes from the
+  instruments registry, not a hardcoded curated palette.
+
+### Deferred
+
+- **v0.8.4**: Per-channel retroactive subscribe in `internal/wsclient` so
+  flaky first-subscribe (occasional binance "didn't show up on first open")
+  self-heals without a dashboard restart. Belongs in the WS client layer,
+  not per-panel.
+- **v0.9.0**: Heatmap mode (Bookmap-style price × time × size grid),
+  `dash flow` dashboard.
+
+## [0.8.2] — 2026-04-30
 
 L2 order book streaming, channel wildcards, and a long-standing
 default-exchange bug that was silently scoping every cross-product query
@@ -15,7 +96,7 @@ to a single venue.
 
 ### Added
 
-- **`book` stream** for `lvt ws perpetuals|futures|spot|predictions`.
+- **`book` stream** for `laevitas ws perpetuals|futures|spot|predictions`.
   Channel grammar: `book.{market}.{exchange}.{instrument}`. Options is
   not supported — venues don't expose L2 for options. Two views:
   - **Ladder** (single-pair): centre-price Bloomberg DEPT layout — bids
@@ -45,9 +126,9 @@ to a single venue.
 
   Examples:
   ```
-  lvt ws perpetuals book "*:BTCUSDT"             # BTCUSDT perp on every venue
-  lvt ws "*" trades "binance:BTCUSDT"            # binance BTCUSDT across markets
-  lvt ws perpetuals liquidations "*:*"           # every perp liquidation
+  laevitas ws perpetuals book "*:BTCUSDT"             # BTCUSDT perp on every venue
+  laevitas ws "*" trades "binance:BTCUSDT"            # binance BTCUSDT across markets
+  laevitas ws perpetuals liquidations "*:*"           # every perp liquidation
   ```
 
   Wildcards are rejected client-side in the three positions the server
@@ -171,7 +252,7 @@ priority because v0.8.0 hosts cannot subscribe to anything without it.
 
 ### Added
 
-- **`liquidations` stream** for `lvt ws perpetuals` and `lvt ws futures`.
+- **`liquidations` stream** for `laevitas ws perpetuals` and `laevitas ws futures`.
   Channel grammar: `liquidations.{market}.{exchange}.{instrument}`. Emits
   the v1.21.0 forced-close event shape — `position_side`, `direction`,
   `price`, `amount`, `amount_usd`, `mark_price`, `index_price`, plus the
@@ -181,7 +262,7 @@ priority because v0.8.0 hosts cannot subscribe to anything without it.
   envelope unchanged.
 - **Per-stream market allowlist.** Streams that don't apply to every
   market (today: just `liquidations`, which only exists on derivatives)
-  are gated client-side. `lvt ws spot liquidations binance:BTCUSDT` now
+  are gated client-side. `laevitas ws spot liquidations binance:BTCUSDT` now
   errors with `stream "liquidations" is only available for: futures,
   perpetuals` instead of opening a doomed subscription.
 
@@ -197,7 +278,7 @@ WebSocket release. The streaming gateway hit v1.17.0 with a coverage matrix
 finally broad enough to ship a generic `ws` command against — all five
 markets (perpetuals, futures, options, spot, predictions), all three channel
 types (trades, ohlc.ticker, ohlc.vt), all eight timeframes. v0.8.0 adds the
-`lvt ws` command that subscribes to those channels and emits NDJSON to
+`laevitas ws` command that subscribes to those channels and emits NDJSON to
 stdout — pipe-friendly, agent-friendly, raw-tape friendly.
 
 ### Added
@@ -233,7 +314,7 @@ stdout — pipe-friendly, agent-friendly, raw-tape friendly.
   connection (TCP-stuck, no data, no PINGs) gets detected and reconnected
   rather than silently dropping events.
 - **Deprecation nudge** when a perpetual instrument is subscribed via the
-  legacy `futures` channel (`lvt ws futures trades binance:BTCUSDT`) —
+  legacy `futures` channel (`laevitas ws futures trades binance:BTCUSDT`) —
   prints a one-line stderr warning recommending `perpetuals` and continues
   to subscribe so the user still gets data while the legacy alias is alive
   one more minor.
@@ -269,10 +350,10 @@ stdout — pipe-friendly, agent-friendly, raw-tape friendly.
 ### Not yet supported
 
 - **x402 wallet auth on WS.** The streaming gateway only accepts API-key
-  auth today (query param `?apiKey=...`). Calling `lvt ws` while in
+  auth today. Calling `laevitas ws` while in
   `LAEVITAS_AUTH=x402` mode returns a clear error pointing at the gap.
   Will land when the gateway accepts the same auth methods as REST.
-- **Auto-route shorthand (`lvt ws binance:BTCUSDT`).** Looking up the
+- **Auto-route shorthand (`laevitas ws binance:BTCUSDT`).** Looking up the
   market via `/instruments/detail` to skip a positional arg is queued for
   v0.8.x; for now the user passes `<market> <stream> <exchange:instrument>`
   explicitly.
@@ -346,7 +427,7 @@ reshaped on the API side.
 
 ### Deferred
 
-- **WebSocket streaming (`laevitas stream`).** Scoped for v0.7.0; deferred
+- **WebSocket streaming (`laevitas ws`).** Scoped for v0.7.0; deferred
   pending an API-side reshape of the channel matrix. The current WS surface
   only supports `futures` (umbrella) and `options` markets, and only
   `trades`/`ohlc.ticker`/`ohlc.vt` channel types — too narrow to ship a
@@ -368,9 +449,9 @@ that make every command read better.
   shapes:
   - **Success:** `{"success": true, "data": [...], "meta": {...}}`
   - **Failure:** `{"success": false, "error": {"message": "...", "code": "...", "status": 401, "endpoint": "..."}}`
-- Existing scripts that read fields from the bare data array must update to
-  read from `.data` instead. E.g. `jq '.[0].mark_price'` becomes
-  `jq '.data[0].mark_price'`.
+- Existing scripts that read fields from the old bare data array must update to
+  read from `.data` instead. A top-level array path such as `.[0].mark_price`
+  becomes `.data[0].mark_price`.
 - Errors now write to **stdout as JSON** (instead of stderr free-text) when
   output is JSON. A single shape works for both success and failure parsing —
   no more switching between stdout and stderr. Exit code remains non-zero for
@@ -498,8 +579,8 @@ JSON parsers need a one-line update — read fields under `.data` instead of
 from the top-level array:
 
 ```sh
-# before v0.6.0
-laevitas perps carry BTC-PERPETUAL -o json | jq '.[0].funding_rate_close'
+# before v0.6.0, output was a bare array
+laevitas perps carry BTC-PERPETUAL -o json | jq '<top-level array path>'
 
 # v0.6.0 onward
 laevitas perps carry BTC-PERPETUAL -o json | jq '.data[0].funding_rate_close'
@@ -588,5 +669,3 @@ fi
 - **CI split.** `.github/workflows/ci.yml` is now test-only. Release lives in `.github/workflows/release.yml` and runs only on `v*` tag pushes.
 - **Makefile**: `make release` now defers to `goreleaser release --skip=publish` for local dry-runs; `make release-snapshot` produces an unpublished `dist/` tree to validate the config without tagging.
 - New `RELEASING.md` documents the full tag → publish procedure, required GitHub secrets (`HOMEBREW_TAP_TOKEN`), and the one-time tap-repo setup.
-</content>
-</invoke>

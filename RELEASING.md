@@ -27,8 +27,8 @@ Cut the release:
 grep -E "^## \[" CHANGELOG.md | head -3
 
 # 2. Tag and push.
-git tag -a v0.5.0 -m "v0.5.0"
-git push origin v0.5.0
+git tag -a vX.Y.Z -m "vX.Y.Z"
+git push origin vX.Y.Z
 ```
 
 That's it. The `release.yml` workflow will:
@@ -45,7 +45,7 @@ Verify after the workflow finishes:
 
 ```sh
 # Confirm the release page is live
-gh release view v0.5.0
+gh release view vX.Y.Z
 
 # Confirm Homebrew picked it up (after the tap commit lands)
 brew update && brew info laevitas/cli/laevitas
@@ -57,7 +57,7 @@ If something goes wrong mid-run, see [Troubleshooting](#troubleshooting).
 
 ## One-time setup
 
-These steps need to happen **once**, before the first tagged release. They have not been done as part of the v0.5.0 PR — the release workflow will skip the corresponding steps if the prerequisites are absent and log a warning.
+These steps need to happen **once**. They are recorded here so future maintainers can repair or recreate the release infrastructure if a token, tap, bucket, or Cloudflare project changes.
 
 ### 1. Create the Homebrew tap repo
 
@@ -132,10 +132,10 @@ The root `install.{ps1,sh}` are the source of truth. The workflow copies them in
 This project follows [Semantic Versioning](https://semver.org/) starting from v0.5.0. While we're in `0.x`:
 
 - **Patch** (`0.5.0 → 0.5.1`): bug fixes, doc fixes, no behavior changes that would surprise an existing scripted user.
-- **Minor** (`0.5.0 → 0.6.0`): new commands, new flags, additive features. Default-behavior changes (like the v0.5.0 sort_dir flip) also go here while we're sub-1.0.
+- **Minor** (`0.8.1 → 0.9.0`): new commands, new flags, additive features, and default-behavior changes while we're sub-1.0.
 - **Major** (`0.x → 1.0.0`): commit to a stable surface. Once we cut 1.0, breaking changes require a major bump.
 
-Pre-releases use the standard suffix: `v0.5.0-rc1`, `v0.5.0-beta.1`. GoReleaser auto-detects these and marks the GitHub Release as a pre-release; Homebrew/Scoop publishing is skipped automatically (`skip_upload: auto`).
+Pre-releases use the standard suffix: `vX.Y.Z-rc1`, `vX.Y.Z-beta.1`. GoReleaser auto-detects these and marks the GitHub Release as a pre-release; Homebrew/Scoop publishing is skipped automatically (`skip_upload: auto`).
 
 The CLI's runtime version comes from `git describe --tags`. There is no source-side version constant to bump — **the tag is the version**.
 
@@ -183,15 +183,15 @@ Once a tag is pushed publicly, the cleanest fix is to bump the version (e.g. `v0
 For a tag that hasn't been pushed yet:
 
 ```sh
-git tag -d v0.5.0       # local delete only
+git tag -d vX.Y.Z       # local delete only
 ```
 
 For one that's already pushed but you're confident no one has consumed it:
 
 ```sh
-git push --delete origin v0.5.0
-git tag -d v0.5.0
-gh release delete v0.5.0 --yes
+git push --delete origin vX.Y.Z
+git tag -d vX.Y.Z
+gh release delete vX.Y.Z --yes
 # fix things, then re-tag
 ```
 

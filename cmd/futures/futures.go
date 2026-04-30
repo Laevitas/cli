@@ -217,9 +217,23 @@ var orderbookFlags cmdutil.CommonFlags
 var orderbookCmd = &cobra.Command{
 	Use:   "orderbook <instrument>",
 	Short: "L2 orderbook depth metrics",
-	Args:  cobra.ExactArgs(1),
-	Example: `  laevitas futures orderbook {{FUT}} -p 24h
-  laevitas futures orderbook {{FUT}} -p 7d -r 1h`,
+	Long: `Historical L2 orderbook depth metrics.
+
+This REST endpoint returns a wide metrics payload: bid/ask liquidity,
+imbalance, and microprice across several depth tiers. Table output shows a
+compact latest-close view. Use -o json or -o csv for the full payload.
+
+For an interactive live order book ladder, use:
+  laevitas ws futures book <exchange>:<instrument>`,
+	Args: cmdutil.SingleInstrumentArg,
+	Example: `  # Historical metrics table (compact)
+  laevitas futures orderbook {{FUT}} -p 1h -r 1m
+
+  # Full metrics payload for agents/scripts
+  laevitas futures orderbook {{FUT}} -p 1h -r 1m -o json
+
+  # Live book ladder TUI / NDJSON stream
+  laevitas ws futures book deribit:{{FUT}}`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := orderbookFlags.ToParams()
@@ -267,9 +281,9 @@ var refPriceCmd = &cobra.Command{
 // ─── metadata ───────────────────────────────────────────────────────────────
 
 var metadataCmd = &cobra.Command{
-	Use:   "metadata <instrument>",
-	Short: "Data availability info for a dated futures instrument",
-	Args:  cobra.ExactArgs(1),
+	Use:     "metadata <instrument>",
+	Short:   "Data availability info for a dated futures instrument",
+	Args:    cobra.ExactArgs(1),
 	Example: `  laevitas futures metadata {{FUT}}`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
