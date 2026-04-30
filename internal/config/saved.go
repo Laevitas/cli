@@ -41,6 +41,8 @@ func LoadSaved() (*SavedQueries, error) {
 		return sq, nil
 	}
 
+	// #nosec G304 -- savedPath is derived from os.UserHomeDir plus constant
+	// ".config/laevitas/saved.json"; no user-controlled path segment.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		// File doesn't exist yet — that's fine

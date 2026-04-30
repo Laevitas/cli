@@ -15,7 +15,6 @@ package wsrender
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -23,74 +22,24 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/laevitas/cli/internal/agg"
+	"github.com/laevitas/cli/internal/api"
+	"github.com/laevitas/cli/internal/keymap"
+	"github.com/laevitas/cli/internal/ladder"
 	"github.com/laevitas/cli/internal/output"
 	"github.com/laevitas/cli/internal/wsclient"
 )
 
-// BookSnapshot is the parsed wire payload. We only decode the fields we
-// render — depth ladders and pre-computed liquidity / imbalance stats. Raw
-// asks/bids are []bookLevel rather than [][]float64 so the predictions
-// object-shape can be tolerated alongside the tuple-shape; see
-// bookLevel.UnmarshalJSON.
-type BookSnapshot struct {
-	Channel        string      `json:"-"`
-	ReceivedAt     time.Time   `json:"-"`
-	Timestamp      int64       `json:"timestamp"`
-	Exchange       string      `json:"exchange"`
-	InstrumentName string      `json:"instrument_name"`
-	Currency       string      `json:"currency"`
-	InstrumentType string      `json:"instrument_type"`
-	QuoteCurrency  string      `json:"quote_currency,omitempty"`
-	Depth          int         `json:"depth"`
-	Asks           []bookLevel `json:"asks"`
-	Bids           []bookLevel `json:"bids"`
-	AskLiq10       float64     `json:"ask_liquidity_10"`
-	AskLiq20       float64     `json:"ask_liquidity_20"`
-	AskLiq50       float64     `json:"ask_liquidity_50"`
-	AskLiq100      float64     `json:"ask_liquidity_100"`
-	BidLiq10       float64     `json:"bid_liquidity_10"`
-	BidLiq20       float64     `json:"bid_liquidity_20"`
-	BidLiq50       float64     `json:"bid_liquidity_50"`
-	BidLiq100      float64     `json:"bid_liquidity_100"`
-	Imbalance10    float64     `json:"imbalance_10"`
-	Imbalance20    float64     `json:"imbalance_20"`
-	Imbalance50    float64     `json:"imbalance_50"`
-	Imbalance100   float64     `json:"imbalance_100"`
-	Microprice     float64     `json:"microprice"`
-}
+// BookSnapshot is re-exported here as a convenience alias so existing
+// internal callers don't need to update their imports. The canonical
+// type lives in internal/api/book.go and is shared with the dashboard
+// panels.
+type BookSnapshot = api.BookSnapshot
 
-// bookLevel is one [price, size] pair. The wire format is normally a JSON
-// tuple, but predictions currently emit objects {price, size} (producer
-// fix in flight per the API team). Both shapes decode here so a single
-// renderer covers every market.
-type bookLevel struct {
-	Price float64
-	Size  float64
-}
-
-func (b *bookLevel) UnmarshalJSON(data []byte) error {
-	if len(data) == 0 {
-		return nil
-	}
-	if data[0] == '[' {
-		var tuple [2]float64
-		if err := json.Unmarshal(data, &tuple); err != nil {
-			return err
-		}
-		b.Price, b.Size = tuple[0], tuple[1]
-		return nil
-	}
-	// Object form: {"price": ..., "size": ...} (predictions, pre-fix).
-	var obj struct {
-		Price float64 `json:"price"`
-		Size  float64 `json:"size"`
-	}
-	if err := json.Unmarshal(data, &obj); err != nil {
-		return err
-	}
-	b.Price, b.Size = obj.Price, obj.Size
-	return nil
-}
+// bookLevel kept as an unexported alias for the same reason — the
+// older code in this file refers to the unexported name throughout
+// and the alias avoids a noisy rename.
+type bookLevel = api.BookLevel
 
 // pairKey is the natural-language identifier from the channel string —
 // "exchange:instrument", what the user typed. Used to key the snapshot
@@ -136,10 +85,12 @@ type BookTable struct {
 	// back at the same tick is correctly recognised as "stale flash."
 	changes map[flashKey]levelChange
 
-	// micro is a per-pair ring buffer of recent microprices. Used by the
-	// header sparkline. 60 ticks is enough for ~1-2 minutes of context on
-	// a hot perp; 1-3 minutes on a slow one.
-	micro map[pairKey]*microRing
+	// micro is a per-pair ring buffer of recent microprices. Used by
+	// the header sparkline. The ring implementation now lives in
+	// internal/ladder so this renderer and the dashboard book panel
+	// share one buffer + tuning; map values are pointers so the
+	// underlying array isn't copied on every read.
+	micro map[pairKey]*ladder.MicroRing
 
 	updates int64
 	startAt time.Time
@@ -164,37 +115,6 @@ type levelChange struct {
 	ts  time.Time
 }
 
-// microRing is a 60-element ring buffer of microprices. Oldest at head,
-// newest at head-1. NaN-filled when not yet populated so the sparkline
-// gracefully renders with leading blanks.
-type microRing struct {
-	data [60]float64
-	head int
-	full bool
-}
-
-func (r *microRing) push(v float64) {
-	r.data[r.head] = v
-	r.head = (r.head + 1) % len(r.data)
-	if r.head == 0 {
-		r.full = true
-	}
-}
-
-// values returns the ring contents in oldest-to-newest order. Length is
-// 60 if full, head otherwise.
-func (r *microRing) values() []float64 {
-	if !r.full {
-		out := make([]float64, r.head)
-		copy(out, r.data[:r.head])
-		return out
-	}
-	out := make([]float64, len(r.data))
-	copy(out, r.data[r.head:])
-	copy(out[len(r.data)-r.head:], r.data[:r.head])
-	return out
-}
-
 // NewBookTable creates a renderer for the given subscription set. layout
 // chooses the default view ("scan" for multi-pair, "ladder" for single).
 func NewBookTable(channels []string, layout string) *BookTable {
@@ -203,7 +123,7 @@ func NewBookTable(channels []string, layout string) *BookTable {
 		layout:   layout,
 		books:    make(map[pairKey]*BookSnapshot, len(channels)),
 		changes:  make(map[flashKey]levelChange),
-		micro:    make(map[pairKey]*microRing, len(channels)),
+		micro:    make(map[pairKey]*ladder.MicroRing, len(channels)),
 		startAt:  time.Now(),
 	}
 }
@@ -244,15 +164,14 @@ func (bt *BookTable) Push(ev wsclient.Event) {
 	bt.books[key] = &snap
 	bt.updates++
 
-	// Update microprice ring.
-	if snap.Microprice > 0 {
-		ring := bt.micro[key]
-		if ring == nil {
-			ring = &microRing{}
-			bt.micro[key] = ring
-		}
-		ring.push(snap.Microprice)
+	// Update microprice ring. Push() guards against NaN / non-positive
+	// internally so we don't need a wrapper check here.
+	ring := bt.micro[key]
+	if ring == nil {
+		ring = &ladder.MicroRing{}
+		bt.micro[key] = ring
 	}
+	ring.Push(snap.Microprice)
 }
 
 // diffLevels records meaningful size moves between prev and curr,
@@ -361,7 +280,7 @@ func (bt *BookTable) microValuesForPair(key pairKey) []float64 {
 	if r == nil {
 		return nil
 	}
-	return r.values()
+	return r.Values()
 }
 
 // orderedKeys returns every pair we have a snapshot for, sorted
@@ -442,8 +361,22 @@ type bookModel struct {
 	// is always within the visible window.
 	scrollTop int
 
-	// Depth tier the ladder shows: 10, 20, 50. Cycled with +/-.
+	// Depth tier the ladder shows: 10, 20, 50. Cycled with `d`.
+	// Legacy versions cycled this with `+/-`; in v0.8.3 the keymap
+	// was unified across surfaces so `+/-` is now grouping and
+	// `d` cycles tier — matches the dashboard book panel.
 	depthTier int
+
+	// groupTickSize buckets adjacent ladder levels into wider price
+	// bins. 0 = native venue tick. Cycled by `+/-` via
+	// internal/ladder.NextGroupTick / PrevGroupTick.
+	groupTickSize float64
+
+	// viewport tracks scroll position when the rendered ladder is
+	// taller than the terminal viewport. Shared with the dashboard
+	// book panel via internal/ladder so both surfaces have
+	// identical scroll/page/recenter behaviour.
+	viewport ladder.Viewport
 
 	// Paused freezes the latest snapshot in view (events keep flowing into
 	// bt.books but the model snapshots once and re-uses it until 'p').
@@ -517,6 +450,8 @@ func (m bookModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case actUp:
 			if m.mode == viewScan && m.cursor > 0 {
 				m.cursor--
+			} else if m.mode == viewLadder {
+				m.viewport.ScrollUp(ladder.RowCap(m.height))
 			}
 			return m, nil
 		case actDown:
@@ -525,6 +460,8 @@ func (m bookModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.cursor < len(keys)-1 {
 					m.cursor++
 				}
+			} else if m.mode == viewLadder {
+				m.viewport.ScrollDown(ladder.RowCap(m.height))
 			}
 			return m, nil
 		case actPageUp:
@@ -538,6 +475,8 @@ func (m bookModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.scrollTop < 0 {
 					m.scrollTop = 0
 				}
+			} else if m.mode == viewLadder {
+				m.viewport.PageUp(ladder.RowCap(m.height))
 			}
 			return m, nil
 		case actPageDown:
@@ -558,12 +497,16 @@ func (m bookModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.scrollTop < 0 {
 					m.scrollTop = 0
 				}
+			} else if m.mode == viewLadder {
+				m.viewport.PageDown(ladder.RowCap(m.height))
 			}
 			return m, nil
 		case actTop:
 			if m.mode == viewScan {
 				m.cursor = 0
 				m.scrollTop = 0
+			} else if m.mode == viewLadder {
+				m.viewport.SnapTop(1 << 20)
 			}
 			return m, nil
 		case actBottom:
@@ -578,16 +521,34 @@ func (m bookModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.scrollTop < 0 {
 					m.scrollTop = 0
 				}
+			} else if m.mode == viewLadder {
+				m.viewport.SnapBottom(1 << 20)
 			}
 			return m, nil
 		case actDepthUp:
+			// `+` widens price grouping (zoom out) — same semantic
+			// as the dashboard book panel. Old behaviour was depth-
+			// tier cycle on `+/-`; in v0.8.3 the keymap unified so
+			// `+/-` is grouping everywhere, `d` is depth tier.
 			if m.mode == viewLadder {
-				m.depthTier = nextDepthTier(m.depthTier)
+				m.groupTickSize = ladder.NextGroupTick(m.groupTickSize)
 			}
 			return m, nil
 		case actDepthDown:
 			if m.mode == viewLadder {
-				m.depthTier = prevDepthTier(m.depthTier)
+				m.groupTickSize = ladder.PrevGroupTick(m.groupTickSize)
+			}
+			return m, nil
+		case keymap.ActDepthCycle:
+			// `d` cycles stats depth tier 10 → 20 → 50.
+			if m.mode == viewLadder {
+				m.depthTier = ladder.NextDepthTier(m.depthTier)
+			}
+			return m, nil
+		case keymap.ActRecenter:
+			// `c` snaps the viewport back to centred-on-spread.
+			if m.mode == viewLadder {
+				m.viewport.Recenter()
 			}
 			return m, nil
 		case actPause:
@@ -653,31 +614,6 @@ func (m bookModel) View() string {
 
 	footer := m.renderFooter(lastErr)
 	return body + "\n" + footer
-}
-
-// nextDepthTier / prevDepthTier cycle through {10, 20, 50}. We deliberately
-// stop at 50 even though the wire payload carries _100 — past 50 the ladder
-// stops being readable on a normal terminal.
-func nextDepthTier(d int) int {
-	switch d {
-	case 10:
-		return 20
-	case 20:
-		return 50
-	default:
-		return 10
-	}
-}
-
-func prevDepthTier(d int) int {
-	switch d {
-	case 50:
-		return 20
-	case 20:
-		return 10
-	default:
-		return 50
-	}
 }
 
 // ─── scan view ──────────────────────────────────────────────────────────────
@@ -850,26 +786,41 @@ func (m bookModel) renderLadder(books map[pairKey]*BookSnapshot, updates int64, 
 	}
 	bidLiq, askLiq, imb := liquidityForTier(snap, m.depthTier)
 
+	// Stats line via shared ladder.StatsLine — identical shape to
+	// the dashboard aggregated ladder. ArbPx is always 0 here:
+	// single-venue books can't cross themselves. Sparkline is
+	// fetched from the per-pair microprice ring buffer so the
+	// "is the mid moving?" signal stays inline with the MID value.
 	spark := sparklineMicro(m.bt.microValuesForPair(key))
-
-	strip := fmt.Sprintf(
-		"%s%s%s   MID %s %s   SPREAD %s (%s bps)   IMB%d %s   BIDLIQ%d %s   ASKLIQ%d %s",
-		output.Bold, key.String(), output.Reset,
-		formatBookPrice(snap.Microprice), spark,
-		formatBookPrice(spread),
-		formatNum(bps, 2),
-		m.depthTier, colorImbalance(imb),
-		m.depthTier, formatBookSize(bidLiq),
-		m.depthTier, formatBookSize(askLiq),
-	)
+	strip := ladder.StatsLine(ladder.StatsInfo{
+		Mid:       snap.Microprice,
+		BpsSpread: bps,
+		Spread:    spread,
+		ArbPx:     0,
+		BidLiq:    bidLiq,
+		AskLiq:    askLiq,
+		Imb:       imb,
+		DepthTier: m.depthTier,
+		GroupTick: m.groupTickSize,
+		Sparkline: spark,
+	}, ladderHeaderStyle(), ladderStatsFormatter())
 
 	// Layout: cum_bid | bid_size | bid_bar | PRICE | ask_bar | ask_size | cum_ask
 	// Asks descend from top of frame (worst price at top, best price just
 	// above the spread separator); bids descend from spread separator
 	// (best price at top of bid block, worst at bottom). That puts the
 	// best bid and best ask physically adjacent to the spread row.
-	asks := snap.Asks
-	bids := snap.Bids
+	//
+	// Pipeline: tier-cap → bucket (group) → viewport apply → render.
+	// Same shape as the dashboard book panel uses; both surfaces lean
+	// on internal/ladder helpers so the math is identical.
+	asks := bookLevelsToAgg(snap.Asks, snap.Exchange)
+	bids := bookLevelsToAgg(snap.Bids, snap.Exchange)
+
+	// Tier sets the data window — render up to N rows per side.
+	// Default is to consider all of tier; rowCap (terminal height)
+	// further limits, with viewport scroll allowing access to rows
+	// that don't fit on screen at once.
 	tier := m.depthTier
 	if len(asks) > tier {
 		asks = asks[:tier]
@@ -877,6 +828,18 @@ func (m bookModel) renderLadder(books map[pairKey]*BookSnapshot, updates int64, 
 	if len(bids) > tier {
 		bids = bids[:tier]
 	}
+
+	// Apply price grouping if user has zoomed out via `+`.
+	if m.groupTickSize > 0 {
+		asks = ladder.BucketLevels(asks, m.groupTickSize, true)
+		bids = ladder.BucketLevels(bids, m.groupTickSize, false)
+	}
+
+	// rowCap = how many rows per side we can fit on screen. Then
+	// the viewport carves out a window of {asks, bids} of that
+	// size. Tier-but-not-fitting rows become reachable via scroll.
+	rowCap := ladder.RowCap(m.height)
+	asks, bids = m.viewport.Apply(asks, bids, rowCap)
 
 	maxSize := 0.0
 	for _, l := range asks {
@@ -911,7 +874,13 @@ func (m bookModel) renderLadder(books map[pairKey]*BookSnapshot, updates int64, 
 		askCums[i] = askTotal
 	}
 
-	flashes := m.bt.flashesForPair(key, 250*time.Millisecond)
+	// Flashes go quiet on pause — the user has frozen the snapshot, so
+	// arrows tagging "this level just moved" are misleading: nothing
+	// can move while paused. Live mode keeps the 250ms flash window.
+	var flashes map[string]int
+	if !m.paused {
+		flashes = m.bt.flashesForPair(key, 250*time.Millisecond)
+	}
 
 	headers := []string{"CUM BID", "BID SZ", "", "PRICE", "", "ASK SZ", "CUM ASK"}
 	aligns := []colAlign{alignRight, alignRight, alignRight, alignRight, alignLeft, alignLeft, alignLeft}
@@ -965,25 +934,68 @@ func (m bookModel) renderLadder(books map[pairKey]*BookSnapshot, updates int64, 
 
 // ─── header / footer ────────────────────────────────────────────────────────
 
+// renderHeader delegates to the shared ladder.HeaderLine so the
+// legacy book surfaces (scan + ladder) and the dashboard book panel
+// emit the exact same top line — surface name, pair, snapshot
+// count, rate, PAUSED tag. One source of truth: change the format
+// in internal/ladder and every surface picks it up.
 func (m bookModel) renderHeader(viewName string, updates int64, elapsed time.Duration) string {
 	rate := 0.0
 	if elapsed.Seconds() > 0 {
 		rate = float64(updates) / elapsed.Seconds()
 	}
-	pausedTag := ""
-	if m.paused {
-		pausedTag = output.Yellow + "  PAUSED" + output.Reset
+	// Pair label is only meaningful when the user has drilled into a
+	// specific pair (ladder mode) or launched directly into ladder
+	// for a single pair. In scan mode we're showing many pairs at
+	// once, so the header stays pair-less.
+	pair := ""
+	if m.mode == viewLadder {
+		keys := m.bt.orderedKeys()
+		if m.cursor < len(keys) && m.cursor >= 0 {
+			pair = keys[m.cursor].String()
+		}
 	}
-	plural := "s"
-	if updates == 1 {
-		plural = ""
+	return ladder.HeaderLine(ladder.HeaderInfo{
+		Surface:  "book " + viewName,
+		Pair:     pair,
+		Updates:  updates,
+		RatePerS: rate,
+		Paused:   m.paused,
+	}, ladderHeaderStyle())
+}
+
+// ladderHeaderStyle returns the wsrender book surface's palette for
+// the shared ladder.HeaderLine helper. Brand-green accent, mid-grey
+// labels, yellow PAUSED — same colours every other ladder surface
+// uses so the top line looks identical wherever the user is.
+//
+// Named ladderHeaderStyle (not headerStyle) because there's already
+// an unrelated headerStyle in wsrender.go that styles single-string
+// section headers — keeping both names distinct avoids accidental
+// collisions when grep-extending the helper.
+func ladderHeaderStyle() ladder.HeaderStyle {
+	return ladder.HeaderStyle{
+		Bold:   output.Bold,
+		Accent: output.BrandGreen,
+		Grey:   output.BrandGreyMid,
+		Warn:   output.Yellow,
+		Reset:  output.Reset,
 	}
-	return fmt.Sprintf(
-		"%s%s▲ book %s%s   %d snapshot%s   %.1f/s%s",
-		output.Bold, output.BrandGreen, viewName, output.Reset,
-		updates, plural,
-		rate, pausedTag,
-	)
+}
+
+// ladderStatsFormatter wires the wsrender book surface's formatting
+// helpers into the shared ladder.StatsLine renderer. The package
+// keeps zero internal/output imports, so each caller passes thin
+// wrappers around the formatters its surface already uses. Same
+// formatters the legacy ladder used inline before extraction —
+// numbers and styling stay identical.
+func ladderStatsFormatter() ladder.StatsFormatter {
+	return ladder.StatsFormatter{
+		Price:     output.FormatBookPrice,
+		Size:      output.FormatBookSize,
+		Num:       output.FormatNum,
+		Imbalance: output.ColorImbalance,
+	}
 }
 
 func (m bookModel) renderFooter(lastErr string) string {
@@ -1008,237 +1020,60 @@ func (m bookModel) renderFooter(lastErr string) string {
 	return footer
 }
 
-// ─── small helpers ──────────────────────────────────────────────────────────
+// ─── thin shims to the shared output package ───────────────────────────────
+//
+// Every formatting helper this renderer used to define inline now lives in
+// internal/output (book_format.go). The shims below preserve the local
+// names so existing call sites in this file don't all need editing in the
+// same commit; new code (the dashboard book panel, future renderers)
+// should call output.* directly.
+//
+// Once the dashboard panels stabilise we can sweep this file's call sites
+// over to output.* and delete the shims entirely.
 
-func bestLevels(snap *BookSnapshot) (bid, ask bookLevel) {
-	if len(snap.Bids) > 0 {
-		bid = snap.Bids[0]
-	}
-	if len(snap.Asks) > 0 {
-		ask = snap.Asks[0]
-	}
-	return bid, ask
-}
+func bestLevels(snap *BookSnapshot) (bid, ask bookLevel) { return snap.BestLevels() }
 
 func liquidityForTier(snap *BookSnapshot, tier int) (bidLiq, askLiq, imb float64) {
-	switch tier {
-	case 10:
-		return snap.BidLiq10, snap.AskLiq10, snap.Imbalance10
-	case 20:
-		return snap.BidLiq20, snap.AskLiq20, snap.Imbalance20
-	case 50:
-		return snap.BidLiq50, snap.AskLiq50, snap.Imbalance50
-	default:
-		return snap.BidLiq10, snap.AskLiq10, snap.Imbalance10
-	}
+	return snap.LiquidityForTier(tier)
 }
 
-// colorImbalance maps a -1..1 imbalance to a green/red percentage badge.
-// Positive (more bids) → green, negative (more asks) → red.
-func colorImbalance(imb float64) string {
-	pct := imb * 100
-	sign := "+"
-	color := output.BrandGreen
-	if imb < 0 {
-		sign = ""
-		color = output.Red
-	}
-	return color + fmt.Sprintf("%s%.1f%%", sign, pct) + output.Reset
+func colorImbalance(imb float64) string         { return output.ColorImbalance(imb) }
+func styleLevelPrice(price, base string, d int) string {
+	return output.StyleLevelPrice(price, base, d)
 }
-
-// styleLevelPrice renders a price string with its side color, prefixed
-// with a direction glyph when the level recently changed: `↑` if the
-// level grew (liquidity arrived — usually a market-maker stacking),
-// `↓` if it shrank or vanished (eaten by an aggressor or pulled).
-//
-// dir == 0 means "no recent change" — render plain. baseColor is the
-// side color (red asks, green bids); the glyph itself is colored by
-// direction (green for build, red for eat) so it reads independent of
-// which side it's on. The flash is the glyph alone — we deliberately
-// don't recolor the price cell, because prior versions of this code
-// painted the whole cell yellow and ended up with a screen of solid
-// yellow on a hot book.
-func styleLevelPrice(price, baseColor string, dir int) string {
-	switch dir {
-	case +1:
-		return output.BrandGreen + "↑" + output.Reset + " " + baseColor + price + output.Reset
-	case -1:
-		return output.Red + "↓" + output.Reset + " " + baseColor + price + output.Reset
-	default:
-		return "  " + baseColor + price + output.Reset
-	}
+func styleLevelSize(size string, whale bool) string { return output.StyleLevelSize(size, whale) }
+func sparklineMicro(values []float64) string        { return output.SparklineMicro(values) }
+func barLength(size, maxSize float64, w int) int    { return output.BarLength(size, maxSize, w) }
+func barRight(size, maxSize float64, w int, c string) string {
+	return output.BarRight(size, maxSize, w, c)
 }
-
-// styleLevelSize renders a size cell, prefixing a "▲" marker and bumping
-// to bold when the level qualifies as a "whale" (>=30% of its side's
-// cumulative tier liquidity). The marker is rendered without color so it
-// reads against any side — the bar already carries the side color.
-func styleLevelSize(size string, whale bool) string {
-	if whale {
-		return output.Bold + "▲ " + size + output.Reset
-	}
-	return size
+func barLeft(size, maxSize float64, w int, c string) string {
+	return output.BarLeft(size, maxSize, w, c)
 }
+func formatBookPrice(v float64) string { return output.FormatBookPrice(v) }
+func formatBookSize(v float64) string  { return output.FormatBookSize(v) }
 
-// sparklineMicro renders a 1-line unicode-block sparkline of recent
-// microprice ticks. Empty input → empty string (so the header strip
-// doesn't get an awkward "▁▁▁▁" before any data has arrived). Width
-// renders as min(8, len(values)) — short enough to live next to MID
-// without dominating the strip.
-func sparklineMicro(values []float64) string {
-	if len(values) < 2 {
-		return ""
-	}
-	const width = 8
-	v := values
-	if len(v) > width {
-		v = v[len(v)-width:]
-	}
-	min := v[0]
-	max := v[0]
-	for _, x := range v {
-		if x < min {
-			min = x
+// bookLevelsToAgg adapts a single-venue api.BookLevel slice to the
+// agg.AggregatedLevel form the shared ladder helpers expect. Each
+// level becomes a degenerate aggregate with one source (the venue's
+// exchange tag), so ladder.BucketLevels and ladder.Viewport.Apply
+// work identically across single-venue (this file) and multi-venue
+// (dashboard book panel) surfaces. Zero-size levels are dropped on
+// the way through — they are never rendered and would only inflate
+// the bucketing pass.
+func bookLevelsToAgg(levels []bookLevel, venue string) []agg.AggregatedLevel {
+	out := make([]agg.AggregatedLevel, 0, len(levels))
+	for _, l := range levels {
+		if l.Size <= 0 {
+			continue
 		}
-		if x > max {
-			max = x
-		}
+		out = append(out, agg.AggregatedLevel{
+			Price:   l.Price,
+			Size:    l.Size,
+			Sources: []string{venue},
+		})
 	}
-	rng := max - min
-	// Eight unicode block heights, low to high.
-	blocks := []rune("▁▂▃▄▅▆▇█")
-	var b strings.Builder
-	// Color the sparkline by net direction over the window — gives an
-	// instant "drifting up vs down" cue without having to read the line.
-	color := output.BrandGreyMid
-	if v[len(v)-1] > v[0] {
-		color = output.BrandGreen
-	} else if v[len(v)-1] < v[0] {
-		color = output.Red
-	}
-	b.WriteString(color)
-	for _, x := range v {
-		idx := 0
-		if rng > 0 {
-			frac := (x - min) / rng
-			idx = int(frac * float64(len(blocks)-1))
-			if idx < 0 {
-				idx = 0
-			}
-			if idx >= len(blocks) {
-				idx = len(blocks) - 1
-			}
-		}
-		b.WriteRune(blocks[idx])
-	}
-	b.WriteString(output.Reset)
-	return b.String()
-}
-
-// barLength returns the number of cells filled, log-scaled. Linear scaling
-// flattens every small level when one big level exists (e.g. one 5 BTC
-// quote next to dozens of 0.001 BTC quotes — the small ones round to 0
-// and read as "no liquidity," which is wrong).
-//
-// We use log1p so size 0 → 0 cells, size > 0 → at least 1 cell, and the
-// curve still distinguishes "tiny" from "huge" without being dominated by
-// the largest. ceil(1) for any positive size guarantees a visible mark
-// when there's any liquidity at all.
-func barLength(size, maxSize float64, width int) int {
-	if maxSize <= 0 || size <= 0 {
-		return 0
-	}
-	// log1p(size) / log1p(maxSize) is in (0, 1] for size in (0, maxSize].
-	frac := math.Log1p(size) / math.Log1p(maxSize)
-	if frac > 1 {
-		frac = 1
-	}
-	cells := int(math.Ceil(frac * float64(width)))
-	if cells < 1 {
-		cells = 1
-	}
-	if cells > width {
-		cells = width
-	}
-	return cells
-}
-
-// barRight renders a horizontal bar that grows toward the right edge — used
-// for the ask side, so the bar starts adjacent to the centre PRICE column
-// and extends outward to the right.
-func barRight(size, maxSize float64, width int, color string) string {
-	filled := barLength(size, maxSize, width)
-	return color + strings.Repeat("▮", filled) + output.Reset + strings.Repeat(" ", width-filled)
-}
-
-// barLeft renders a horizontal bar that grows toward the left edge — used
-// for the bid side, so the bar starts at the right (adjacent to PRICE) and
-// extends leftward.
-func barLeft(size, maxSize float64, width int, color string) string {
-	filled := barLength(size, maxSize, width)
-	return strings.Repeat(" ", width-filled) + color + strings.Repeat("▮", filled) + output.Reset
-}
-
-// ─── number formatting ─────────────────────────────────────────────────────
-//
-// formatNumFull is great for tape rows but renders book sizes / prices with
-// trailing IEEE float artifacts (5.5779999999999985, 12.001000000000001).
-// The book ladder needs tighter rules: prices honor the venue tick, sizes
-// drop to ~5 significant figures, cumulatives never show more decimals
-// than the underlying.
-
-// formatBookPrice renders a price with at most 2 decimal places when the
-// number is large (>= 100), 4 when small (< 100), 6 when tiny (< 1). This
-// matches what trading screens do and dodges most float artifacts. Always
-// thousand-separated.
-func formatBookPrice(v float64) string {
-	if v == 0 {
-		return "—"
-	}
-	abs := v
-	if abs < 0 {
-		abs = -abs
-	}
-	dec := 2
-	switch {
-	case abs >= 100:
-		dec = 2
-	case abs >= 1:
-		dec = 4
-	case abs >= 0.0001:
-		dec = 6
-	default:
-		dec = 8
-	}
-	return formatNum(v, dec)
-}
-
-// formatBookSize renders a size or cumulative liquidity. We trim to 5
-// significant digits — enough for tick-precise sizes on every venue we
-// support (Binance lots are 0.001, Deribit 10, Kraken 0.0001, etc.) and
-// avoids the IEEE noise from cumulative sums.
-//
-// For values < 0.001 we fall back to formatNumFull (scientific-ish), since
-// 5 sig figs on 1e-7 just looks like zero.
-func formatBookSize(v float64) string {
-	if v == 0 {
-		return "—"
-	}
-	abs := v
-	if abs < 0 {
-		abs = -abs
-	}
-	if abs < 1e-3 {
-		return formatNumFull(v)
-	}
-	// 5 significant figures: pick decimals dynamically.
-	dec := 5
-	mag := abs
-	for mag >= 10 && dec > 0 {
-		mag /= 10
-		dec--
-	}
-	return formatNum(v, dec)
+	return out
 }
 
 // orderedPairs is exposed for tests and for the cmd layer's diagnostics; not

@@ -370,6 +370,6 @@ func historyFilePath() string {
 		dir = os.TempDir()
 	}
 	histDir := dir + "/laevitas"
-	os.MkdirAll(histDir, 0o755)
+	_ = os.MkdirAll(histDir, 0o700)
 	return histDir + "/history"
 }

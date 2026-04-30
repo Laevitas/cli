@@ -11,10 +11,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -27,6 +29,8 @@ const (
 	binaryName   = "laevitas"
 	githubAPIURL = "https://api.github.com/repos/" + repo + "/releases/latest"
 )
+
+var updateHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 type githubRelease struct {
 	TagName string `json:"tag_name"`
@@ -105,13 +109,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	fmt.Println("✓")
 
 	checksumsURL := fmt.Sprintf("https://github.com/%s/releases/download/%s/checksums.txt", repo, latest.TagName)
-	if expected, ok := lookupChecksum(checksumsURL, archiveName); ok {
-		sum := sha256.Sum256(archiveData)
-		if !strings.EqualFold(hex.EncodeToString(sum[:]), expected) {
-			return fmt.Errorf("checksum mismatch for %s", archiveName)
-		}
-		fmt.Println("Checksum verified ✓")
+	expected, err := lookupChecksum(checksumsURL, archiveName)
+	if err != nil {
+		return err
 	}
+	sum := sha256.Sum256(archiveData)
+	if !strings.EqualFold(hex.EncodeToString(sum[:]), expected) {
+		return fmt.Errorf("checksum mismatch for %s", archiveName)
+	}
+	fmt.Println("Checksum verified ✓")
 
 	binTarget := binaryName
 	if runtime.GOOS == "windows" {
@@ -127,12 +133,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating temp file: %w", err)
 	}
 	if _, err := tmpFile.Write(binData); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
 		return fmt.Errorf("writing extracted binary: %w", err)
 	}
-	tmpFile.Close()
-	defer os.Remove(tmpFile.Name())
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpFile.Name())
+		return fmt.Errorf("closing temp file: %w", err)
+	}
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	execPath, err := os.Executable()
 	if err != nil {
@@ -223,22 +232,22 @@ func extractBinary(data []byte, ext, target string) ([]byte, error) {
 	return nil, fmt.Errorf("binary %q not found in archive", target)
 }
 
-func lookupChecksum(url, file string) (string, bool) {
+func lookupChecksum(url, file string) (string, error) {
 	data, err := downloadBytes(url)
 	if err != nil {
-		return "", false
+		return "", fmt.Errorf("downloading checksums: %w", err)
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 2 && fields[1] == file {
-			return fields[0], true
+			return fields[0], nil
 		}
 	}
-	return "", false
+	return "", fmt.Errorf("checksum for %s not found", file)
 }
 
 func fetchLatestVersion() (*githubRelease, error) {
-	resp, err := http.Get(githubAPIURL)
+	resp, err := updateHTTPClient.Get(githubAPIURL)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +270,10 @@ func fetchLatestVersion() (*githubRelease, error) {
 }
 
 func downloadBytes(url string) ([]byte, error) {
-	resp, err := http.Get(url)
+	if err := validateGitHubDownloadURL(url); err != nil {
+		return nil, err
+	}
+	resp, err := updateHTTPClient.Get(url)
 	if err != nil {
 		return nil, err
 	}
@@ -277,18 +289,32 @@ func downloadBytes(url string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
+func validateGitHubDownloadURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid download URL: %w", err)
+	}
+	if u.Scheme != "https" || u.Host != "github.com" {
+		return fmt.Errorf("refusing non-GitHub download URL: %s", raw)
+	}
+	if !strings.HasPrefix(u.Path, "/"+repo+"/releases/download/") {
+		return fmt.Errorf("refusing unexpected GitHub download path: %s", raw)
+	}
+	return nil
+}
+
 func replaceBinary(target, source string) error {
 	if runtime.GOOS == "windows" {
 		old := target + ".old"
-		os.Remove(old)
+		_ = os.Remove(old)
 		if err := os.Rename(target, old); err != nil {
 			return fmt.Errorf("backing up current binary: %w", err)
 		}
 		if err := copyFile(source, target); err != nil {
-			os.Rename(old, target)
+			_ = os.Rename(old, target)
 			return err
 		}
-		os.Remove(old)
+		_ = os.Remove(old)
 		return nil
 	}
 
@@ -298,20 +324,24 @@ func replaceBinary(target, source string) error {
 		return copyAndReplace(source, target)
 	}
 	tmpPath := tmp.Name()
-	tmp.Close()
-
-	if err := copyFile(source, tmpPath); err != nil {
-		os.Remove(tmpPath)
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
 		return err
 	}
 
+	if err := copyFile(source, tmpPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+
+	// #nosec G302 -- installed CLI binaries must be executable.
 	if err := os.Chmod(tmpPath, 0755); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 
 	if err := os.Rename(tmpPath, target); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 
@@ -322,16 +352,21 @@ func copyAndReplace(source, target string) error {
 	if err := copyFile(source, target); err != nil {
 		return err
 	}
+	// #nosec G302 -- installed CLI binaries must be executable.
 	return os.Chmod(target, 0755)
 }
 
 func copyFile(src, dst string) error {
+	// #nosec G304 -- src is the extracted update binary or current executable
+	// backup path generated by this updater.
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
+	// #nosec G304,G302 -- src/dst are the current executable path or temp
+	// update paths; output must be executable after replacement.
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
 	if err != nil {
 		return err

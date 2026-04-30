@@ -9,6 +9,7 @@ import (
 
 	"github.com/laevitas/cli/cmd/analytics"
 	"github.com/laevitas/cli/cmd/config"
+	"github.com/laevitas/cli/cmd/dash"
 	"github.com/laevitas/cli/cmd/futures"
 	"github.com/laevitas/cli/cmd/instruments"
 	"github.com/laevitas/cli/cmd/options"
@@ -44,14 +45,15 @@ const helpBanner = `  ██╗      █████╗ ███████╗
 var rootCmd = &cobra.Command{
 	Use:   "laevitas",
 	Short: "LAEVITAS — crypto derivatives analytics from your terminal",
-	Long: `LAEVITAS CLI provides real-time access to crypto derivatives data
-including futures, perpetuals, options, volatility surfaces, and prediction markets.
+	Long: `LAEVITAS CLI provides real-time access to crypto market data
+including futures, perpetuals, options, spot, volatility surfaces,
+prediction markets, analytics, instruments, and live streams.
 
-Data sourced from Deribit, Binance, and Polymarket.
+Data sourced from Laevitas REST and WebSocket APIs across supported venues.
 
   Authenticate:  laevitas config init
   Quick start:   laevitas futures snapshot --currency BTC
-  Agent mode:    laevitas perps carry BTCUSDT -o json | jq '.[0]'
+  Agent mode:    laevitas perps carry BTCUSDT -o json | jq '.data[0]'
   Interactive:   laevitas   (no arguments → REPL shell)
 
 Documentation:  https://apiv2.laevitas.ch/redoc
@@ -117,30 +119,38 @@ func init() {
 		}
 	}
 
-	// Branded help template — show banner + colored section headers on TTY
+	// Branded help template — banner + section headers in the brand
+	// palette (#46be52 green wordmark, mid-grey footer links). The
+	// previous template hard-coded plain ANSI cyan (\033[36m); the
+	// rest of the CLI's TUI surfaces had migrated to the brand
+	// palette long ago — this template was the last hold-out.
 	if term.IsTerminal(int(os.Stdout.Fd())) {
-		rootCmd.SetUsageTemplate("\033[36m" + helpBanner + "\033[0m" + `            v` + version.Version + `
+		bg := output.BrandGreen
+		bgl := output.BrandGreyLight
+		bgm := output.BrandGreyMid
+		reset := output.Reset
+		rootCmd.SetUsageTemplate(bg + helpBanner + reset + bgm + `            v` + version.Version + reset + `
 
-` + "\033[36m" + `USAGE:` + "\033[0m" + `
+` + bgl + `USAGE:` + reset + `
   {{.UseLine}}{{if .HasAvailableSubCommands}} [command]{{end}}
 
-` + "\033[36m" + `COMMANDS:` + "\033[0m" + `{{range .Commands}}{{if .IsAvailableCommand}}
+` + bgl + `COMMANDS:` + reset + `{{range .Commands}}{{if .IsAvailableCommand}}
   {{rpad .Name .NamePadding}} {{.Short}}{{end}}{{end}}
 {{if .HasAvailableLocalFlags}}
-` + "\033[36m" + `FLAGS:` + "\033[0m" + `
+` + bgl + `FLAGS:` + reset + `
 {{.LocalFlags.FlagUsages}}{{end}}{{if .HasAvailableInheritedFlags}}
-` + "\033[36m" + `GLOBAL FLAGS:` + "\033[0m" + `
+` + bgl + `GLOBAL FLAGS:` + reset + `
 {{.InheritedFlags.FlagUsages}}{{end}}
 Use "{{.CommandPath}} [command] --help" for more info.
 
-` + "\033[2m" + `Docs:    https://apiv2.laevitas.ch/redoc
+` + bgm + `Docs:    https://apiv2.laevitas.ch/redoc
 Discord: https://discord.com/invite/yaXc4EFFay
-Twitter: https://twitter.com/laevitas1` + "\033[0m" + `
+Twitter: https://twitter.com/laevitas1` + reset + `
 `)
 	}
 
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", internalConfig.DefaultOutput, "Output format: auto, json, table, csv")
-	rootCmd.PersistentFlags().StringVar(&exchange, "exchange", "", "Exchange (deribit, binance). Overrides config default.")
+	rootCmd.PersistentFlags().StringVar(&exchange, "exchange", "", "Exchange filter/override (market-dependent).")
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "Show full HTTP request/response for debugging")
 	rootCmd.PersistentFlags().BoolVar(&noChart, "no-chart", false, "Disable inline charts for time-series data")
 	rootCmd.PersistentFlags().BoolVar(&wide, "wide", false, "Disable column truncation (show all data)")
@@ -156,6 +166,7 @@ Twitter: https://twitter.com/laevitas1` + "\033[0m" + `
 	rootCmd.AddCommand(analytics.Cmd)
 	rootCmd.AddCommand(wallet.Cmd)
 	rootCmd.AddCommand(wscmd.Cmd)
+	rootCmd.AddCommand(dash.Cmd)
 	rootCmd.AddCommand(watchCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(update.Cmd)

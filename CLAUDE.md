@@ -2,16 +2,18 @@
 
 ## Project Overview
 
-Laevitas CLI is a Go command-line tool for accessing crypto derivatives market data. It wraps the Laevitas V2 REST API (`https://apiv2.laevitas.ch`) and presents futures, perpetuals, options, spot, volatility surfaces, prediction markets, and a cross-product instruments registry in table, JSON, or CSV format.
+Laevitas CLI is a Go command-line tool for accessing crypto market data. It wraps the Laevitas V2 REST API (`https://apiv2.laevitas.ch`) and the WebSocket gateway, presenting futures, perpetuals, options, spot, volatility surfaces, prediction markets, cross-product instruments, analytics, and live streams in human-friendly and agent-friendly formats.
 
 **This is a read-only data client.** It fetches and formats data — it does not trade, place orders, or modify any state.
 
 ## Architecture
 
 ```
-main.go → cmd/root.go → cmd/{futures,perps,options,spot,predictions,instruments,config}/ → internal/cmdutil → internal/api → internal/output
+main.go → cmd/root.go → cmd/{futures,perps,options,spot,predictions,instruments,analytics,wallet,config,update}/
+                       → internal/cmdutil → internal/api → internal/output
+                       → cmd/ws + internal/wsclient/internal/wsrender (live streaming)
                        → cmd/interactive.go (REPL)
-                       → cmd/watch.go (live-updating)
+                       → cmd/watch.go (REST polling)
                        → cmd/saved.go (saved queries)
 ```
 
@@ -35,7 +37,11 @@ main.go → cmd/root.go → cmd/{futures,perps,options,spot,predictions,instrume
 | `cmd/spot/` | Spot market subcommands (catalog, snapshot, ohlcvt, ticker, volume, l2-orderbook, trades) |
 | `cmd/predictions/` | Polymarket prediction market subcommands |
 | `cmd/instruments/` | Cross-product instrument registry — list + detail across all exchanges/market types |
-| `cmd/config/` | Config init/show/set/path |
+| `cmd/analytics/` | Computed analytics, currently realized volatility |
+| `cmd/wallet/` | x402 wallet UX — show/init/set-key/unset/address/credits |
+| `cmd/ws/` | WebSocket streaming — trades, ticker/vt, liquidations, book |
+| `cmd/update/` | Self-update from GitHub Releases |
+| `cmd/config/` | Config init/show/set/unset/path |
 | `internal/api/client.go` | HTTP client — auth (`apiKey` header), retry on 429, network error wrapping |
 | `internal/api/endpoints.go` | API endpoint path constants |
 | `internal/cmdutil/cmdutil.go` | Shared CLI helpers — `MustClient()`, `RunAndPrint()`, `CommonFlags`, global state |
@@ -46,6 +52,9 @@ main.go → cmd/root.go → cmd/{futures,perps,options,spot,predictions,instrume
 | `internal/output/chart.go` | ASCII line charts via asciigraph |
 | `internal/output/colors.go` | ANSI color constants, `Errorf`/`Successf`/`Warnf` helpers |
 | `internal/completer/` | Readline autocompleter with lazy catalog caching |
+| `internal/wsclient/` | WebSocket client, JSON-RPC subscription, reconnect handling |
+| `internal/wsrender/` | TUI renderers for rolling tape, book scan, and book ladder |
+| `internal/x402/` | EVM signing client for x402 payments |
 | `internal/version/` | Version auto-detection from git tags at runtime |
 
 ## Key File Locations
@@ -102,7 +111,7 @@ When built via `make build`, ldflags inject version/commit/date and take priorit
 ## Code Conventions
 
 ### Go style
-- Go 1.22. No generics used — keep it simple.
+- Go 1.25. Keep implementation straightforward and avoid clever abstractions.
 - Cobra for CLI framework. Every subcommand follows the same pattern (see below).
 - `fmt.Fprintf(os.Stderr, ...)` for user-facing messages. `output.Errorf`/`Successf`/`Warnf` for styled messages.
 - Errors bubble up through cobra. `SilenceErrors: true` on rootCmd — errors printed in `Execute()`.
@@ -139,7 +148,7 @@ func init() {
 ### Config
 - All defaults in `internal/config/config.go`: `DefaultBaseURL`, `DefaultExchange`, `DefaultOutput`, `DefaultLimit`
 - Config loaded from `~/.config/laevitas/config.json`
-- Env vars override file: `LAEVITAS_API_KEY`, `LAEVITAS_BASE_URL`, `LAEVITAS_EXCHANGE`, `LAEVITAS_OUTPUT`
+- Env vars override file: `LAEVITAS_API_KEY`, `LAEVITAS_WALLET_KEY`, `LAEVITAS_AUTH`, `LAEVITAS_BASE_URL`, `LAEVITAS_EXCHANGE`, `LAEVITAS_OUTPUT`
 - API auth via `apiKey` header (not `Authorization`)
 
 ### Output formatting
@@ -168,9 +177,39 @@ func init() {
 - Base URL: `https://apiv2.laevitas.ch`
 - Auth: `apiKey` header
 - User-Agent: `laevitas-cli/{version} (+https://github.com/laevitas/cli)`
-- Response envelope: `{ "data": [...], "meta": { "next_cursor": "..." } }` — auto-unwrapped by printer
+- REST JSON envelope: success is `{ "success": true, "data": ..., "meta": {...} }`; failure is `{ "success": false, "error": {"code": "...", "message": "..."} }`
+- Table and CSV output format `.data` directly; they are not enveloped.
+- WebSocket output is NDJSON (`{"channel": "...", "data": {...}}` per line), not the REST envelope.
 - Rate limit: 429 → auto-retry with exponential backoff (2s, 4s, 8s), max 3 retries
 - Auth errors (401/403): no retry, show helpful message
+
+## Markets vocabulary (canonical tokens)
+
+There are three different name-spaces for market types in this codebase, all carrying the same concept. Internal code MUST use the canonical (plural) form; the boundaries to other layers translate at the edge.
+
+| Layer | Token form | Example |
+|---|---|---|
+| **CLI input (what the user types)** | any alias | `perp`, `perpetual`, `perpetuals`, `swap`, `fut`, `futures`, `opt`, `options`, `spot`, `predictions`, `poly` |
+| **Internal canonical** | plural | `perpetuals`, `futures`, `options`, `spot`, `predictions` |
+| **REST API filter `?market_type=`** | singular | `perpetual`, `future`, `option`, `spot`, `prediction` |
+| **WebSocket channel segment** | plural (= canonical) | `book.perpetuals.<venue>.<instrument>` |
+
+**Rule**: every CLI entry point (cobra `Run`/`RunE`) calls `api.NormalizeMarket(input)` immediately. Internal code (resolvers, panels, channel builders) sees the canonical plural form only. When a REST request needs the singular form, call `api.MarketRESTToken(canonical)` at the request-build site. WS channels need no translation — canonical = WS form.
+
+Same pattern for **margin types**:
+
+| Layer | Token form | Example |
+|---|---|---|
+| **CLI input** | any alias | `linear`, `lin`, `usdt`, `usdc`, `stable`, `inverse`, `inv`, `coin`, `crypto` |
+| **Internal canonical / REST filter** | one word | `linear`, `inverse` |
+
+`api.NormalizeMargin(input)` returns the canonical form; pass it directly to `params.MarginType`.
+
+**Where the helpers live**: `internal/api/markets.go`. Adding a new market or margin type means editing the alias map there in ONE place; every CLI entry point picks up the new alias automatically.
+
+**Why plural for canonical**: matches WS channels and what the user already types in `laevitas ws perpetuals book ...` and `laevitas dash book perpetuals BTCUSDT`. The REST API is the odd layer; we wrap it.
+
+**Never invent a fourth token form.** If you find yourself reaching for a new shorthand (e.g. `perp-linear` as a single CLI value), stop and add it to the alias table or use existing flags.
 
 ## Dependencies
 
@@ -179,6 +218,9 @@ func init() {
 | `github.com/spf13/cobra` | CLI framework |
 | `github.com/chzyer/readline` | REPL readline with history |
 | `github.com/charmbracelet/lipgloss` | Terminal styling (table formatting) |
+| `github.com/charmbracelet/bubbletea` | Live WebSocket TUI rendering |
+| `github.com/coder/websocket` | WebSocket client |
+| `github.com/coinbase/x402/go` | x402 payment support |
 | `github.com/guptarohit/asciigraph` | ASCII line charts |
 | `github.com/briandowns/spinner` | Loading spinner animation |
 | `golang.org/x/term` | Terminal detection, raw mode, size |
@@ -221,19 +263,25 @@ func init() {
 
 11. **Spot defaults to `binance`, not `deribit`.** Deribit doesn't trade spot. `cmd/spot/spot.go` has a `spotExchange()` helper that falls back to `binance` when the global `cmdutil.Exchange` is `deribit`. Use it on every spot command.
 
-12. **The API `instrument_name` field is the canonical identifier.** Don't invent your own naming — use exactly what the catalog endpoint returns.
+12. **WebSocket docs and errors use `laevitas`, not `lvt`.** Do not introduce `lvt` examples unless the binary/alias is actually shipped.
 
-13. **Don't add error handling for flags Cobra already validates.** `cobra.ExactArgs(1)` handles missing arguments. `MarkFlagRequired` handles missing required flags.
+13. **The API `instrument_name` field is the canonical identifier.** Don't invent your own naming — use exactly what the catalog endpoint returns.
 
-14. **Version strings never include the `v` prefix internally.** Git tags use `v0.1.0`, but `version.Version` stores `0.1.0`. Display code adds the `v`.
+14. **Don't add error handling for flags Cobra already validates.** `cobra.ExactArgs(1)` handles missing arguments. `MarkFlagRequired` handles missing required flags.
 
-15. **`--sort-dir` is registered on every time-series command via `AddCommonFlags`.** Don't re-declare it on individual commands or Cobra panics with "flag redefined: sort-dir". Trades/liquidations used to declare their own; they no longer do.
+15. **Version strings never include the `v` prefix internally.** Git tags use `v0.1.0`, but `version.Version` stores `0.1.0`. Display code adds the `v`.
+
+16. **`--sort-dir` is registered on every time-series command via `AddCommonFlags`.** Don't re-declare it on individual commands or Cobra panics with "flag redefined: sort-dir". Trades/liquidations used to declare their own; they no longer do.
+
+17. **Never store unnormalised market or margin tokens internally.** Every CLI `Run` func that accepts a market or margin type MUST call `api.NormalizeMarket` / `api.NormalizeMargin` on user input before storing it. Internal code assumes canonical form (plural for markets, lowercase one-word for margins). See "Markets vocabulary" above. Three different forms across CLI / WS / REST is a real pre-existing inconsistency — the normaliser is the chokepoint that hides it from the rest of the codebase.
 
 ## Environment Variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `LAEVITAS_API_KEY` | (empty) | API key (overrides config file) |
+| `LAEVITAS_WALLET_KEY` | (empty) | Hex EVM private key for x402 REST payments |
+| `LAEVITAS_AUTH` | `auto` | Auth mode: `auto`, `api-key`, `x402` |
 | `LAEVITAS_BASE_URL` | `https://apiv2.laevitas.ch` | API base URL |
 | `LAEVITAS_EXCHANGE` | `deribit` | Default exchange |
 | `LAEVITAS_OUTPUT` | `auto` | Default output format |
@@ -273,6 +321,8 @@ No test suite exists yet — verify manually against the live API.
 - Write rules that prevent the pattern, not just document the incident.
 
 ### Shipping a release
+
+The canonical public procedure is `RELEASING.md`; the executable agent checklist is `.claude/skills/release/SKILL.md`. Keep this section, `RELEASING.md`, and the release skill aligned when the release flow changes.
 
 The canonical release flow. **Every release follows these steps in this order**, no shortcuts. The `/release` skill in `.claude/skills/release/` enforces it.
 

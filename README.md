@@ -1,6 +1,6 @@
 # Laevitas CLI
 
-[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)]()
 [![Twitter](https://img.shields.io/twitter/follow/laevitas1?style=social)](https://twitter.com/laevitas1)
@@ -8,9 +8,9 @@
 
 > **Derivatives Data Without The Spread** — in your terminal.
 
-Crypto derivatives analytics CLI for futures, perpetuals, options, vol surfaces, and prediction markets. Agent-native, pipe-friendly, human-readable.
+Human-friendly and agent-native market data for futures, perpetuals, options, spot, prediction markets, cross-product instruments, analytics, and live WebSocket streams.
 
-Real-time data from **Deribit**, **Binance**, and **Polymarket**.
+REST commands return tables for humans and stable JSON envelopes for scripts and LLMs. Streaming commands emit live TUI views in a terminal and NDJSON when piped.
 
 ```
 $ laevitas futures snapshot --currency BTC -o table
@@ -47,7 +47,7 @@ Or grab a pre-built binary from the [latest release](https://github.com/laevitas
 ## Quick Start
 
 ```bash
-# 1. Configure your API key
+# 1. Configure authentication
 laevitas config init
 
 # 2. Explore available instruments
@@ -57,13 +57,17 @@ laevitas options catalog
 laevitas spot catalog --exchange binance
 laevitas instruments list --market-type perpetual --base-currency BTC
 
-# 3. Fetch data
+# 3. Fetch REST data
 laevitas futures snapshot --currency BTC
 laevitas perps carry BTC-PERPETUAL -r 1d -n 30
 laevitas options flow --currency BTC --min-premium 5000
 laevitas options vol-surface snapshot --currency BTC
 laevitas spot ohlcvt BTCUSDT -p 24h -r 1h
 laevitas predictions catalog --keyword bitcoin
+
+# 4. Stream live data
+laevitas ws perpetuals trades binance:BTCUSDT
+laevitas ws perpetuals book "*:BTCUSDT"
 ```
 
 ## Commands
@@ -78,15 +82,108 @@ laevitas predictions catalog --keyword bitcoin
 | `instruments` | Cross-product instrument registry — `list` + `detail` across all exchanges |
 | `analytics` | Computed cross-asset analytics — realized volatility |
 | `ws` | Live WebSocket streams — trades, OHLC ticker, OHLC vt, liquidations, **L2 book**, with `*` wildcards |
+| `dash` | Multi-pane TUI dashboards — **`dash book`** aggregated multi-venue order book |
 | `wallet` | x402 wallet — show, init, set-key, address, credits |
 | `config` | Configuration — init, show, set |
+| `watch` | Re-run REST commands at an interval with live-updating table output |
+| `update` | Self-update from the latest GitHub Release |
 | `version` | Print version and build information |
+
+### Market type aliases
+
+Wherever the CLI takes a market type (`--market-type`, `laevitas ws <market> ...`, `laevitas dash book <market> ...`), any common alias works — the CLI normalises to the canonical form internally. Type whichever feels natural:
+
+| Canonical | Aliases |
+|-----------|---------|
+| `perpetuals` | `perp`, `perps`, `perpetual`, `swap`, `swaps` |
+| `futures` | `fut`, `future`, `dated` |
+| `options` | `opt`, `opts`, `option` |
+| `spot` | `spot` |
+| `predictions` | `prediction`, `predict`, `poly`, `polymarket` |
+
+Margin type the same way (`--margin-type`, `--margin`):
+
+| Canonical | Aliases |
+|-----------|---------|
+| `linear` | `lin`, `usdt`, `usdc`, `stable` |
+| `inverse` | `inv`, `coin`, `coins`, `crypto` |
+
+Examples — all equivalent:
+
+```bash
+laevitas instruments list --market-type perpetuals --margin-type linear --base-currency BTC
+laevitas instruments list --market-type perp       --margin-type usdt   --base-currency BTC
+laevitas instruments list --market-type swap       --margin-type lin    --base-currency BTC
+```
+
+```bash
+laevitas dash book perpetuals BTCUSDT
+laevitas dash book perp        BTCUSDT
+laevitas dash book swap        BTCUSDT
+```
+
+### `dash book` — Multi-venue order book dashboard
+
+Aggregates L2 depth across every venue listing the symbol into one TUI:
+
+- **Aggregated ladder** (default) — consolidated centre-price ladder, bars
+  segmented by per-venue contribution, cumulative liquidity columns either
+  side, sparkline of recent microprice next to MID.
+- **Split ladder** (toggle with `m`) — one narrow per-venue column
+  side-by-side, useful for "which venue has a wall here?" comparisons.
+- **Venue strip** (right) — per-venue BBO/spread/imbalance cards bordered
+  in venue brand colour, plus a CONSOLIDATED summary card with ARB
+  detection on crossed cross-venue books.
+
+Two ways to call it:
+
+```bash
+# Currency mode (recommended) — resolves per-venue contracts via the
+# instruments registry: BTCUSDT on binance, BTC-USDT-SWAP on okx,
+# BTC-USD on hyperliquid, etc. Default per-venue quote cascade
+# USDT → USDC → USD.
+laevitas dash book perpetuals BTC --margin linear
+laevitas dash book perpetuals BTC --margin inverse
+laevitas dash book perpetuals ETH --margin linear --quote USDC
+laevitas dash book spot BTC
+
+# Literal mode (legacy) — exact symbol, every venue that names it
+# this way contributes.
+laevitas dash book perpetuals BTCUSDT
+```
+
+Markets supported: `perpetuals`, `futures`, `spot`, `predictions`. Options
+has no L2 data on the streaming gateway and is rejected.
+
+#### Keys
+
+| Key | Action |
+|-----|--------|
+| `+` / `-` | Cycle price grouping (`tick → 0.01 → 0.05 → 0.10 → … → 50`) |
+| `d` | Cycle stats depth tier (10 → 20 → 50) |
+| `c` | Recenter viewport on the spread |
+| `m` | Toggle aggregated ↔ split ladder mode |
+| `v` | Open venue picker (hide/show specific venues) |
+| `j` / `k` / `↓` / `↑` | Scroll one row |
+| `PgUp` / `PgDn` | Scroll one page |
+| `g` / `G` | Jump to top / bottom |
+| `p` | Pause (freeze the visible state) |
+| `?` / `h` | Help overlay |
+| `q` / `Esc` | Quit |
+
+The ladder shares its layout primitives (`internal/ladder` and
+`internal/output/layout.go`) with `laevitas ws book` — both surfaces emit
+the same top-line header and stats line, so muscle memory carries.
 
 ### Global Flags
 
 ```
 -o, --output    Output format: auto, json, table, csv (default: auto)
-    --exchange  Override default exchange (deribit, binance)
+    --exchange  Exchange filter/override. Valid values depend on market.
+    --no-chart  Disable inline charts for table time-series output
+    --wide      Disable column truncation in tables
+    --width     Override terminal width for table formatting
+    --verbose   Show redacted HTTP request/response diagnostics
     --version   Print version
     --help      Print help
 ```
@@ -115,7 +212,7 @@ Inline charts always render chronologically (left-to-right in time) regardless o
 `catalog` commands list available instruments and accept pagination plus per-product filters:
 
 ```
-    --exchange         Filter by exchange (deribit, binance, okx, bybit, hyperliquid, kraken)
+    --exchange         Filter by exchange (market-dependent)
     --currency         Filter by base currency (BTC, ETH, SOL)
     --maturity         Filter by expiry (e.g. 26JUN26)            [futures, perps, options]
     --option-type      Filter: C (call) or P (put)                 [options]
@@ -137,7 +234,7 @@ Inline charts always render chronologically (left-to-right in time) regardless o
     --currency        Filter by currency: BTC, ETH
     --quote-currency  Filter by quote currency: USDT, USDC, USD     [spot only]
     --date            Snapshot datetime in ISO 8601 (defaults to now)
-    --exchange        Override default exchange (deribit, binance)
+    --exchange        Exchange override (market-dependent)
 ```
 
 ```bash
@@ -145,12 +242,12 @@ Inline charts always render chronologically (left-to-right in time) regardless o
 laevitas futures snapshot --currency BTC -n 3      # ✗ unknown flag
 
 # Right — fetch the full snapshot, trim downstream
-laevitas futures snapshot --currency BTC -o json | jq '.[:3]'
+laevitas futures snapshot --currency BTC -o json | jq '.data[:3]'
 ```
 
-## Output Modes
+## Output Contract
 
-The CLI auto-detects your environment:
+The CLI auto-detects output:
 
 - **Interactive terminal** → colored table format
 - **Piped/redirected** → JSON (machine-readable)
@@ -171,16 +268,22 @@ laevitas perps carry BTC-PERPETUAL -o json
 laevitas perps carry BTC-PERPETUAL -o csv > funding.csv
 ```
 
-### JSON envelope (v0.6.0+)
+### REST JSON Envelope
 
-Every JSON response is wrapped in a stable envelope so agents can parse one shape for both success and failure:
+REST commands using `-o json` are wrapped in a stable envelope so agents can parse one shape for both success and failure:
 
 ```json
 // success
 {
   "success": true,
   "data": [ ... ],
-  "meta": { "next_cursor": "...", "count": 100 }
+  "meta": {
+    "next_cursor": "...",
+    "count": 100,
+    "auth": "api-key",
+    "credits_remaining": 950,
+    "latency_ms": 247
+  }
 }
 
 // failure (printed to stdout, exit code is non-zero)
@@ -195,9 +298,19 @@ Every JSON response is wrapped in a stable envelope so agents can parse one shap
 }
 ```
 
-**Stable error codes for branching:** `AUTH_INVALID`, `AUTH_FORBIDDEN`, `RATE_LIMITED`, `PAYMENT_REQUIRED`, `BAD_REQUEST`, `NOT_FOUND`, `SERVER_ERROR`, `NETWORK_ERROR`, `UNKNOWN_ERROR`. Use `.error.code` rather than `.error.message` (which is human-readable and may change).
+**Stable error codes for branching:** `AUTH_INVALID`, `AUTH_FORBIDDEN`, `RATE_LIMITED`, `PAYMENT_REQUIRED`, `WALLET_NOT_CONFIGURED`, `INSUFFICIENT_BALANCE`, `PAYMENT_REJECTED`, `BAD_REQUEST`, `NOT_FOUND`, `SERVER_ERROR`, `NETWORK_ERROR`, `UNKNOWN_ERROR`. Use `.error.code` rather than `.error.message` (which is human-readable and may change).
 
 `-o table` and `-o csv` are not enveloped — they format `.data` directly. The envelope is JSON-only.
+
+### WebSocket NDJSON
+
+`laevitas ws ...` is a streaming command, not a REST request. In a terminal it renders a live TUI. When piped or forced with `-o json`, it emits newline-delimited JSON:
+
+```json
+{"channel":"trades.perpetuals.binance.BTCUSDT","data":{...}}
+```
+
+Read one object per line. Reconnect warnings and slow-consumer warnings are diagnostic output, not market data.
 
 ## Agent Integration
 
@@ -206,7 +319,8 @@ The CLI is designed to be used by AI agents (Claude, GPT, Codex, etc.) as a nati
 ### Why agents love CLIs
 
 - **No SDK needed** — any agent with terminal access can use it
-- **Structured output** — `-o json` returns parseable data
+- **Structured REST output** — `-o json` returns a stable `{success,data,meta}` envelope
+- **Streaming output** — `ws` emits NDJSON when piped
 - **Composable** — pipe, filter, combine with `jq`, `awk`, other CLIs
 - **Discoverable** — `--help` on every command
 - **Deterministic** — same input → same output
@@ -232,6 +346,10 @@ laevitas predictions ohlcvt will-bitcoin-reach-250000-YES -o json -n 1 | jq '.da
 # Combined pipeline: find the highest-carry future and get its order book
 BEST=$(laevitas futures snapshot --currency BTC -o json | jq -r '.data | sort_by(.annualized_carry) | last | .instrument_name')
 laevitas futures orderbook "$BEST" -o json
+
+# Historical orderbook metrics: table is compact, JSON/CSV keep every metric column
+laevitas perps orderbook BTCUSDT --exchange binance -p 1h -r 1m
+laevitas perps orderbook BTCUSDT --exchange binance -p 1h -r 1m -o json
 
 # Spot reference price for derivatives basis calculation
 laevitas spot ohlcvt BTCUSDT -p 24h -o json -n 1 | jq '.data[0].close'
@@ -272,7 +390,7 @@ laevitas ws perpetuals book "*:BTCUSDT"
 # Wildcards firehose — every perpetual liquidation across every exchange
 laevitas ws perpetuals liquidations "*:*"
 
-# Error-aware extraction — works for both success and failure
+# Error-aware REST extraction — works for both success and failure
 RESP=$(laevitas perps carry BTC-PERPETUAL -p 1h -o json)
 if [ "$(echo "$RESP" | jq -r '.success')" = "true" ]; then
   echo "$RESP" | jq '.data[0].funding_rate_close'
@@ -288,20 +406,23 @@ fi
 To teach an AI agent about this CLI, point it at the `--help` output or include this in your system prompt:
 
 ```
-The laevitas CLI provides crypto derivatives data. Key commands:
+The laevitas CLI provides REST and WebSocket crypto market data. For REST commands, always use -o json and parse .success before reading .data or .error.
 - laevitas futures snapshot --currency BTC -o json  (all BTC futures)
 - laevitas perps carry <instrument> -o json          (funding/carry)
 - laevitas options flow --currency BTC -o json      (options flow)
 - laevitas options vol-surface snapshot --currency BTC      (vol surface)
+- laevitas spot ohlcvt BTCUSDT -o json              (spot reference price)
+- laevitas instruments list --market-type perpetual -o json (instrument discovery)
+- laevitas ws perpetuals trades binance:BTCUSDT     (NDJSON live stream)
 - laevitas predictions catalog --keyword <term>     (prediction markets)
-Always use -o json for structured output. Use --help on any command for details.
+Use .data for REST result rows. WebSocket events are one JSON object per line.
 ```
 
 ## Authentication
 
 Two paths, configurable via the same `wallet` and `config` commands.
 
-### API key
+### API Key
 
 ```sh
 laevitas config init                       # interactive, picks API key path
@@ -309,7 +430,7 @@ laevitas config set api_key <key>          # non-interactive
 LAEVITAS_API_KEY=<key> laevitas …          # env override
 ```
 
-### x402 wallet (pay-per-request, USDC on Base)
+### x402 Wallet (Pay Per Request, USDC on Base)
 
 Pay per request with an EVM wallet — no signup, no API key. Each request triggers an on-chain payment if no credit token is cached; subsequent requests use the cached token until it expires.
 
@@ -320,9 +441,11 @@ laevitas wallet set-key 0x<hex>            # non-interactive
 laevitas wallet address                    # pipe-friendly address
 laevitas wallet credits                    # pipe-friendly credit count
 
-LAEVITAS_WALLET_KEY=0x<hex> laevitas …     # env override (preferred for agents)
+LAEVITAS_WALLET_KEY=0x<hex> laevitas …     # env override for REST wallet agents
 LAEVITAS_AUTH=x402 laevitas …              # force wallet path even if API key is configured
 ```
+
+WebSocket streaming currently requires API-key authentication. x402 is REST-only until the streaming gateway supports wallet auth.
 
 When both are set, the `auth` config field decides:
 

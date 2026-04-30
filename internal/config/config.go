@@ -20,9 +20,9 @@ const (
 
 // Auth type constants for choosing default authentication method.
 const (
-	AuthTypeAuto   = "auto"   // API key if set, otherwise x402 wallet
+	AuthTypeAuto   = "auto"    // API key if set, otherwise x402 wallet
 	AuthTypeAPIKey = "api-key" // Always use API key
-	AuthTypeX402   = "x402"   // Always use x402 wallet payment
+	AuthTypeX402   = "x402"    // Always use x402 wallet payment
 )
 
 // Config holds all CLI configuration.
@@ -66,6 +66,8 @@ func Load() (*Config, error) {
 	// Read file if it exists
 	path, err := configPath()
 	if err == nil {
+		// #nosec G304 -- path is derived from os.UserHomeDir plus constant
+		// ".config/laevitas/config.json"; no user-controlled path segment.
 		data, readErr := os.ReadFile(path)
 		if readErr == nil {
 			_ = json.Unmarshal(data, cfg)
@@ -105,6 +107,7 @@ func LoadCreditToken() string {
 	if err != nil {
 		return ""
 	}
+	// #nosec G304 -- creditTokenFile is a constant under the fixed config dir.
 	data, err := os.ReadFile(filepath.Join(dir, creditTokenFile))
 	if err != nil {
 		return ""
@@ -143,6 +146,8 @@ func Save(cfg *Config) error {
 		return fmt.Errorf("cannot create config directory: %w", err)
 	}
 
+	// #nosec G117 -- config intentionally persists API/wallet keys locally;
+	// Save writes the file with 0600 permissions below.
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err

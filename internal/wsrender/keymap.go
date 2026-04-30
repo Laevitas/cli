@@ -1,172 +1,101 @@
-// Package wsrender — shared keybinding vocabulary for every TUI surface.
+// Package wsrender — local shims to the shared keymap module.
 //
-// Every interactive view (rolling tape, book scan, book ladder, anything
-// added later) routes through this single source of truth so users and
-// agents only have to learn one keymap. Adding a new binding means
-// editing this file and nothing else; the help overlay, footer hints,
-// and per-model dispatch all read from these constants.
+// Until v0.8.3 this file held the canonical TUI keymap. As the
+// dashboard kernel needed the same vocabulary, the truth moved to
+// internal/keymap so every surface routes through one source. The
+// shims below preserve the old per-surface API (footerHints("tape"))
+// so existing wsrender call sites don't all need editing in the
+// same commit; new code (dashboard panels, future renderers) calls
+// keymap.* directly with explicit Capabilities.
 //
-// Design intent: match k9s + less + vim conventions where they overlap
-// (j/k/g/G + arrows/Home/End + PgUp/PgDn + Enter/Esc + q + ?). The set
-// is deliberately small — every key earns its place by being instantly
-// recognisable to anyone who has used a Unix-style TUI before.
+// Each shim translates a surface name into the Capabilities value
+// the underlying surface really supports, then delegates to the
+// shared module. Adding a new surface here = one switch case;
+// adding a new key globally = one edit in internal/keymap.
 package wsrender
 
 import (
-	"strings"
-
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/laevitas/cli/internal/keymap"
 )
 
-// keyAction is a logical action — what the user is trying to do — keyed
-// off whatever key string they pressed. The dispatcher returns one of
-// these so each model can handle the action without re-implementing the
-// "is q a quit key?" logic.
-type keyAction int
+// keyAction is the local alias for the shared Action enum, kept so
+// older switch statements in book.go / wsrender.go still compile
+// without touching every case label. The underlying type is the
+// same — alias, not a distinct type — so values pass through.
+type keyAction = keymap.Action
 
 const (
-	actNone keyAction = iota
-	actQuit
-	actPause
-	actHelp
-	actEsc
-	actUp
-	actDown
-	actPageUp
-	actPageDown
-	actTop
-	actBottom
-	actEnter
-	actDepthUp
-	actDepthDown
-	actWheelUp
-	actWheelDown
+	actNone         = keymap.ActNone
+	actQuit         = keymap.ActQuit
+	actPause        = keymap.ActPause
+	actHelp         = keymap.ActHelp
+	actEsc          = keymap.ActEsc
+	actUp           = keymap.ActUp
+	actDown         = keymap.ActDown
+	actPageUp       = keymap.ActPageUp
+	actPageDown     = keymap.ActPageDown
+	actTop          = keymap.ActTop
+	actBottom       = keymap.ActBottom
+	actEnter        = keymap.ActEnter
+	// actDepthUp / actDepthDown are kept as aliases to ActGroupUp /
+	// ActGroupDown so the existing rolling-tape book ladder keeps
+	// its current `+/-` behaviour without renaming every call site.
+	// In the new vocabulary `+/-` widens/narrows price grouping —
+	// the legacy ladder treated it as "depth tier," but the keys
+	// dispatch identically and existing user muscle memory carries
+	// over.
+	actDepthUp      = keymap.ActGroupUp
+	actDepthDown    = keymap.ActGroupDown
+	actWheelUp      = keymap.ActWheelUp
+	actWheelDown    = keymap.ActWheelDown
+	actCycleFocus   = keymap.ActCycleFocus
+	actReverseFocus = keymap.ActReverseFocus
+	actJumpPane1    = keymap.ActJumpPane1
+	actJumpPane2    = keymap.ActJumpPane2
+	actJumpPane3    = keymap.ActJumpPane3
 )
 
-// classifyKey maps a Bubble Tea key string to a logical action. Returns
-// actNone when the key isn't part of our vocabulary (callers should
-// ignore it). The same string-to-action table is used by every TUI
-// surface — adding a new binding here propagates everywhere.
-func classifyKey(key string) keyAction {
-	switch key {
-	case "q", "Q", "ctrl+c":
-		return actQuit
-	case "p", "P":
-		return actPause
-	case "?", "h", "H":
-		return actHelp
-	case "esc":
-		return actEsc
-	case "up", "k":
-		return actUp
-	case "down", "j":
-		return actDown
-	case "pgup", "b":
-		return actPageUp
-	case "pgdown", "f":
-		return actPageDown
-	case "home", "g":
-		return actTop
-	case "end", "G":
-		return actBottom
-	case "enter":
-		return actEnter
-	case "+", "=":
-		return actDepthUp
-	case "-", "_":
-		return actDepthDown
-	}
-	return actNone
-}
+func classifyKey(s string) keyAction              { return keymap.ClassifyKey(s) }
+func classifyMouse(b tea.MouseButton) keyAction   { return keymap.ClassifyMouse(b) }
 
-// classifyMouse maps a Bubble Tea mouse button to a logical wheel
-// action, or actNone for click events we deliberately don't capture
-// (preserves the terminal's native click-drag-to-select for copy-paste).
-func classifyMouse(btn tea.MouseButton) keyAction {
-	switch btn {
-	case tea.MouseButtonWheelUp:
-		return actWheelUp
-	case tea.MouseButtonWheelDown:
-		return actWheelDown
-	}
-	return actNone
-}
-
-// ─── footer hint generation ────────────────────────────────────────────────
-
-// footerHints returns the brand-grey one-line hint shown at the bottom of
-// each surface. The set varies by surface but the wording and key order
-// are derived from the same vocabulary so a hint never disagrees with
-// the help overlay.
-//
-// surface is one of: "tape", "scan", "ladder", "ladder-back". The
-// "ladder-back" variant adds `esc back` for ladder views entered via
-// drill-down (so the user knows how to return to scan).
-func footerHints(surface string) string {
+// surfaceCapabilities maps the legacy surface-name strings used by
+// wsrender ("tape", "scan", "ladder", "ladder-back") to the
+// Capabilities the shared module expects. Keeps this file the
+// single place that knows about the legacy names.
+func surfaceCapabilities(surface string) keymap.Capabilities {
 	switch surface {
 	case "scan":
-		return "↑↓/jk select   pgup/pgdn page   g/G top/end   enter ladder   p pause   ? help   q quit"
+		return keymap.Capabilities{
+			ListNav: true, Drill: true,
+			Pause: true, Help: true,
+		}
 	case "ladder":
-		return "+/- depth   p pause   ? help   q quit"
+		// Single-venue ladder uses the unified vocabulary in v0.8.3:
+		// `+/-` is price grouping (Group), `d` cycles depth tier
+		// (DepthCycle), `c` recentres on spread (Recenter), and
+		// j/k/PgUp/PgDn/g/G drive the viewport (ListNav). Same
+		// Capabilities the dashboard book panel declares — both
+		// surfaces share the helpers in internal/ladder, so they
+		// must share the footer/help vocabulary too.
+		return keymap.Capabilities{
+			Group: true, DepthCycle: true, Recenter: true,
+			ListNav: true, Pause: true, Help: true,
+		}
 	case "ladder-back":
-		return "+/- depth   p pause   esc back   ? help   q quit"
+		return keymap.Capabilities{
+			Group: true, DepthCycle: true, Recenter: true,
+			ListNav: true, Back: true, Pause: true, Help: true,
+		}
 	case "tape":
-		return "p pause   ? help   q quit"
+		return keymap.Capabilities{
+			Pause: true, Help: true,
+		}
 	}
-	return "? help   q quit"
+	return keymap.Capabilities{Help: true}
 }
 
-// ─── help overlay binding tables ───────────────────────────────────────────
-
-// keyBinding pairs a display string for the keys with a short
-// description for the help overlay.
-type keyBinding struct {
-	keys, desc string
-}
-
-// commonBindings lists the keys that work on every TUI surface.
-// renderHelpOverlay always shows these first.
-var commonBindings = []keyBinding{
-	{"q  Q  ctrl+c", "quit"},
-	{"p  P", "pause / resume"},
-	{"?  h  H", "toggle this help"},
-	{"esc", "close help / back out"},
-	{"wheel ↑ / ↓", "scroll (lists) or pause (tape)"},
-}
-
-// listBindings adds list-navigation keys, used in scan views.
-var listBindings = []keyBinding{
-	{"↑  k", "select previous"},
-	{"↓  j", "select next"},
-	{"pgup  b", "page up"},
-	{"pgdn  f", "page down"},
-	{"home  g", "jump to top"},
-	{"end   G", "jump to bottom"},
-	{"enter", "drill into selected"},
-}
-
-// ladderBindings adds depth-tier keys, used in book ladder view.
-var ladderBindings = []keyBinding{
-	{"+  =", "deeper tier (10 → 20 → 50)"},
-	{"-  _", "shallower tier"},
-}
-
-// bindingsForSurface returns the help-overlay sections relevant to a
-// given surface, in display order.
-func bindingsForSurface(surface string) []struct {
-	title    string
-	bindings []keyBinding
-} {
-	type section = struct {
-		title    string
-		bindings []keyBinding
-	}
-	out := []section{{title: "Always", bindings: commonBindings}}
-	switch {
-	case strings.Contains(surface, "scan"):
-		out = append(out, section{title: "Navigation", bindings: listBindings})
-	case strings.Contains(surface, "ladder"):
-		out = append(out, section{title: "Ladder", bindings: ladderBindings})
-	}
-	return out
+func footerHints(surface string) string {
+	return keymap.FooterHints(surfaceCapabilities(surface))
 }

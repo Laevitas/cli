@@ -1,4 +1,4 @@
-// Package ws is the `lvt ws` subscribe command — opens a WebSocket
+// Package ws is the `laevitas ws` subscribe command — opens a WebSocket
 // connection to the Laevitas streaming gateway, validates the channel set
 // client-side, and emits NDJSON to stdout (one JSON object per line).
 package ws
@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/laevitas/cli/internal/api"
 	"github.com/laevitas/cli/internal/cmdutil"
 	"github.com/laevitas/cli/internal/config"
 	"github.com/laevitas/cli/internal/output"
@@ -130,31 +131,31 @@ quit, p to pause, ↑↓/jk to navigate, PgUp/PgDn to page, g/G for top/end,
 Output is NDJSON — every event is a single line of {"channel", "data"}.
 Pipe through jq for filtering, or redirect to a file for replay.`,
 	Example: `  # Live BTC perp trades on Binance
-  lvt ws perpetuals trades binance:BTCUSDT
+  laevitas ws perpetuals trades binance:BTCUSDT
 
   # OHLC ticker for two options at once
-  lvt ws options ticker deribit:BTC-30JAN26-100000-C,deribit:BTC-30JAN26-110000-C --tf 5m
+  laevitas ws options ticker deribit:BTC-30JAN26-100000-C,deribit:BTC-30JAN26-110000-C --tf 5m
 
   # Spot trades, append to a file
-  lvt ws spot trades binance:BTCUSDT > btc-spot.ndjson
+  laevitas ws spot trades binance:BTCUSDT > btc-spot.ndjson
 
   # Live forced-close events (liquidations) on the most active perps
-  lvt ws perpetuals liquidations binance:BTCUSDT,bybit:BTCUSDT,okx:BTC-USDT-SWAP
+  laevitas ws perpetuals liquidations binance:BTCUSDT,bybit:BTCUSDT,okx:BTC-USDT-SWAP
 
   # Single-pair order book — opens straight into the centre-price ladder
-  lvt ws book perpetuals binance:BTCUSDT
+  laevitas ws perpetuals book binance:BTCUSDT
 
   # Multi-pair order book scan — list view; press Enter to drill into a ladder
-  lvt ws book perpetuals binance:BTCUSDT,bybit:BTCUSDT,okx:BTC-USDT-SWAP
+  laevitas ws perpetuals book binance:BTCUSDT,bybit:BTCUSDT,okx:BTC-USDT-SWAP
 
   # Wildcard — every BTCUSDT perp book across every supported exchange
-  lvt ws perpetuals book "*:BTCUSDT"
+  laevitas ws perpetuals book "*:BTCUSDT"
 
   # Wildcard — every perpetual liquidation across every exchange
-  lvt ws perpetuals liquidations "*:*"
+  laevitas ws perpetuals liquidations "*:*"
 
   # Polymarket prediction market trades
-  lvt ws predictions trades polymarket:will-bitcoin-reach-250000-by-december-31-2026-YES`,
+  laevitas ws predictions trades polymarket:will-bitcoin-reach-250000-by-december-31-2026-YES`,
 	Args: validateArgs,
 	RunE: run,
 }
@@ -167,14 +168,78 @@ Pipe through jq for filtering, or redirect to a file for replay.`,
 func validateArgs(cmd *cobra.Command, args []string) error {
 	if len(args) > 3 && looksLikeShellGlob(args) {
 		return fmt.Errorf(
-			"the shell expanded `*` into %d files before laevitas saw it. Quote the wildcard:\n  lvt ws \"*\" trades \"*:*\"",
+			"the shell expanded `*` into %d files before laevitas saw it. Quote the wildcard:\n  laevitas ws \"*\" trades \"*:*\"",
 			len(args),
 		)
+	}
+	if hint := wsArgHint(args); hint != "" {
+		return fmt.Errorf("%s", hint)
 	}
 	if err := cobra.ExactArgs(3)(cmd, args); err != nil {
 		return err
 	}
 	return nil
+}
+
+func wsArgHint(args []string) string {
+	// Hints surface the *canonical* market form (perpetuals, futures,
+	// options, …) even when the user typed an alias. Keeps the help
+	// path consistent with what agents should emit and matches what
+	// shows up in --help.
+	if len(args) == 3 && isStream(args[0]) && isMarket(args[1]) {
+		canonical, _ := api.NormalizeMarket(args[1])
+		return fmt.Sprintf(
+			"ws expects: laevitas ws <market> <stream> <exchange:instrument>\nTry: laevitas ws %s %s %s",
+			canonical,
+			args[0],
+			args[2],
+		)
+	}
+	if len(args) == 4 && isStream(args[0]) && isMarket(args[1]) {
+		canonical, _ := api.NormalizeMarket(args[1])
+		return fmt.Sprintf(
+			"ws expects: laevitas ws <market> <stream> <exchange:instrument>\nTry: laevitas ws %s %s %s:%s",
+			canonical,
+			args[0],
+			args[2],
+			args[3],
+		)
+	}
+	if len(args) == 4 && isMarket(args[0]) && isStream(args[1]) {
+		canonical, _ := api.NormalizeMarket(args[0])
+		return fmt.Sprintf(
+			"ws exchange and instrument must be one colon-separated argument.\nTry: laevitas ws %s %s %s:%s",
+			canonical,
+			args[1],
+			args[2],
+			args[3],
+		)
+	}
+	return ""
+}
+
+func isMarket(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "*" {
+		return true
+	}
+	// Accept any alias (perp / perpetual / perpetuals / swap / fut /
+	// futures / opt / options) so the auto-reorder logic in arg
+	// validation does the right thing regardless of which form the
+	// user typed.
+	if _, ok := api.NormalizeMarket(s); ok {
+		return true
+	}
+	return false
+}
+
+func isStream(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "*" {
+		return true
+	}
+	_, ok := validStreams[s]
+	return ok
 }
 
 // looksLikeShellGlob heuristically detects the PowerShell glob-expansion
@@ -249,7 +314,7 @@ func detectGlobExpansion(args []string) error {
 		if _, err := os.Stat(a); err == nil {
 			slot := []string{"market", "stream"}[i]
 			return fmt.Errorf(
-				"%s argument %q looks like a file, not a wildcard. The shell may have expanded `*` — quote it:\n  lvt ws \"*\" trades \"*:*\"",
+				"%s argument %q looks like a file, not a wildcard. The shell may have expanded `*` — quote it:\n  laevitas ws \"*\" trades \"*:*\"",
 				slot, a,
 			)
 		}
@@ -276,20 +341,28 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	market := strings.ToLower(strings.TrimSpace(args[0]))
+	rawMarket := strings.TrimSpace(args[0])
 	streamName := strings.ToLower(strings.TrimSpace(args[1]))
 	pairs := strings.Split(args[2], ",")
 
-	// Validate the market. `*` is a NATS-style wildcard accepted on the
-	// streaming gateway (API v1.23.0+); skip the concrete-market lookup
-	// and let the server resolve the pattern. Concrete market names still
-	// go through the whitelist.
+	// Normalise the market token via api.NormalizeMarket so users
+	// can type any common alias (perp, perpetual, perpetuals, swap,
+	// fut, futures, opt, options, etc.) and we always end up with
+	// the canonical plural form internally. `*` is a gateway-side
+	// wildcard and skips normalisation — it stays as "*".
+	var market string
 	var allowedExchanges []string
-	if market != "*" {
-		var ok bool
+	if rawMarket == "*" {
+		market = "*"
+	} else {
+		canonical, ok := api.NormalizeMarket(rawMarket)
+		if !ok {
+			return fmt.Errorf("unknown market %q. Valid: %s, or * for any market", rawMarket, strings.Join(sortedKeys(marketExchanges), ", "))
+		}
+		market = canonical
 		allowedExchanges, ok = marketExchanges[market]
 		if !ok {
-			return fmt.Errorf("unknown market %q. Valid: %s, or * for any market", market, strings.Join(sortedKeys(marketExchanges), ", "))
+			return fmt.Errorf("market %q is recognised but no streams are wired for it yet", market)
 		}
 	}
 
@@ -378,7 +451,7 @@ func run(cmd *cobra.Command, args []string) error {
 		// Doesn't apply when either side is a wildcard.
 		if market == "futures" && exchange != "*" && instrument != "*" && looksLikePerp(instrument) {
 			deprecationNudges = append(deprecationNudges,
-				fmt.Sprintf("%s:%s looks like a perpetual; the legacy futures alias will be removed next minor — use `lvt ws perpetuals %s %s:%s`", exchange, instrument, streamName, exchange, instrument))
+				fmt.Sprintf("%s:%s looks like a perpetual; the legacy futures alias will be removed next minor — use `laevitas ws perpetuals %s %s:%s`", exchange, instrument, streamName, exchange, instrument))
 		}
 
 		ch := buildChannel(streamPrefix, market, exchange, instrument, tf, usesTimeframe)

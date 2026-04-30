@@ -80,7 +80,7 @@ var carryCmd = &cobra.Command{
 	Args:    cobra.ExactArgs(1),
 	Example: `  laevitas perps carry BTC-PERPETUAL -p 24h
   laevitas perps carry BTCUSDT --exchange binance -p 7d -r 1d
-  laevitas perps carry ETH-PERPETUAL -p 1h -o json | jq '.[].funding_rate_close'`,
+  laevitas perps carry ETH-PERPETUAL -p 1h -o json | jq '.data[].funding_rate_close'`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := carryFlags.ToParams()
@@ -202,9 +202,23 @@ var orderbookFlags cmdutil.CommonFlags
 var orderbookCmd = &cobra.Command{
 	Use:   "orderbook <instrument>",
 	Short: "L2 orderbook depth metrics",
-	Args:  cobra.ExactArgs(1),
-	Example: `  laevitas perps orderbook BTC-PERPETUAL -p 24h
-  laevitas perps orderbook BTCUSDT --exchange binance -p 7d -r 1h`,
+	Long: `Historical L2 orderbook depth metrics.
+
+This REST endpoint returns a wide metrics payload: bid/ask liquidity,
+imbalance, and microprice across several depth tiers. Table output shows a
+compact latest-close view. Use -o json or -o csv for the full payload.
+
+For an interactive live order book ladder, use:
+  laevitas ws perpetuals book <exchange>:<instrument>`,
+	Args: cmdutil.SingleInstrumentArg,
+	Example: `  # Historical metrics table (compact)
+  laevitas perps orderbook BTCUSDT --exchange binance -p 1h -r 1m
+
+  # Full metrics payload for agents/scripts
+  laevitas perps orderbook BTCUSDT --exchange binance -p 1h -r 1m -o json
+
+  # Live book ladder TUI / NDJSON stream
+  laevitas ws perpetuals book binance:BTCUSDT`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := orderbookFlags.ToParams()

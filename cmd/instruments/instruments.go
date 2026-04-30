@@ -1,6 +1,9 @@
 package instruments
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/spf13/cobra"
 
 	"github.com/laevitas/cli/internal/api"
@@ -41,7 +44,7 @@ var listCmd = &cobra.Command{
 	Example: `  laevitas instruments list --market-type spot --exchange binance
   laevitas instruments list --market-type option --base-currency BTC --expiry-from 2026-06-01T00:00:00Z
   laevitas instruments list --status all --name BTC -n 50`,
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		client, _ := cmdutil.MustClient()
 		params := listFlags.CommonFlags.ToParams()
 		// Cross-product registry — no time-series, drop the time-window defaults.
@@ -55,7 +58,37 @@ var listCmd = &cobra.Command{
 		if cmdutil.ExchangeExplicit {
 			params.Exchange = cmdutil.Exchange
 		}
-		params.MarketType = listFlags.MarketType
+
+		// Normalise market-type input via api.NormalizeMarket so the
+		// user can type any common alias (perp / perpetual /
+		// perpetuals / swap / fut / future / futures / opt / option /
+		// options / spot / predictions). Internal canonical form is
+		// the plural; the REST API filter wants the singular, so
+		// translate via api.MarketRESTToken on the way out.
+		if listFlags.MarketType != "" {
+			canonical, ok := api.NormalizeMarket(listFlags.MarketType)
+			if !ok {
+				return fmt.Errorf(
+					"unknown --market-type %q. Valid: %s (aliases like perp/swap/fut/opt also work)",
+					listFlags.MarketType, strings.Join(api.CanonicalMarkets(), ", "),
+				)
+			}
+			params.MarketType = api.MarketRESTToken(canonical)
+		}
+
+		// Same normalisation for margin-type. Accepts linear/lin/usdt
+		// (linear) and inverse/inv/coin (inverse).
+		if listFlags.MarginType != "" {
+			canonical, ok := api.NormalizeMargin(listFlags.MarginType)
+			if !ok {
+				return fmt.Errorf(
+					"unknown --margin-type %q. Valid: %s (aliases like usdt/usdc/coin also work)",
+					listFlags.MarginType, strings.Join(api.CanonicalMargins(), ", "),
+				)
+			}
+			params.MarginType = canonical
+		}
+
 		// The instruments registry uses ?base_currency, not ?currency. Wire the
 		// flag through the dedicated BaseCurrency field so we don't accidentally
 		// send ?currency=BTC (which the registry silently ignores, returning
@@ -63,7 +96,6 @@ var listCmd = &cobra.Command{
 		params.BaseCurrency = listFlags.BaseCurrency
 		params.QuoteCurrency = listFlags.QuoteCurrency
 		params.Status = listFlags.Status
-		params.MarginType = listFlags.MarginType
 		params.OptionType = listFlags.OptionType
 		params.ExpiryFrom = listFlags.ExpiryFrom
 		params.ExpiryTo = listFlags.ExpiryTo
@@ -71,6 +103,7 @@ var listCmd = &cobra.Command{
 			params.InstrumentName = listFlags.Name
 		}
 		cmdutil.RunAndPrint(client, api.InstrumentsList, params)
+		return nil
 	},
 }
 
@@ -96,12 +129,16 @@ var detailCmd = &cobra.Command{
 
 func init() {
 	cmdutil.AddCommonFlags(listCmd, &listFlags.CommonFlags)
-	listCmd.Flags().StringVar(&listFlags.MarketType, "market-type", "", "Filter: spot, perpetual, future, option")
+	listCmd.Flags().StringVar(&listFlags.MarketType, "market-type", "", "Filter: perpetuals, futures, options, spot, predictions (aliases: perp/swap/fut/opt/poly all accepted)")
 	listCmd.Flags().StringVar(&listFlags.BaseCurrency, "base-currency", "", "Filter by base currency (BTC, ETH, SOL)")
 	listCmd.Flags().StringVar(&listFlags.QuoteCurrency, "quote-currency", "", "Filter by quote currency (USD, USDT, USDC)")
 	listCmd.Flags().StringVar(&listFlags.Status, "status", "", "Filter: active (default), expired, delisted, suspended, all")
 	listCmd.Flags().StringVar(&listFlags.Name, "name", "", "Partial match on instrument name (case-insensitive)")
-	listCmd.Flags().StringVar(&listFlags.MarginType, "margin-type", "", "Filter: linear or inverse")
+	listCmd.Flags().StringVar(&listFlags.MarginType, "margin-type", "", "Filter: linear or inverse (aliases: usdt/usdc/coin all accepted)")
+	// --margin is the short alias for --margin-type. Same backing
+	// variable; whichever the user types wins. Documented in README
+	// "Market type aliases" section.
+	listCmd.Flags().StringVar(&listFlags.MarginType, "margin", "", "Alias for --margin-type")
 	listCmd.Flags().StringVar(&listFlags.OptionType, "option-type", "", "Filter: call or put")
 	listCmd.Flags().StringVar(&listFlags.ExpiryFrom, "expiry-from", "", "Min expiry datetime (ISO 8601)")
 	listCmd.Flags().StringVar(&listFlags.ExpiryTo, "expiry-to", "", "Max expiry datetime (ISO 8601)")
