@@ -439,6 +439,16 @@ func ApplySnapshotDefaults(params *api.RequestParams) {
 // output.AddBookFilterFlags. When inactive (no flags set) the call
 // is a true zero-cost passthrough — no decode/re-encode round-trip.
 func RunAndPrintFiltered(client *api.Client, endpoint string, params *api.RequestParams, filters output.BookFilterFlags) {
+	// Reject obviously-invalid flag combinations before any HTTP work.
+	// Same validation as the WS path so agents see consistent errors
+	// regardless of transport.
+	if err := filters.Validate(); err != nil {
+		output.Errorf("%s", err.Error())
+		if !InteractiveMode {
+			os.Exit(1)
+		}
+		return
+	}
 	// On the snapshot shape (orderbook-raw / ws book), --depth
 	// trims asks/bids per element via ApplyBookFilter. On the
 	// stats shape (orderbook), --depth picks which tier columns

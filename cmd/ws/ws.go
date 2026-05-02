@@ -357,6 +357,26 @@ func run(cmd *cobra.Command, args []string) error {
 	streamName := strings.ToLower(strings.TrimSpace(args[1]))
 	pairs := strings.Split(args[2], ",")
 
+	// Single-pair convenience: if the user typed a bare instrument and
+	// passed --exchange (a global flag REST/dash already accept),
+	// synthesize the exchange:instrument colon form so WS matches the
+	// rest of the CLI. Only kicks in when every pair is bare — mixing
+	// bare and colon forms keeps the original error so users notice the
+	// inconsistency. Multi-pair fan-out still requires explicit colons
+	// because --exchange is one value, not a per-pair list.
+	if cmd.Flags().Changed("exchange") && cmdutil.Exchange != "" {
+		anyColon := false
+		for _, p := range pairs {
+			if strings.Contains(p, ":") {
+				anyColon = true
+				break
+			}
+		}
+		if !anyColon && len(pairs) == 1 {
+			pairs[0] = cmdutil.Exchange + ":" + strings.TrimSpace(pairs[0])
+		}
+	}
+
 	// Normalise the market token via api.NormalizeMarket so users
 	// can type any common alias (perp, perpetual, perpetuals, swap,
 	// fut, futures, opt, options, etc.) and we always end up with
@@ -387,6 +407,13 @@ func run(cmd *cobra.Command, args []string) error {
 	streamPrefix, ok := validStreams[streamName]
 	if !ok {
 		return fmt.Errorf("unknown stream %q. Valid: trades, ticker, vt, liquidations, book", streamName)
+	}
+
+	// Reject obviously-invalid book-filter values early. Same validation
+	// as the REST path (RunAndPrintFiltered) so agents see consistent
+	// errors regardless of transport.
+	if err := flags.BookFilter.Validate(); err != nil {
+		return err
 	}
 
 	// Some streams only apply to a subset of markets (e.g. liquidations is

@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.8.5] — 2026-05-02
+
+Reliability + parity follow-up to v0.8.4 — addresses agent feedback on
+order-book commands, fixes CSV book serialisation, makes the WebSocket
+client resilient to flaky first-attempt subscribes.
+
+### Added
+
+- **WS `--exchange` synthesis for single-pair subscribes**. WebSocket
+  positional argument required `<exchange>:<instrument>` (because
+  multi-pair fan-out is comma-separated colon pairs), but REST and
+  `dash` accept a global `--exchange` flag. Single-pair `ws book` now
+  honours `--exchange` and synthesises the colon form, so the same
+  invocation pattern works across REST/dash/WS for the common case.
+  Multi-pair subscribes still require explicit colons.
+- **`--depth` validation** on every order-book surface. Negative values
+  are rejected with a clear error before any HTTP/WS work happens; same
+  validation runs on REST (`RunAndPrintFiltered`) and WS (`RunE`) so
+  agents see consistent errors regardless of transport.
+
+### Changed
+
+- **wsclient subscribe is now self-healing**. Per-channel retry budget
+  (3 attempts, 2s spacing) on top of the canonical bundled subscribe
+  RPC. The success reply's `channels[]` echo is consulted to detect
+  partial bundle acks — channels we asked for but the gateway dropped
+  silently are re-armed for retry instead of leaving the session
+  half-subscribed. Retry budgets reset on every reconnect.
+  Addresses the "flaky first-attempt subscribe" symptom where a brief
+  server-side validation race would silently kill data flow for the
+  whole session.
+- **`--depth` / `--compact` help text covers both shapes**. Earlier
+  text was snapshot-only ("trim asks/bids to top-N levels"), which
+  read as a no-op on stats orderbook commands. Help now explains both
+  surface semantics in one description.
+
+### Fixed
+
+- **CSV asks/bids no longer dump as Go map literals**.
+  `formatValue()` JSON-encodes slices and maps instead of falling back
+  to `fmt.Sprintf("%v")`. CSV consumers can now parse the cells:
+  `[{"price":78390.5,"size":140120},...]` rather than
+  `[map[price:78390.5 size:140120] ...]`.
+- **`laevitas watch` now resolves `perps orderbook-raw` and
+  `futures orderbook-raw`**. The watch endpoint map missed both new
+  commands at v0.8.4 release time; both are wired now.
+- **REPL tab completion exposes `orderbook-raw`** under `perps` and
+  `futures` (not just `spot`). Adding the command to the completer
+  command tree was missed at v0.8.4 release time.
+
 ## [0.8.4] — 2026-05-02
 
 REST/WS feature parity for order books, agent-friendly NDJSON trimming,
