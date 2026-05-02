@@ -95,13 +95,18 @@ func (p *Printer) Print(data interface{}) error {
 }
 
 func (p *Printer) printJSON(data interface{}) error {
-	// If it's already raw bytes, try to pretty-print
+	// If it's already raw bytes, indent in-place rather than round-tripping
+	// through interface{} — that path goes via map[string]interface{} and
+	// Go's encoder marshals maps in alphabetical key order, which destroys
+	// the canonical envelope shape (`{"success":true,"data":...,"meta":...}`
+	// becomes `{"data":...,"meta":...,"success":...}`). json.Indent
+	// preserves byte-level key order from the wrapped payload.
 	if raw, ok := data.([]byte); ok {
-		var buf interface{}
-		if err := json.Unmarshal(raw, &buf); err == nil {
-			enc := json.NewEncoder(p.Writer)
-			enc.SetIndent("", "  ")
-			return enc.Encode(buf)
+		var buf bytes.Buffer
+		if err := json.Indent(&buf, raw, "", "  "); err == nil {
+			buf.WriteByte('\n')
+			_, err := p.Writer.Write(buf.Bytes())
+			return err
 		}
 		_, err := p.Writer.Write(raw)
 		return err
@@ -551,7 +556,7 @@ func padOrTruncate(s string, width int, rightAlign bool) string {
 func toRows(data interface{}) [][]string {
 	// Handle raw JSON bytes by unmarshaling first
 	if raw, ok := data.([]byte); ok {
-		preferredKeys := extractFirstObjectKeyOrder(raw)
+		preferredKeys := ExtractFirstObjectKeyOrder(raw)
 		var parsed interface{}
 		if err := json.Unmarshal(raw, &parsed); err != nil {
 			return nil
@@ -602,11 +607,15 @@ func toRowsWithKeyOrder(data interface{}, preferredKeys []string) [][]string {
 	}
 }
 
-// extractFirstObjectKeyOrder walks raw JSON to recover the key order of the
+// ExtractFirstObjectKeyOrder walks raw JSON to recover the key order of the
 // first record. Handles both bare arrays and {"data": [...]} envelopes.
 // Returns nil if the JSON doesn't fit either shape — callers fall back to
 // first-occurrence ordering.
-func extractFirstObjectKeyOrder(raw []byte) []string {
+//
+// Exported so watch mode (cmd/watch.go) shares the same column-order logic
+// as the main printer; otherwise watch's hand-rolled JSON parser produces
+// random column order on every tick (Go's map iteration is unspecified).
+func ExtractFirstObjectKeyOrder(raw []byte) []string {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 

@@ -2,6 +2,7 @@ package cmdutil
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/briandowns/spinner"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/laevitas/cli/internal/api"
 	"github.com/laevitas/cli/internal/config"
@@ -242,7 +244,26 @@ func MustClient() (*api.Client, *config.Config) {
 //  2. x402 wallet — paste an EVM private key; pays per-request in USDC on Base.
 //
 // Returns true if either path succeeded.
+//
+// Non-TTY callers (agents piping commands, CI, scripts) skip the interactive
+// menu and get a single agent-friendly error pointing at the explicit setup
+// paths — env var, config command, or config init in a real terminal. Without
+// this guard the prompt's bufio.NewReader hits EOF on the first read and the
+// agent sees a confusing "Reading input: EOF" with no clue how to recover.
 func promptOnboarding(cfg *config.Config) bool {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		output.Errorf("No API key configured.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "  Set one of the following before re-running:")
+		fmt.Fprintln(os.Stderr, "    1. env var:    export LAEVITAS_API_KEY=<key>")
+		fmt.Fprintln(os.Stderr, "    2. config:     laevitas config set api_key <key>")
+		fmt.Fprintln(os.Stderr, "    3. interactive setup (in a TTY): laevitas config init")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "  Get an API key at https://app.laevitas.ch/settings/api")
+		fmt.Fprintln(os.Stderr, "  Or use x402 pay-per-request: laevitas wallet init")
+		return false
+	}
+
 	bold := output.Bold
 	green := output.BrandGreen
 	grey := output.BrandGreyMid
@@ -704,7 +725,12 @@ func formatBytes(b int) string {
 // (nil, false) and the caller falls back to printing the raw bytes — the
 // envelope is best-effort, never a hard requirement.
 func wrapSuccessEnvelope(data []byte, reqMeta *api.RequestMeta) ([]byte, bool) {
-	out := map[string]interface{}{"success": true}
+	// Build the envelope in canonical order — `success` first, then `data`,
+	// then `meta`. Go's encoding/json marshals maps in alphabetical key order,
+	// so we can't use a map for the top level; assemble the JSON bytes
+	// directly so agents can rely on the documented key order.
+	var dataBytes json.RawMessage
+	var metaBytes []byte
 
 	// Try envelope-shaped first: {"data": ..., "meta": ..., "count": ...}
 	var env struct {
@@ -713,23 +739,31 @@ func wrapSuccessEnvelope(data []byte, reqMeta *api.RequestMeta) ([]byte, bool) {
 		Count *int            `json:"count,omitempty"`
 	}
 	if err := json.Unmarshal(data, &env); err == nil && len(env.Data) > 0 {
-		out["data"] = env.Data
-		meta := buildMeta(env.Meta, env.Count, reqMeta)
-		if meta != nil {
-			out["meta"] = meta
+		dataBytes = env.Data
+		if meta := buildMeta(env.Meta, env.Count, reqMeta); meta != nil {
+			if mb, err := json.Marshal(meta); err == nil {
+				metaBytes = mb
+			}
 		}
-		b, err := json.Marshal(out)
-		return b, err == nil
+	} else {
+		// Fall back: bare array or any other JSON value.
+		dataBytes = data
+		if meta := buildMeta(nil, nil, reqMeta); meta != nil {
+			if mb, err := json.Marshal(meta); err == nil {
+				metaBytes = mb
+			}
+		}
 	}
 
-	// Fall back: bare array or any other JSON value.
-	var bare json.RawMessage = data
-	out["data"] = bare
-	if meta := buildMeta(nil, nil, reqMeta); meta != nil {
-		out["meta"] = meta
+	var b bytes.Buffer
+	b.WriteString(`{"success":true,"data":`)
+	b.Write(dataBytes)
+	if len(metaBytes) > 0 {
+		b.WriteString(`,"meta":`)
+		b.Write(metaBytes)
 	}
-	b, err := json.Marshal(out)
-	return b, err == nil
+	b.WriteByte('}')
+	return b.Bytes(), true
 }
 
 // buildMeta normalises the meta block. Merges three sources:

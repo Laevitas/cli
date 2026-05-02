@@ -20,6 +20,8 @@ metadata that complements the per-product catalog commands.`,
   laevitas instruments list --exchange deribit --market-type option --expiry-from 2026-01-01T00:00:00Z
   laevitas instruments detail BTC-PERPETUAL --exchange deribit
   laevitas instruments list --status all --base-currency ETH -o json`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error { return cmd.Help() },
 }
 
 // ─── list ───────────────────────────────────────────────────────────────────

@@ -33,6 +33,8 @@ Examples:
   laevitas predictions categories
   laevitas predictions snapshot --category crypto
   laevitas predictions ohlcvt will-bitcoin-reach-250000-YES -r 1d`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error { return cmd.Help() },
 }
 
 var catalogFlags struct {

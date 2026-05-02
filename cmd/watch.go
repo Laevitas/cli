@@ -586,6 +586,14 @@ func watchPrintStatusBar(elapsed, remaining time.Duration) {
 // ─── Watch helper functions ──────────────────────────────────────────────────
 
 // watchParseJSON parses raw API JSON into a 2D string grid (header + data).
+//
+// Column order is recovered from the original JSON byte stream via
+// output.ExtractFirstObjectKeyOrder — the same helper the main table printer
+// uses. Without this, headers would be built by ranging over Go maps, whose
+// iteration order is randomised, so every watch tick would re-order the
+// columns. Falls back to first-appearance order if the JSON shape isn't
+// what the extractor expects (defensive — should never trigger in practice
+// since watch always feeds canonical envelopes from the API).
 func watchParseJSON(data []byte) [][]string {
 	if data == nil {
 		return nil
@@ -609,14 +617,33 @@ func watchParseJSON(data []byte) [][]string {
 		return nil
 	}
 
-	// Collect headers in order of first appearance
-	var headers []string
-	headerSet := map[string]bool{}
-	for _, rec := range records {
-		for k := range rec {
-			if !headerSet[k] {
-				headerSet[k] = true
-				headers = append(headers, k)
+	headers := output.ExtractFirstObjectKeyOrder(data)
+	if len(headers) == 0 {
+		// Fallback: first-appearance order from Go maps (non-deterministic
+		// per tick, but better than dropping the table entirely).
+		headerSet := map[string]bool{}
+		for _, rec := range records {
+			for k := range rec {
+				if !headerSet[k] {
+					headerSet[k] = true
+					headers = append(headers, k)
+				}
+			}
+		}
+	} else {
+		// Extractor returns the keys of the first record. If later records
+		// have additional keys (rare but possible — e.g. optional fields),
+		// append them so the column count covers the full data set.
+		known := make(map[string]bool, len(headers))
+		for _, h := range headers {
+			known[h] = true
+		}
+		for _, rec := range records {
+			for k := range rec {
+				if !known[k] {
+					known[k] = true
+					headers = append(headers, k)
+				}
 			}
 		}
 	}

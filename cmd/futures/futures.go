@@ -20,6 +20,8 @@ Examples:
   laevitas futures ohlcvt {{FUT}} -p 3d -r 1h
   laevitas futures carry {{FUT}} -p 7d
   laevitas futures oi {{FUT}} -r 1d -n 30`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error { return cmd.Help() },
 }
 
 // ─── catalog ────────────────────────────────────────────────────────────────
@@ -321,6 +323,7 @@ var refPriceCmd = &cobra.Command{
 		client, _ := cmdutil.MustClient()
 		params := refPriceFlags.ToParams()
 		params.InstrumentName = args[0]
+		params.Exchange = cmdutil.Exchange
 		cmdutil.RunAndPrint(client, api.FuturesReferencePrice, params)
 	},
 }

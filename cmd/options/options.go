@@ -20,6 +20,8 @@ Examples:
   laevitas options volatility {{OPT_C}} -p 24h
   laevitas options ohlcvt {{OPT_C}} -p 3d -r 1h
   laevitas options vol-surface snapshot --currency BTC`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error { return cmd.Help() },
 }
 
 var catalogFlags struct {
@@ -304,6 +306,7 @@ var refPriceCmd = &cobra.Command{
 		client, _ := cmdutil.MustClient()
 		params := refPriceFlags.ToParams()
 		params.InstrumentName = args[0]
+		params.Exchange = cmdutil.Exchange
 		cmdutil.RunAndPrint(client, api.OptionsReferencePrice, params)
 	},
 }
@@ -336,6 +339,8 @@ Examples:
   laevitas options vol-surface snapshot --currency BTC
   laevitas options vol-surface term-structure --currency BTC
   laevitas options vol-surface history --currency BTC --maturity {{MAT}} -r 1h`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error { return cmd.Help() },
 }
 
 var vsSnapshotFlags struct {
