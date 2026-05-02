@@ -74,11 +74,11 @@ laevitas ws perpetuals book "*:BTCUSDT"
 
 | Command | Description |
 |---------|-------------|
-| `futures` | Dated futures — catalog, snapshot, OHLCVT, OI, carry, trades, volume, L1/L2, ticker |
-| `perps` | Perpetual swaps — catalog, snapshot, OHLCVT, OI, **carry**, trades, volume, L1/L2, ticker |
+| `futures` | Dated futures — catalog, snapshot, OHLCVT, OI, carry, trades, volume, L1/L2, **orderbook-raw**, ticker |
+| `perps` | Perpetual swaps — catalog, snapshot, OHLCVT, OI, **carry**, trades, volume, L1/L2, **orderbook-raw**, ticker |
 | `options` | Options — catalog, snapshot, OHLCVT, OI, **flow**, **trades**, **volatility**, L1, ticker, **vol-surface** |
-| `spot` | Spot markets — catalog, snapshot, OHLCVT, ticker, volume, L1/L2 orderbook, trades |
-| `predictions` | Prediction markets — catalog, categories, snapshot, OHLCVT, trades, ticker, orderbook |
+| `spot` | Spot markets — catalog, snapshot, OHLCVT, ticker, volume, L1/L2, **orderbook-raw**, trades |
+| `predictions` | Prediction markets — catalog, categories, snapshot, OHLCVT, trades, ticker, **orderbook** (raw L2) |
 | `instruments` | Cross-product instrument registry — `list` + `detail` across all exchanges |
 | `analytics` | Computed cross-asset analytics — realized volatility |
 | `ws` | Live WebSocket streams — trades, OHLC ticker, OHLC vt, liquidations, **L2 book**, with `*` wildcards |

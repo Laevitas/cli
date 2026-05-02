@@ -12,6 +12,7 @@ package dash
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -85,12 +86,27 @@ var demoCmd = &cobra.Command{
 			Selection:  dashboard.Selection{},
 		})
 
+		// Refuse cleanly on non-TTY so agents see an actionable
+		// message instead of tea's `/dev/tty` device error.
+		if !output.IsTTY() {
+			return fmt.Errorf(
+				"dash is TTY-only and can't run when stdout is piped or redirected.\n" +
+					"For scripts/agents, use `laevitas ws ...` (NDJSON).",
+			)
+		}
+
 		prog := tea.NewProgram(
 			root,
 			tea.WithAltScreen(),
 			tea.WithMouseCellMotion(),
 		)
 		if _, err := prog.Run(); err != nil {
+			if strings.Contains(err.Error(), "/dev/tty") || strings.Contains(err.Error(), "no such device") {
+				return fmt.Errorf(
+					"dash is TTY-only and can't open a terminal in this environment.\n" +
+						"For scripts/agents, use `laevitas ws ...` (NDJSON).",
+				)
+			}
 			return fmt.Errorf("dashboard: %w", err)
 		}
 		return nil

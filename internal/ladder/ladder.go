@@ -13,7 +13,7 @@
 //
 // This package owns:
 //   - Group-tick cycling (`+/-` widens / narrows price buckets)
-//   - Depth-tier cycling (`d` rotates 10 → 20 → 50)
+//   - Depth-tier cycling (`d` rotates 10 → 20 → 50 → 100)
 //   - Bucketing levels into price-grouped rows
 //   - Viewport state + scroll/page/recenter ops
 //   - Row-cap math (terminal-height → max visible rows per side)
@@ -105,29 +105,43 @@ func GroupLabel(g float64) string {
 
 // ─── depth-tier cycle ──────────────────────────────────────────────────────
 
-// NextDepthTier rotates 10 → 20 → 50 → 10. Capped at 50 because
-// the wire payload only exposes pre-computed liquidity stats at
-// 10/20/50/100 — and 100 is too dense for most UIs.
+// NextDepthTier rotates 10 → 20 → 50 → 100 → 10. The wire payload
+// exposes pre-computed liquidity stats at exactly these four tiers
+// (ask_liquidity_10/20/50/100, bid_liquidity_*, imbalance_*), so
+// the cycle matches what's available without re-deriving anything
+// client-side.
+//
+// 100 is included as of v0.8.4 — earlier the cycle stopped at 50
+// on the (correct) reasoning that 100 rows × 2 sides won't fit in
+// a typical terminal. Now that the renderer enforces a hard chrome
+// budget (RowCap + View()'s body clip in wsrender), 100 just shows
+// the per-side data window deeper than the visible viewport — the
+// user scrolls (j/k, PgUp/PgDn) to reach the bottom rows. Same UX
+// as 50, just more data behind the scroll.
 func NextDepthTier(d int) int {
 	switch d {
 	case 10:
 		return 20
 	case 20:
 		return 50
+	case 50:
+		return 100
 	default:
 		return 10
 	}
 }
 
-// PrevDepthTier rotates the cycle backwards.
+// PrevDepthTier rotates the cycle backwards: 100 → 50 → 20 → 10 → 100.
 func PrevDepthTier(d int) int {
 	switch d {
+	case 100:
+		return 50
 	case 50:
 		return 20
 	case 20:
 		return 10
 	default:
-		return 50
+		return 100
 	}
 }
 
@@ -346,13 +360,20 @@ func (v *Viewport) Apply(asks, bids []agg.AggregatedLevel, rowCap int) (visAsks,
 // separator, footer, breathing). Renderers call this so the row
 // budget calculation is consistent across surfaces.
 func RowCap(termHeight int) int {
-	const chrome = 5 // header + strip + separator + footer + blank
+	// Real chrome budget for the legacy ws ladder + dashboard book
+	// ladder: HeaderLine (1) + StatsLine (1) + blank (1) + table
+	// header row (1) + spread separator inside the ladder (1) +
+	// footer hint (1) + blank breathing (1) + safety (1) = 8.
+	// Earlier versions used 5, which under-counted by 3 — at deep
+	// depth tiers the rendered ladder pushed the StatsLine and
+	// HeaderLine off the top of the alt-screen.
+	const chrome = 8
 	cap := (termHeight - chrome) / 2
 	if cap < 4 {
 		cap = 4
 	}
 	if cap > 60 {
-		cap = 60 // safety cap
+		cap = 60 // safety cap on absurdly tall windows
 	}
 	return cap
 }

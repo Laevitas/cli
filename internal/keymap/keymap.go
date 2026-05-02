@@ -60,7 +60,7 @@ const (
 	ActGroupDown
 
 	// Stats-depth cycle — `d` rotates through pre-computed wire
-	// tiers (10 → 20 → 50). Affects which liquidity/imbalance
+	// tiers (10 → 20 → 50 → 100). Affects which liquidity/imbalance
 	// numbers the strip + CONSOLIDATED block read from each
 	// venue's snapshot; does NOT change the rendered ladder row
 	// count.
@@ -183,7 +183,7 @@ func ClassifyMouse(btn tea.MouseButton) Action {
 //   - Group: surface respects +/− to widen/narrow price grouping.
 //     Used by the book ladder to bucket adjacent ticks.
 //   - DepthCycle: surface respects `d` to cycle book stats depth
-//     (10 → 20 → 50). Affects strip/CONSOLIDATED math; doesn't
+//     (10 → 20 → 50 → 100). Affects strip/CONSOLIDATED math; doesn't
 //     change the rendered ladder row count.
 //   - VenueToggle: surface respects `v` to hide/show specific
 //     venues. Used by the book ladder + strip.
@@ -204,7 +204,7 @@ type Capabilities struct {
 	// label.
 	Group bool
 
-	// DepthTier — `+/-` cycles the stats depth tier (10/20/50).
+	// DepthTier — `+/-` cycles the stats depth tier (10 / 20 / 50 / 100).
 	// Used by the legacy single-venue ladder where price grouping
 	// is marginal value (the wire payload caps at 100 levels) but
 	// tier-cycling has been shipped behaviour since v0.8.0. Footer
@@ -376,12 +376,12 @@ var groupBindings = []Binding{
 // labelled "Depth tier" and showing the right semantic. The keys
 // are the same as Group's; the description differs.
 var depthTierBindings = []Binding{
-	{"+  =", "deeper stats tier (10 → 20 → 50)"},
+	{"+  =", "deeper stats tier (10 → 20 → 50 → 100)"},
 	{"-  _", "shallower stats tier"},
 }
 
 var depthBindings = []Binding{
-	{"d", "cycle stats depth (10 → 20 → 50)"},
+	{"d", "cycle stats depth (10 → 20 → 50 → 100)"},
 }
 
 var venueBindings = []Binding{

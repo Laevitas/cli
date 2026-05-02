@@ -13,6 +13,7 @@ import (
 	"github.com/laevitas/cli/internal/dashboard"
 	"github.com/laevitas/cli/internal/dashboard/panels"
 	"github.com/laevitas/cli/internal/instruments"
+	"github.com/laevitas/cli/internal/output"
 )
 
 // bookFlags holds optional currency-resolution flags for `dash book`.
@@ -65,7 +66,7 @@ var bookCmd = &cobra.Command{
 		"Options is not supported (no L2 data on the streaming gateway).\n\n" +
 		"Keys:\n" +
 		"  +/-                 cycle price grouping\n" +
-		"  d                   cycle depth tier (10 → 20 → 50)\n" +
+		"  d                   cycle depth tier (10 → 20 → 50 → 100)\n" +
 		"  c                   recenter on spread\n" +
 		"  v                   venue toggle picker\n" +
 		"  p                   pause\n" +
@@ -232,12 +233,33 @@ func runBook(cmd *cobra.Command, args []string) error {
 		GatewayURL: "",
 	})
 
+	// Refuse cleanly on non-TTY before tea even tries to grab one.
+	// Without this gate, tea.NewProgram surfaces the underlying
+	// "open /dev/tty: no such device or address" — accurate but
+	// not actionable for an agent piping stdout. Agents should be
+	// reaching for `laevitas ws ...` instead, so we say so.
+	if !output.IsTTY() {
+		return fmt.Errorf(
+			"dash is TTY-only and can't run when stdout is piped or redirected.\n" +
+				"For scripts/agents, use `laevitas ws <market> book <exchange:instrument>` (NDJSON).",
+		)
+	}
+
 	prog := tea.NewProgram(
 		root,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
 	if _, err := prog.Run(); err != nil {
+		// Translate tea's terse /dev/tty error into something a
+		// human or agent can act on. Other errors (program panic,
+		// init failure) keep the original message.
+		if strings.Contains(err.Error(), "/dev/tty") || strings.Contains(err.Error(), "no such device") {
+			return fmt.Errorf(
+				"dash is TTY-only and can't open a terminal in this environment.\n" +
+					"For scripts/agents, use `laevitas ws <market> book <exchange:instrument>` (NDJSON).",
+			)
+		}
 		return fmt.Errorf("dashboard: %w", err)
 	}
 	return nil

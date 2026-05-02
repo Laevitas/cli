@@ -5,6 +5,7 @@ import (
 
 	"github.com/laevitas/cli/internal/api"
 	"github.com/laevitas/cli/internal/cmdutil"
+	"github.com/laevitas/cli/internal/output"
 )
 
 // predictionsExchange returns the exchange to use for prediction-market
@@ -142,7 +143,10 @@ var tickerCmd = &cobra.Command{
 	},
 }
 
-var orderbookFlags cmdutil.CommonFlags
+var orderbookFlags struct {
+	cmdutil.CommonFlags
+	output.BookFilterFlags
+}
 
 var orderbookCmd = &cobra.Command{
 	Use:   "orderbook <instrument>",
@@ -150,10 +154,11 @@ var orderbookCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
-		params := orderbookFlags.ToParams()
+		params := orderbookFlags.CommonFlags.ToParams()
 		params.Exchange = predictionsExchange()
 		params.InstrumentName = args[0]
-		cmdutil.RunAndPrint(client, api.PredictionsOrderbookRaw, params)
+		cmdutil.ApplySnapshotDefaults(params)
+		cmdutil.RunAndPrintFiltered(client, api.PredictionsOrderbookRaw, params, orderbookFlags.BookFilterFlags)
 	},
 }
 
@@ -187,7 +192,8 @@ func init() {
 	cmdutil.AddCommonFlags(ohlcvtCmd, &ohlcvtFlags)
 	cmdutil.AddCommonFlags(tradesCmd, &tradesFlags)
 	cmdutil.AddCommonFlags(tickerCmd, &tickerFlags)
-	cmdutil.AddCommonFlags(orderbookCmd, &orderbookFlags)
+	cmdutil.AddCommonFlags(orderbookCmd, &orderbookFlags.CommonFlags)
+	output.AddBookFilterFlags(orderbookCmd, &orderbookFlags.BookFilterFlags)
 
 	Cmd.AddCommand(catalogCmd)
 	Cmd.AddCommand(categoriesCmd)

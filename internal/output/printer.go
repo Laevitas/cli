@@ -60,6 +60,15 @@ type Printer struct {
 	// TotalCount is the total number of records available (from API metadata).
 	// Set by the caller before Print() to enable the footer.
 	TotalCount int
+
+	// StatsTier picks which depth-tier columns the compact
+	// orderbook (stats) table surfaces. Set by the caller from
+	// the --depth flag on `perps/futures/spot orderbook`. Zero or
+	// any non-allowed value falls back to tier 10. Snapshot
+	// shape (orderbook-raw / ws book) ignores this — that path
+	// applies --depth via output.ApplyBookFilter on the JSON
+	// payload before the printer runs.
+	StatsTier int
 }
 
 // NewPrinter creates a printer for the given format string.
@@ -140,8 +149,20 @@ var (
 )
 
 func (p *Printer) printTable(data interface{}) error {
+	// Snapshot book payloads (orderbook-raw, predictions orderbook,
+	// ws book-via-watch) carry asks/bids arrays that can't be
+	// shoehorned into a tabular column without dumping the raw Go
+	// map literal. Detect that shape and render an inline centre-
+	// price ladder instead — same data, readable in 30 lines.
+	if raw, ok := data.([]byte); ok {
+		if rendered, ok := p.renderBookSnapshotTable(raw); ok {
+			fmt.Fprint(p.Writer, rendered)
+			return nil
+		}
+	}
+
 	rows := toRows(data)
-	rows = compactOrderbookRows(rows)
+	rows = p.compactOrderbookRows(rows)
 	if len(rows) == 0 {
 		fmt.Fprintln(p.Writer, "No data.")
 		return nil
@@ -820,11 +841,17 @@ func mapToRows(v reflect.Value) [][]string {
 
 // compactOrderbookRows makes historical orderbook metric tables readable.
 // The REST orderbook endpoint returns the full metric payload: OHLC/avg for
-// bid/ask liquidity, imbalance, and microprice across several depth tiers.
-// That is valuable in JSON/CSV, but it creates a 60+ column table. For table
-// output, show the most useful "latest close at 10 levels" view and leave the
-// full payload available via `-o json` or `-o csv`.
-func compactOrderbookRows(rows [][]string) [][]string {
+// bid/ask liquidity, imbalance, and microprice across four depth tiers
+// (10/20/50/100). That's valuable in JSON/CSV but creates a 60+ column
+// table. For table output, show one tier's close-of-bar view and leave
+// the full payload available via `-o json` or `-o csv`.
+//
+// Tier selected via the printer's StatsTier (set from --depth on the
+// stats commands; defaults to 10). Compact mode is the table's only
+// behaviour today — `--compact` on the stats shape is a no-op for
+// table output (it'd already be compact) but still drops the OHLC
+// fan-out fields when JSON output is filtered, see ApplyStatsFilter.
+func (p *Printer) compactOrderbookRows(rows [][]string) [][]string {
 	if len(rows) < 2 {
 		return rows
 	}
@@ -834,13 +861,23 @@ func compactOrderbookRows(rows [][]string) [][]string {
 	for i, h := range headers {
 		index[h] = i
 	}
-	if _, ok := index["bid_liq_10_close"]; !ok {
+
+	// Resolve tier — caller's StatsTier overrides; fall back to 10.
+	tier := p.StatsTier
+	if !IsAllowedDepthTier(tier) {
+		tier = 10
+	}
+	bidKey := fmt.Sprintf("bid_liq_%d_close", tier)
+	askKey := fmt.Sprintf("ask_liq_%d_close", tier)
+	imbKey := fmt.Sprintf("imbalance_%d_close", tier)
+
+	if _, ok := index[bidKey]; !ok {
 		return rows
 	}
-	if _, ok := index["ask_liq_10_close"]; !ok {
+	if _, ok := index[askKey]; !ok {
 		return rows
 	}
-	if _, ok := index["imbalance_10_close"]; !ok {
+	if _, ok := index[imbKey]; !ok {
 		return rows
 	}
 
@@ -850,9 +887,9 @@ func compactOrderbookRows(rows [][]string) [][]string {
 		"exchange",
 		"instrument_name",
 		"currency",
-		"bid_liq_10_close",
-		"ask_liq_10_close",
-		"imbalance_10_close",
+		bidKey,
+		askKey,
+		imbKey,
 		"microprice_close",
 		"snapshot_count",
 	}

@@ -395,12 +395,79 @@ func Ftoa(f float64) string {
 // Errors in JSON mode go to stdout (so agents can parse them); errors in table
 // or csv mode go to stderr free-text. Exit code is non-zero for any error.
 func RunAndPrint(client *api.Client, endpoint string, params *api.RequestParams) {
+	runAndPrintWith(client, endpoint, params, nil, output.BookFilterFlags{})
+}
+
+// DefaultSnapshotLimit is the limit used by orderbook-raw / book-
+// snapshot commands when the user didn't pass `-n`. A bare
+// `perps orderbook-raw BTCUSDT` almost always means "give me the
+// current book", not "the last 100 historical snapshots" — and
+// printing 100 snapshots in table mode is unreadable. Keep this
+// adjustable from one place so REST and WS surfaces stay aligned.
+const DefaultSnapshotLimit = 1
+
+// ApplySnapshotDefaults sets sensible defaults for one-shot
+// snapshot commands (orderbook-raw and friends): when the caller
+// didn't specify --limit and isn't paginating with --cursor, default
+// to the most recent record. Mutates params in place. Used by every
+// orderbook-raw RunE so the default is set in one place and stays
+// consistent across product groups.
+//
+// We deliberately don't check Start/End: ToParams() auto-populates
+// them with a default 7-day window, so they're never zero by the
+// time we get here. The user signals "give me a range" by passing
+// --start, --end, --period, or -n explicitly — and a non-zero
+// --limit OR a non-empty --cursor are the only states where we
+// should respect the historical-walk intent.
+func ApplySnapshotDefaults(params *api.RequestParams) {
+	if params == nil {
+		return
+	}
+	if params.Limit == 0 && params.Cursor == "" {
+		params.Limit = DefaultSnapshotLimit
+	}
+}
+
+// RunAndPrintFiltered is RunAndPrint with a transform applied to
+// every element of the response's `.data` array before formatting.
+// Used by commands that surface the L2 book snapshot shape to apply
+// `--depth` / `--compact` consistently — the same helper is called
+// from the WS emit path, so REST and WS produce identically-trimmed
+// payloads. See output.BookFilterFlags / output.ApplyBookFilter.
+//
+// `filters` is the BookFilterFlags struct registered via
+// output.AddBookFilterFlags. When inactive (no flags set) the call
+// is a true zero-cost passthrough — no decode/re-encode round-trip.
+func RunAndPrintFiltered(client *api.Client, endpoint string, params *api.RequestParams, filters output.BookFilterFlags) {
+	// On the snapshot shape (orderbook-raw / ws book), --depth
+	// trims asks/bids per element via ApplyBookFilter. On the
+	// stats shape (orderbook), --depth picks which tier columns
+	// the table surfaces — same flag, semantics adapted to the
+	// shape. Both go through the same filter struct so the flag
+	// registration via output.AddBookFilterFlags stays uniform.
+	var transform func(json.RawMessage) json.RawMessage
+	if filters.Active() {
+		transform = func(elem json.RawMessage) json.RawMessage {
+			return output.ApplyBookFilter(elem, filters)
+		}
+	}
+	runAndPrintWith(client, endpoint, params, transform, filters)
+}
+
+// runAndPrintWith is the shared body for RunAndPrint and
+// RunAndPrintFiltered. The optional `transform` is applied to every
+// element of `.data` (when present) before the response is handed
+// to the printer. nil = passthrough. `filters` propagates to the
+// printer so the stats-shape table can pick its tier columns from
+// --depth (snapshot shape consumes filters via the transform).
+func runAndPrintWith(client *api.Client, endpoint string, params *api.RequestParams, transform func(json.RawMessage) json.RawMessage, filters output.BookFilterFlags) {
 	// Warn if instrument is specified but exchange is missing
 	if params != nil && params.InstrumentName != "" && params.Exchange == "" {
 		output.Warnf("No --exchange specified. Add --exchange <name> (e.g. --exchange deribit, --exchange binance) for accurate results.")
 	}
 
 	p := MustPrinter()
+	p.StatsTier = filters.Depth
 
 	// Start spinner in interactive mode
 	if InteractiveMode && SpinnerInstance != nil {
@@ -420,6 +487,18 @@ func RunAndPrint(client *api.Client, endpoint string, params *api.RequestParams)
 			os.Exit(1)
 		}
 		return
+	}
+
+	// Apply per-element transform when supplied (e.g. book-filter
+	// trim from RunAndPrintFiltered). Operates on the raw bytes so
+	// counting / charting / printing all see the post-transform
+	// payload — keeps ChartableEndpoint, table footer counts, and
+	// JSON envelope wrapping consistent. Errors degrade to
+	// passthrough; we never block emit on a transform glitch.
+	if transform != nil {
+		if filtered, ok := applyDataTransform(data, transform); ok {
+			data = filtered
+		}
 	}
 
 	// Extract record counts from API response metadata
@@ -772,4 +851,66 @@ func reverseRaw(s []json.RawMessage) {
 	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
 		s[i], s[j] = s[j], s[i]
 	}
+}
+
+// applyDataTransform walks the response envelope, applies a per-
+// element transform to every entry of `.data`, and re-marshals the
+// result. Used to wire book-filter trimming through RunAndPrint
+// without bloating its body. Two response shapes accepted:
+//
+//   - `{"success": true, "data": [...], "meta": {...}}` — wrapped
+//     envelope (typical REST response). Transform applied to
+//     each element of `data`.
+//   - bare array `[...]` — some legacy endpoints / test stubs.
+//     Transform applied to each element.
+//
+// Returns (transformed bytes, true) on success, (input, false) if
+// either shape can't be decoded — caller falls back to the
+// untransformed payload. We never block emit on a transform glitch
+// because the worst-case fallback (full payload) is always usable.
+func applyDataTransform(data []byte, transform func(json.RawMessage) json.RawMessage) ([]byte, bool) {
+	// Try wrapped-envelope shape first. Decode into a map so any
+	// fields we don't know about (e.g. server adds a new top-level
+	// key) survive the round-trip untouched.
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal(data, &env); err == nil {
+		raw, ok := env["data"]
+		if !ok {
+			return data, false
+		}
+		var arr []json.RawMessage
+		if err := json.Unmarshal(raw, &arr); err != nil {
+			// data isn't an array (e.g. instruments/detail returns an
+			// object). Apply transform to the object itself.
+			env["data"] = transform(raw)
+		} else {
+			for i := range arr {
+				arr[i] = transform(arr[i])
+			}
+			out, err := json.Marshal(arr)
+			if err != nil {
+				return data, false
+			}
+			env["data"] = out
+		}
+		out, err := json.Marshal(env)
+		if err != nil {
+			return data, false
+		}
+		return out, true
+	}
+
+	// Bare-array shape — rare but documented in legacy responses.
+	var arr []json.RawMessage
+	if err := json.Unmarshal(data, &arr); err != nil {
+		return data, false
+	}
+	for i := range arr {
+		arr[i] = transform(arr[i])
+	}
+	out, err := json.Marshal(arr)
+	if err != nil {
+		return data, false
+	}
+	return out, true
 }

@@ -540,7 +540,7 @@ func (m bookModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case keymap.ActDepthCycle:
-			// `d` cycles stats depth tier 10 → 20 → 50.
+			// `d` cycles stats depth tier 10 → 20 → 50 → 100.
 			if m.mode == viewLadder {
 				m.depthTier = ladder.NextDepthTier(m.depthTier)
 			}
@@ -613,7 +613,39 @@ func (m bookModel) View() string {
 	}
 
 	footer := m.renderFooter(lastErr)
+
+	// Hard clip: total output must fit `m.height` lines so the alt-
+	// screen never scrolls the HeaderLine + StatsLine off the top.
+	// Chrome budget here: footer (1) + breathing (1) = 2 lines
+	// reserved at the bottom; the body gets the rest. RowCap uses
+	// the same accounting; this is the belt-and-braces clamp in
+	// case a renderer drifts a row past its row-cap budget. Without
+	// this, deep depth tiers used to push the header off-screen.
+	if m.height > 4 {
+		body = clipBodyLines(body, m.height-2)
+	}
 	return body + "\n" + footer
+}
+
+// clipBodyLines truncates s to at most `max` newline-separated
+// lines, preserving line breaks. Used by View() to enforce the
+// terminal-height budget on the body so the footer (and the top of
+// the body — header + stats line) always stay on screen. ANSI
+// escapes pass through untouched; we only count `\n`.
+func clipBodyLines(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	count := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			count++
+			if count >= max {
+				return s[:i]
+			}
+		}
+	}
+	return s
 }
 
 // ─── scan view ──────────────────────────────────────────────────────────────

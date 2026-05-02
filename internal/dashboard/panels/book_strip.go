@@ -226,17 +226,24 @@ func (p *BookPanel) renderConsolidatedLine(w int, books map[string]*api.BookSnap
 
 // staleAfter is the wait window past first-feed-arrived after which
 // a missing venue is annotated as "stale" in the footer. Below this
-// threshold the wait is silent — most slow venues fire within a few
-// seconds, and warning earlier would produce false alarms.
+// threshold the wait is silent — most healthy venues fire their
+// first snapshot within ~1-2 seconds of the connection going up.
 //
 // dropAfter is the harder threshold past which a venue is removed
-// from the footer entirely. Past 30 seconds with proven feed health
-// (we've received from at least one other venue), the missing one
-// almost certainly isn't coming on this run — gateway/registry
-// coverage gap, not a transient slow start.
+// from the footer entirely. With proven feed health (≥1 other venue
+// received), a venue that hasn't arrived this far in is almost
+// certainly suffering a registry/gateway coverage gap, not a transient
+// slow start.
+//
+// Tuning history:
+//   - v0.8.3: 5s/30s. Agent feedback (Ahab) reported 30s felt too
+//     patient — venues with no working WS feed kept showing "stale"
+//     across a typical agent's observation window. Tightened to 3s/15s
+//     in v0.8.4 so the drop fires within the expected interaction
+//     budget without false-positive on genuinely-slow venues.
 const (
-	staleAfter = 5 * time.Second
-	dropAfter  = 30 * time.Second
+	staleAfter = 3 * time.Second
+	dropAfter  = 15 * time.Second
 )
 
 // missingCuratedVenues returns venues we expect snapshots from but
