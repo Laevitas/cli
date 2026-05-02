@@ -701,6 +701,16 @@ func watchFmtValue(v interface{}) string {
 		return fmt.Sprintf("%g", val)
 	case nil:
 		return ""
+	case []interface{}, map[string]interface{}:
+		// Same fix as output.formatValue — slices and maps in book
+		// payloads (asks/bids arrays) need JSON encoding so the cell
+		// is parseable rather than the unreadable Go map literal
+		// `[map[price:78390 size:140120] …]`.
+		b, err := json.Marshal(val)
+		if err != nil {
+			return fmt.Sprintf("%v", val)
+		}
+		return string(b)
 	default:
 		return fmt.Sprintf("%v", val)
 	}

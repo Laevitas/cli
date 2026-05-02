@@ -377,6 +377,28 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Bare-instrument hint: if any pair still lacks a colon at this point
+	// (synthesis didn't apply because --exchange wasn't set, or the user
+	// passed multi-pair without colons), surface a "Try: …" line so the
+	// fix is obvious. Mirrors the wsArgHint style used when args are
+	// out of order. We use the canonical market for the hint so the
+	// suggested command also normalises any alias the user typed.
+	for _, p := range pairs {
+		if !strings.Contains(p, ":") {
+			canonical := rawMarket
+			if rawMarket != "*" {
+				if c, ok := api.NormalizeMarket(rawMarket); ok {
+					canonical = c
+				}
+			}
+			suggested := fmt.Sprintf("<exchange>:%s", strings.TrimSpace(p))
+			return fmt.Errorf(
+				"expected exchange:instrument, got %q\nTry: laevitas ws %s %s %s",
+				p, canonical, streamName, suggested,
+			)
+		}
+	}
+
 	// Normalise the market token via api.NormalizeMarket so users
 	// can type any common alias (perp, perpetual, perpetuals, swap,
 	// fut, futures, opt, options, etc.) and we always end up with
