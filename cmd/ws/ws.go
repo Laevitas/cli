@@ -79,6 +79,13 @@ var flags struct {
 	// summary grid; "ladder" forces the depth ladder (only valid with one
 	// channel). Ignored for non-book streams.
 	Layout string
+
+	// BookFilter holds --depth / --compact for the book stream.
+	// Same flag bundle every REST orderbook-raw command uses, via
+	// output.AddBookFilterFlags — so an agent that learned the flags
+	// on `spot orderbook-raw` finds them here too with identical
+	// semantics. Ignored for non-book streams.
+	BookFilter output.BookFilterFlags
 }
 
 // Cmd is the top-level `ws` command.
@@ -325,6 +332,11 @@ func detectGlobExpansion(args []string) error {
 func init() {
 	Cmd.Flags().StringVar(&flags.Timeframe, "tf", "1m", "Timeframe for ticker / vt streams (1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d)")
 	Cmd.Flags().StringVar(&flags.Layout, "layout", "auto", "Book view layout: auto (default), scan (multi-pair grid), or ladder (centre-price depth ladder, single pair only)")
+	// --depth / --compact registered via the shared bundle so the
+	// flag names, defaults, and help strings stay byte-identical
+	// with the REST orderbook-raw commands (perps, futures, spot,
+	// predictions). Same data shape, same flag dialect.
+	output.AddBookFilterFlags(Cmd, &flags.BookFilter)
 }
 
 // run is the cobra entry point. Validates everything client-side, builds the
@@ -463,7 +475,15 @@ func run(cmd *cobra.Command, args []string) error {
 	// will cut us with close code 4003 if we can't drain fast enough.
 	// Print the heads-up on stderr before dialing — non-blocking, just
 	// makes the "why am I getting 4003?" question answer itself.
-	if firehoseWarning := looksFirehose(channels); firehoseWarning != "" && output.IsTTY() {
+	//
+	// Warning fires regardless of whether stdout is a TTY: agents
+	// pipe stdout to jq/files, but stderr is usually still attached to
+	// the terminal, and the warning is exactly the kind of signal an
+	// agent's parent process needs to log. Earlier versions gated this
+	// on output.IsTTY() (stdout-TTY check) which silently dropped the
+	// warning for the most common agent invocation pattern — the case
+	// it was most likely to matter for. v0.8.4 drops the gate.
+	if firehoseWarning := looksFirehose(channels); firehoseWarning != "" {
 		fmt.Fprintf(os.Stderr, "%s⚠ %s%s\n", output.Yellow, firehoseWarning, output.Reset)
 	}
 
@@ -596,6 +616,15 @@ func runNDJSON(ctx context.Context, cli *wsclient.Client) error {
 
 	enc := json.NewEncoder(os.Stdout)
 	for ev := range cli.Events() {
+		// Book events optionally pass through the shared book-filter
+		// helper (output.ApplyBookFilter), which applies --depth /
+		// --compact before emit. Non-book events and book events
+		// without flags pass through verbatim. Same trim function
+		// the REST orderbook-raw commands call, so REST and WS
+		// produce identically-shaped payloads under the same flags.
+		if flags.BookFilter.Active() && strings.HasPrefix(ev.Channel, "book.") {
+			ev.Data = output.ApplyBookFilter(ev.Data, flags.BookFilter)
+		}
 		if err := enc.Encode(ev); err != nil {
 			return fmt.Errorf("writing event to stdout: %w", err)
 		}

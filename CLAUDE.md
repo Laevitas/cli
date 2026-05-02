@@ -211,6 +211,54 @@ Same pattern for **margin types**:
 
 **Never invent a fourth token form.** If you find yourself reaching for a new shorthand (e.g. `perp-linear` as a single CLI value), stop and add it to the alias table or use existing flags.
 
+## REST / WS feature parity
+
+**Rule**: any flag added to one transport for a given data shape lands on every other transport surfacing the same shape, with byte-identical flag names, defaults, and semantics. Agents shouldn't have to learn two flag dialects — REST and WS speak the same language for the same data.
+
+**The book-snapshot shape** (asks/bids arrays + tier liquidity stats + microprice) is surfaced by:
+
+| Surface | Endpoint / channel |
+|---|---|
+| `laevitas perps orderbook-raw <instrument>` | `/api/v1/perpetuals/orderbook-raw` |
+| `laevitas futures orderbook-raw <instrument>` | `/api/v1/futures/orderbook-raw` |
+| `laevitas spot orderbook-raw <instrument>` | `/api/v1/spot/l2-orderbook-raw` |
+| `laevitas predictions orderbook <instrument>` | `/api/v1/predictions/orderbook-raw` |
+| `laevitas ws <market> book <pair>` | `book.{market}.{exchange}.{instrument}` |
+
+All five wire `output.AddBookFilterFlags` (`--depth`, `--compact`) and route through `output.ApplyBookFilter` (REST) or the WS emit path's call to the same helper. **The same flag value produces the same shape on the wire regardless of transport.**
+
+**The orderbook-stats shape** (time-series of liquidity metrics: `bid_liq_10/20/50/100_open/close/high/low/avg`, no asks/bids array) is surfaced by:
+
+| Surface | Endpoint |
+|---|---|
+| `laevitas perps orderbook <instrument>` | `/api/v1/perpetuals/orderbook` |
+| `laevitas futures orderbook <instrument>` | `/api/v1/futures/orderbook` |
+| `laevitas spot orderbook <instrument>` | `/api/v1/spot/l2-orderbook` |
+
+`--depth N` on these picks which tier's columns surface in the compact table view (10/20/50/100 — the four tiers the API computes). `--compact` is reserved for future "drop OHLC fan-out, keep close" semantics — same flag bundle so the registration stays uniform.
+
+**Defaults that adapt to audience, not transport**:
+
+| Output mode | Audience | `--depth` default |
+|---|---|---|
+| `-o table` (TTY, human) | human | top-20 each side (display cap; full data still on wire) |
+| `-o json` | agent | full wire payload (typically 100 each side) |
+| `-o csv` | agent | full wire payload |
+| WS NDJSON to stdout | agent | full wire payload |
+
+The display cap is purely a render-time concern in `internal/output/book_table.go`; the wire payload is never silently trimmed for agents. An agent piping `... -o json` always gets what's on the wire.
+
+**Where the shared helpers live**:
+
+- `internal/output/book_filter.go` — `BookFilterFlags`, `AddBookFilterFlags`, `ApplyBookFilter`, `IsAllowedDepthTier`. Single registration point.
+- `internal/cmdutil/cmdutil.go` — `RunAndPrintFiltered` threads the filter through every REST command. Mirrors the WS emit path's call to `ApplyBookFilter`, so REST and WS produce identical post-filter payloads.
+- `internal/output/book_table.go` — inline ladder renderer for the human-facing table. Reads `Printer.StatsTier` to decide whether to apply the display-time cap.
+- `internal/ladder/ladder.go` — `NextDepthTier` / `PrevDepthTier` cycle for the TUI keybindings (10 → 20 → 50 → 100). Same tier set the API exposes; same set `--depth N` accepts on the stats shape.
+
+**Adding a new flag for an existing shape**: add it to the appropriate flag bundle in `internal/output`, wire it into `ApplyBookFilter` (snapshot) or the printer's table renderer (stats). Every command using that shape picks it up automatically. Don't add the flag to one surface only — that's how parity drifts.
+
+**Adding a new shape**: build a new flag bundle in `internal/output` (e.g. `OptionsFilterFlags` if a future options-snapshot endpoint emerges) and a new `RunAndPrintWith…Filter` variant in `cmdutil` if needed. Don't extend `BookFilterFlags` to mean different things on different shapes.
+
 ## Dependencies
 
 | Dependency | Purpose |

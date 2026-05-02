@@ -139,7 +139,7 @@ type BookPanel struct {
 	// falls back to the curated palette.
 	expectedVenues map[string]struct{}
 
-	// depthTier is the STATS tier (10/20/50). Drives which
+	// depthTier is the STATS tier (10 / 20 / 50 / 100). Drives which
 	// pre-computed liquidity / imbalance numbers the strip and
 	// CONSOLIDATED block read from each venue's snapshot. Cycled
 	// by `d` via keymap.ActDepthCycle. Independent of viewport
@@ -275,7 +275,7 @@ func (p *BookPanel) Title() string {
 //                  itself in its Update).
 //   - Group:       +/- widen / narrow price grouping (bucket
 //                  adjacent ticks).
-//   - DepthCycle:  d cycles stats depth (10 → 20 → 50). Affects
+//   - DepthCycle:  d cycles stats depth (10 → 20 → 50 → 100). Affects
 //                  strip / CONSOLIDATED math; doesn't change
 //                  rendered row count.
 //   - VenueToggle: v opens an inline picker to hide / show venues.
@@ -318,7 +318,7 @@ func (p *BookPanel) Update(msg tea.Msg) (dashboard.Panel, tea.Cmd) {
 		// Three orthogonal control surfaces:
 		//   ListNav (↑↓/jk/PgUp/PgDn/g/G) → viewport scroll
 		//   Group   (+/-)                 → price bucket size
-		//   Depth   (d)                   → stats tier (10/20/50)
+		//   Depth   (d)                   → stats tier (10 / 20 / 50 / 100)
 		//   Venue   (v)                   → toggle venue picker
 		//   Pause   (p)                   → freeze book replacement
 		//
@@ -807,7 +807,7 @@ func (p *BookPanel) renderNarrow(w, h int, books map[string]*api.BookSnapshot, v
 //                              PRICE | size | bar       (bids, best→worst)
 //
 // Important contract:
-//   * p.depthTier is the STATS depth (10/20/50). It tells the strip
+//   * p.depthTier is the STATS depth (10 / 20 / 50 / 100). It tells the strip
 //     and consolidated block which pre-computed liquidity sums to
 //     read off the wire. It does NOT control how many rows render —
 //     that's derived from terminal height so the ladder always fits

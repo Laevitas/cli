@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.8.4] — 2026-05-02
+
+REST/WS feature parity for order books, agent-friendly NDJSON trimming,
+new `orderbook-raw` commands for perps and futures, dashboard quality-of-
+life fixes from external agent feedback.
+
+### Added
+
+- **`laevitas perps orderbook-raw <instrument>`** and **`laevitas futures orderbook-raw <instrument>`** —
+  REST snapshot commands matching the existing `spot orderbook-raw` and
+  `predictions orderbook`. Closes the parity gap with `laevitas ws <market> book`,
+  which already streamed the same shape. Both default to `-n 1` (current
+  state) so a one-shot call returns one snapshot, not 100 historical rows.
+- **`--depth N` / `--compact` flags** registered via the shared
+  `output.AddBookFilterFlags` bundle on every order-book surface. Same
+  flag names, same semantics adapted to the data shape:
+  - **Snapshot shape** (`*-raw`, ws book): `--depth N` trims asks/bids
+    to top-N levels; `--compact` drops tier-aggregate fields
+    (`ask_liquidity_*`, `bid_liquidity_*`, `imbalance_*`), preserving
+    asks/bids/microprice/metadata.
+  - **Stats shape** (`<group> orderbook`): `--depth N` selects which
+    tier's columns surface in the compact table view (10/20/50/100 —
+    matching the four tiers the API computes).
+
+  Same wire payload regardless of transport — REST and WS both call
+  `output.ApplyBookFilter` on the same `BookFilterFlags` struct.
+
+- **Inline ladder table renderer** (`internal/output/book_table.go`).
+  Snapshot payloads (asks/bids arrays + microprice) now render as a
+  centre-price ladder with cumulative-liquidity columns and a spread
+  separator, matching the `dash book` and `ws book` ladders. Earlier
+  versions dumped the raw Go map literal into the table — unreadable.
+  Human-facing default caps at top-20 levels each side; agents using
+  `-o json`/`-o csv` always get the full wire payload.
+- **Tier 100 in the depth-tier cycle** (`d` key in TUI surfaces). The
+  API exposes pre-computed liquidity stats at 10/20/50/100; the cycle
+  now visits all four. Earlier it stopped at 50 because rendering 100
+  rows was unbounded — now bounded by the row-cap chrome budget.
+
+### Changed
+
+- **Stale-venue annotation thresholds tightened** to 3s/15s (was 5s/30s).
+  Agent feedback indicated the 30-second drop felt too patient for
+  typical interaction windows. Stale annotation appears at 3s past
+  feed-health proof; the venue is dropped from the "waiting on" footer
+  at 15s.
+- **WS `orderbook-raw` payloads pass through identical post-filter**.
+  Both REST and WS now share the trim function, so an agent piping
+  either transport with `--depth 5 --compact` sees the same shape.
+- **Default snapshot table view caps at top-20 each side** for human
+  readability. JSON / CSV / WS NDJSON paths are unaffected — agents
+  always get the full wire payload unless `--depth` is passed
+  explicitly. The cap is purely a render-time concern.
+
+### Fixed
+
+- **Firehose warning fires regardless of TTY.** Previously gated on
+  stdout being a TTY, which silently dropped the warning for the most
+  common agent invocation pattern (stdout piped to jq / file). Now
+  the warning always goes to stderr.
+- **Non-TTY dashboard error message is friendlier.** `laevitas dash book`
+  on a piped stdout no longer surfaces tea's terse `/dev/tty` device
+  error; instead points the user at `laevitas ws ...` for scripting.
+- **WS book ladder header no longer scrolls off the alt-screen.**
+  `ladder.RowCap` chrome budget tightened from 5 to 8 lines (the
+  earlier value undercounted by 3); `wsrender.View()` adds a hard
+  body clip so even if a renderer drifts past its row budget, the
+  HeaderLine + StatsLine stay frozen at the top.
+- **`--depth` on stats commands now picks the correct tier**. The
+  table previously hardcoded tier-10 columns regardless of flag,
+  silently hiding the deeper tiers (20/50/100) the API returned.
+
+### Documented
+
+- **REST/WS feature parity principle** (CLAUDE.md, docs/SKILL.md).
+  Any flag added to one transport for a given data shape lands on
+  every other transport surfacing the same shape, with byte-identical
+  flag names, defaults, and semantics. Output-mode defaults adapt to
+  audience (humans → top-20 cap; agents → full wire) but never to
+  transport.
+- **Snapshot-vs-stats distinction** spelled out for agents: which
+  command answers which question, what `--depth` means in each shape,
+  default `-n` behaviour.
+
+### Deferred
+
+- v0.8.5: per-channel retroactive subscribe in `internal/wsclient` so
+  flaky first-subscribe self-heals without a dashboard restart.
+- v0.9.0: heatmap mode (Bookmap-style price × time × size grid) and
+  `dash flow` dashboard.
+- Upstream x402 SDK vulnerability (`GO-2026-4647`) — no patched version
+  available yet; no exposure on the API-key auth path. Track upstream
+  for fix and bump when published.
+
 ## [0.8.3] — 2026-04-30
 
 Multi-venue aggregated book dashboard, currency-driven contract resolution,

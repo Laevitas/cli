@@ -5,6 +5,7 @@ import (
 
 	"github.com/laevitas/cli/internal/api"
 	"github.com/laevitas/cli/internal/cmdutil"
+	"github.com/laevitas/cli/internal/output"
 )
 
 // spotExchange returns the exchange to use for spot endpoints.
@@ -201,6 +202,7 @@ var level1Cmd = &cobra.Command{
 
 var orderbookFlags struct {
 	cmdutil.CommonFlags
+	output.BookFilterFlags
 	QuoteCurrency string
 }
 
@@ -208,16 +210,32 @@ var orderbookCmd = &cobra.Command{
 	Use:     "orderbook <instrument>",
 	Aliases: []string{"l2-orderbook"},
 	Short:   "Aggregated L2 orderbook depth (10/20/50/100 levels)",
-	Args:    cobra.ExactArgs(1),
-	Example: `  laevitas spot orderbook BTCUSDT -p 24h
-  laevitas spot orderbook ETHUSDT -p 7d -r 1h`,
+	Long: `Historical L2 orderbook depth metrics.
+
+This REST endpoint returns a wide metrics payload: bid/ask liquidity,
+imbalance, and microprice across four depth tiers (10/20/50/100). Table
+output shows a compact latest-close view at one tier; use --depth N to
+pick which tier the table surfaces. Use -o json or -o csv for the full
+payload (all tiers, all OHLC fields).
+
+For a current snapshot of the actual asks/bids, use:
+  laevitas spot orderbook-raw <instrument>`,
+	Args: cobra.ExactArgs(1),
+	Example: `  # Historical metrics table (compact, default tier 10)
+  laevitas spot orderbook BTCUSDT -p 24h
+
+  # Pick a deeper tier for the table view
+  laevitas spot orderbook BTCUSDT -p 24h --depth 100
+
+  # Full metrics payload for agents/scripts (all tiers)
+  laevitas spot orderbook BTCUSDT -p 7d -r 1h -o json`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := orderbookFlags.CommonFlags.ToParams()
 		params.InstrumentName = args[0]
 		params.Exchange = spotExchange()
 		params.QuoteCurrency = orderbookFlags.QuoteCurrency
-		cmdutil.RunAndPrint(client, api.SpotL2Orderbook, params)
+		cmdutil.RunAndPrintFiltered(client, api.SpotL2Orderbook, params, orderbookFlags.BookFilterFlags)
 	},
 }
 
@@ -225,6 +243,7 @@ var orderbookCmd = &cobra.Command{
 
 var orderbookRawFlags struct {
 	cmdutil.CommonFlags
+	output.BookFilterFlags
 	QuoteCurrency string
 }
 
@@ -243,7 +262,8 @@ var orderbookRawCmd = &cobra.Command{
 		params.QuoteCurrency = orderbookRawFlags.QuoteCurrency
 		// raw orderbook has no resolution param
 		params.Resolution = ""
-		cmdutil.RunAndPrint(client, api.SpotL2OrderbookRaw, params)
+		cmdutil.ApplySnapshotDefaults(params)
+		cmdutil.RunAndPrintFiltered(client, api.SpotL2OrderbookRaw, params, orderbookRawFlags.BookFilterFlags)
 	},
 }
 
@@ -308,10 +328,12 @@ func init() {
 	level1Cmd.Flags().StringVar(&level1Flags.QuoteCurrency, "quote-currency", "", "Quote currency (USDT, USDC, USD)")
 
 	cmdutil.AddCommonFlags(orderbookCmd, &orderbookFlags.CommonFlags)
+	output.AddBookFilterFlags(orderbookCmd, &orderbookFlags.BookFilterFlags)
 	orderbookCmd.Flags().StringVar(&orderbookFlags.QuoteCurrency, "quote-currency", "", "Quote currency (USDT, USDC, USD)")
 
 	cmdutil.AddCommonFlags(orderbookRawCmd, &orderbookRawFlags.CommonFlags)
 	orderbookRawCmd.Flags().StringVar(&orderbookRawFlags.QuoteCurrency, "quote-currency", "", "Quote currency (USDT, USDC, USD)")
+	output.AddBookFilterFlags(orderbookRawCmd, &orderbookRawFlags.BookFilterFlags)
 
 	cmdutil.AddCommonFlags(tradesCmd, &tradesFlags.CommonFlags)
 	tradesCmd.Flags().StringVar(&tradesFlags.QuoteCurrency, "quote-currency", "", "Quote currency (USDT, USDC, USD)")

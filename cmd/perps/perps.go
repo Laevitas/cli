@@ -5,6 +5,7 @@ import (
 
 	"github.com/laevitas/cli/internal/api"
 	"github.com/laevitas/cli/internal/cmdutil"
+	"github.com/laevitas/cli/internal/output"
 )
 
 var Cmd = &cobra.Command{
@@ -197,7 +198,10 @@ var level1Cmd = &cobra.Command{
 	},
 }
 
-var orderbookFlags cmdutil.CommonFlags
+var orderbookFlags struct {
+	cmdutil.CommonFlags
+	output.BookFilterFlags
+}
 
 var orderbookCmd = &cobra.Command{
 	Use:   "orderbook <instrument>",
@@ -205,25 +209,69 @@ var orderbookCmd = &cobra.Command{
 	Long: `Historical L2 orderbook depth metrics.
 
 This REST endpoint returns a wide metrics payload: bid/ask liquidity,
-imbalance, and microprice across several depth tiers. Table output shows a
-compact latest-close view. Use -o json or -o csv for the full payload.
+imbalance, and microprice across four depth tiers (10/20/50/100). Table
+output shows a compact latest-close view at one tier; use --depth N to
+pick which tier the table surfaces. Use -o json or -o csv for the full
+payload (all tiers, all OHLC fields).
 
 For an interactive live order book ladder, use:
   laevitas ws perpetuals book <exchange>:<instrument>`,
 	Args: cmdutil.SingleInstrumentArg,
-	Example: `  # Historical metrics table (compact)
+	Example: `  # Historical metrics table (compact, default tier 10)
   laevitas perps orderbook BTCUSDT --exchange binance -p 1h -r 1m
 
-  # Full metrics payload for agents/scripts
+  # Pick a deeper tier for the table view
+  laevitas perps orderbook BTCUSDT --exchange binance -p 1h -r 1m --depth 50
+
+  # Full metrics payload for agents/scripts (all tiers)
   laevitas perps orderbook BTCUSDT --exchange binance -p 1h -r 1m -o json
 
   # Live book ladder TUI / NDJSON stream
   laevitas ws perpetuals book binance:BTCUSDT`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
-		params := orderbookFlags.ToParams()
+		params := orderbookFlags.CommonFlags.ToParams()
 		params.InstrumentName = args[0]
-		cmdutil.RunAndPrint(client, api.PerpsOrderbook, params)
+		cmdutil.RunAndPrintFiltered(client, api.PerpsOrderbook, params, orderbookFlags.BookFilterFlags)
+	},
+}
+
+// ─── orderbook-raw ──────────────────────────────────────────────────────────
+//
+// Fills the REST/WS parity gap: `ws perpetuals book <pair>` exists for
+// streaming snapshots, but the corresponding one-shot REST call
+// (`/api/v1/perpetuals/orderbook-raw`) had no CLI command. Now it does.
+// Same `--depth` / `--compact` filters work here as on `ws perpetuals
+// book`, so an agent can swap between transports without learning two
+// flag dialects.
+var orderbookRawFlags struct {
+	cmdutil.CommonFlags
+	output.BookFilterFlags
+}
+
+var orderbookRawCmd = &cobra.Command{
+	Use:     "orderbook-raw <instrument>",
+	Aliases: []string{"l2-orderbook-raw", "book"},
+	Short:   "Full L2 orderbook snapshots with raw bid/ask arrays",
+	Long: `Raw L2 orderbook snapshots — every level on each side at the
+requested timestamp.
+
+For a continuous live stream of the same shape, use the WebSocket form:
+  laevitas ws perpetuals book <exchange>:<instrument>
+
+Both transports accept --depth and --compact for agent-friendly trimming.`,
+	Args: cobra.ExactArgs(1),
+	Example: `  laevitas perps orderbook-raw BTCUSDT --exchange binance -p 1h
+  laevitas perps orderbook-raw BTCUSDT --exchange binance --depth 10
+  laevitas perps orderbook-raw BTCUSDT --exchange binance --depth 10 --compact -o json`,
+	Run: func(cmd *cobra.Command, args []string) {
+		client, _ := cmdutil.MustClient()
+		params := orderbookRawFlags.CommonFlags.ToParams()
+		params.InstrumentName = args[0]
+		// raw orderbook has no resolution param
+		params.Resolution = ""
+		cmdutil.ApplySnapshotDefaults(params)
+		cmdutil.RunAndPrintFiltered(client, api.PerpsOrderbookRaw, params, orderbookRawFlags.BookFilterFlags)
 	},
 }
 
@@ -390,7 +438,10 @@ func init() {
 
 	cmdutil.AddCommonFlags(volumeCmd, &volumeFlags)
 	cmdutil.AddCommonFlags(level1Cmd, &level1Flags)
-	cmdutil.AddCommonFlags(orderbookCmd, &orderbookFlags)
+	cmdutil.AddCommonFlags(orderbookCmd, &orderbookFlags.CommonFlags)
+	output.AddBookFilterFlags(orderbookCmd, &orderbookFlags.BookFilterFlags)
+	cmdutil.AddCommonFlags(orderbookRawCmd, &orderbookRawFlags.CommonFlags)
+	output.AddBookFilterFlags(orderbookRawCmd, &orderbookRawFlags.BookFilterFlags)
 	cmdutil.AddCommonFlags(tickerCmd, &tickerFlags)
 	cmdutil.AddCommonFlags(refPriceCmd, &refPriceFlags)
 
@@ -424,6 +475,7 @@ func init() {
 	Cmd.AddCommand(volumeCmd)
 	Cmd.AddCommand(level1Cmd)
 	Cmd.AddCommand(orderbookCmd)
+	Cmd.AddCommand(orderbookRawCmd)
 	Cmd.AddCommand(tickerCmd)
 	Cmd.AddCommand(refPriceCmd)
 	Cmd.AddCommand(metadataCmd)

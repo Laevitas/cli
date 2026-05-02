@@ -410,6 +410,66 @@ lookup in literal mode). Three stages:
 Stage gate fires only after the connection is proven healthy (≥1 snapshot
 received), so connection latency doesn't false-alarm as per-venue silence.
 
+## Order book commands — REST/WS parity
+
+There are **two distinct order-book shapes** in the API. Pick the right
+endpoint for what you actually need:
+
+### Snapshot shape (`asks` + `bids` arrays + microprice + tier liquidity)
+
+This is "what does the book look like right now (or at a past timestamp)".
+Five surfaces; identical wire shape; identical flags:
+
+```bash
+laevitas perps     orderbook-raw <instrument>     # /api/v1/perpetuals/orderbook-raw
+laevitas futures   orderbook-raw <instrument>     # /api/v1/futures/orderbook-raw
+laevitas spot      orderbook-raw <instrument>     # /api/v1/spot/l2-orderbook-raw
+laevitas predictions orderbook   <instrument>     # /api/v1/predictions/orderbook-raw
+laevitas ws <market> book <exchange>:<instrument> # WS stream of the same shape
+```
+
+Each carries `--depth N` (trim asks/bids to top-N levels) and `--compact`
+(drop tier-aggregate fields like `ask_liquidity_*` / `bid_liquidity_*` /
+`imbalance_*`; preserve raw asks/bids/microprice/metadata).
+
+Default for REST snapshot endpoints: `-n 1` (one snapshot — current
+state). Pass `-n 50 -p 1h` for historical.
+
+### Stats shape (time-series of liquidity metrics — no asks/bids array)
+
+This is "what was depth-N liquidity over time". Three surfaces:
+
+```bash
+laevitas perps   orderbook <instrument>   # /api/v1/perpetuals/orderbook
+laevitas futures orderbook <instrument>   # /api/v1/futures/orderbook
+laevitas spot    orderbook <instrument>   # /api/v1/spot/l2-orderbook
+```
+
+Each row is one bar (1m/5m/1h depending on `-r`) of OHLC liquidity stats
+across four depth tiers (10/20/50/100). Use `--depth N` to pick which
+tier's columns surface in the compact table view; full payload via JSON.
+
+### Output defaults (adapt to audience)
+
+| Output mode | Default depth | Why |
+|---|---|---|
+| `-o table` (TTY, human) | top-20 levels each side | fits one screen |
+| `-o json` | full wire payload (~100 levels) | agents need full data |
+| `-o csv` | full wire payload | agents need full data |
+| WS NDJSON to stdout | full wire payload per event | agents need full data |
+
+**Agents emitting JSON or NDJSON always get the full wire payload unless
+`--depth` is explicitly passed.** The display cap is human-only; it never
+affects programmatic consumers.
+
+### Picking the right command for the task
+
+- "Show me the current book" → `<group> orderbook-raw <instr>` (REST snapshot, one call)
+- "Stream live book updates for processing" → `ws <market> book <exch>:<instr>` (NDJSON, --depth N --compact recommended)
+- "Live multi-venue TUI" → `dash book <market> <symbol>` (TTY only)
+- "How did depth-50 liquidity change over the last hour?" → `<group> orderbook <instr> -p 1h -r 1m --depth 50` (stats time-series)
+- "What's the book at this exact past timestamp?" → `<group> orderbook-raw <instr> --start <ISO> --end <ISO>` (snapshot history)
+
 ## Key Parameters
 
 ### Market type tokens (canonical + aliases)
