@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.8.6] — 2026-05-02
+
+Two follow-up fixes from the v0.8.5 smoke test.
+
+### Fixed
+
+- **Watch-mode table renderer no longer dumps Go map literals for
+  book arrays**. The v0.8.5 CSV/table fix (`internal/output/printer.go`'s
+  `formatValue`) had a counterpart in `cmd/watch.go`'s `watchFmtValue`
+  that still used the bare `fmt.Sprintf("%v")` fallback. Both paths now
+  JSON-encode slices and maps so `laevitas watch 5s perps orderbook-raw …`
+  renders parseable cells like `[{"price":78499,"size":31340},…]`
+  instead of `[map[price:78499 size:31340] …]`.
+- **`ws book BTCUSDT` (bare instrument, no `--exchange`) now surfaces
+  a `Try:` hint**. v0.8.5 added validation that erred clearly but
+  stopped short of suggesting the colon form. The error now mirrors
+  the existing `wsArgHint` style:
+
+      expected exchange:instrument, got "BTCUSDT"
+      Try: laevitas ws perpetuals book <exchange>:BTCUSDT
+
+  Market alias normalisation runs before hint construction so
+  `ws perp book BTCUSDT` produces a hint with `perpetuals`.
+
 ## [0.8.5] — 2026-05-02
 
 Reliability + parity follow-up to v0.8.4 — addresses agent feedback on
