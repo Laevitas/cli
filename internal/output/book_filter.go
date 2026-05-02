@@ -23,6 +23,7 @@ package output
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/spf13/cobra"
 )
@@ -72,9 +73,9 @@ var compactStripFields = []string{
 // behaviour change until they opt in.
 func AddBookFilterFlags(cmd *cobra.Command, f *BookFilterFlags) {
 	cmd.Flags().IntVar(&f.Depth, "depth", 0,
-		"Trim asks/bids to top-N levels per side (0 = full book).")
+		"On snapshot books (orderbook-raw, ws book): trim asks/bids to top-N levels per side. On stats books (orderbook): pick tier columns to surface (10/20/50/100). 0 = full payload.")
 	cmd.Flags().BoolVar(&f.Compact, "compact", false,
-		"Strip tier-aggregate fields (ask_liquidity_*, bid_liquidity_*, imbalance_*); preserves asks/bids/microprice/metadata.")
+		"On snapshot books: strip tier-aggregate fields (ask_liquidity_*, bid_liquidity_*, imbalance_*); preserves asks/bids/microprice/metadata. On stats books: reserved (no-op today).")
 }
 
 // Active reports whether either flag is set. Callers gate the
@@ -82,6 +83,21 @@ func AddBookFilterFlags(cmd *cobra.Command, f *BookFilterFlags) {
 // passthrough (no decode/re-encode round-trip).
 func (f BookFilterFlags) Active() bool {
 	return f.Depth > 0 || f.Compact
+}
+
+// Validate rejects obviously-invalid flag combinations early, before
+// any HTTP work happens. Same semantics across REST and WS so agents
+// see consistent errors regardless of transport.
+//
+// Negative depth is rejected because there's no useful interpretation
+// — neither "top-N levels" nor "tier N" works with N < 0 and silently
+// treating it as 0 hides the typo. Zero stays valid (means "full
+// payload" — explicit and identical to no-flag).
+func (f BookFilterFlags) Validate() error {
+	if f.Depth < 0 {
+		return fmt.Errorf("--depth must be >= 0; got %d", f.Depth)
+	}
+	return nil
 }
 
 // AllowedDepthTiers is the set of tier values both --depth flags

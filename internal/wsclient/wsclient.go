@@ -37,6 +37,20 @@ const (
 
 	// reconnectMax caps the exponential backoff between reconnect attempts.
 	reconnectMax = 30 * time.Second
+
+	// subRetryMax caps how many times the client retries a per-channel
+	// subscribe RPC before giving up on that channel for the lifetime of
+	// the current connection. Reset on reconnect. Bounded so a permanently-
+	// bad channel (typo, server-side disabled) doesn't pin the retry loop;
+	// generous enough to ride out a flaky first-attempt where the server
+	// briefly rejects subscribes during auth handshake completion.
+	subRetryMax = 3
+
+	// subRetryDelay is the wait between per-channel subscribe retries.
+	// Short — the goal is to ride out transient server-side glitches, not
+	// to back off through a sustained outage (run() handles those via full
+	// reconnect with exponential backoff).
+	subRetryDelay = 2 * time.Second
 )
 
 // Server-defined close codes (API v1.18.0 / v1.19.0). Codes < 4000 fall
@@ -93,16 +107,46 @@ type Config struct {
 	Channels []string
 }
 
+// subState tracks the lifecycle of a single channel's subscribe across
+// the current connection. Reset to subPending on every reconnect (the
+// server has no memory of our prior subs after a TCP teardown).
+type subState int
+
+const (
+	// subPending: registered with this client (via Subscribe or initial
+	// Channels) but no subscribe RPC has been sent on the current
+	// connection yet, OR a prior attempt failed and we're between
+	// retries.
+	subPending subState = iota
+	// subInFlight: subscribe RPC has been written; awaiting ack/error.
+	subInFlight
+	// subAcked: server returned `result` for our subscribe — the
+	// channel is live and we should be receiving events on it.
+	subAcked
+	// subFailed: retry budget exhausted on the current connection; we
+	// stop retrying until the next reconnect (which resets all states).
+	subFailed
+)
+
+// subEntry is the per-channel record threaded through the subscribe
+// retry loop. Bookkeeping that doesn't escape the wsclient package.
+type subEntry struct {
+	state    subState
+	attempts int       // how many RPCs sent on this connection
+	rpcID    int64     // current in-flight RPC id (when state == subInFlight)
+	nextTry  time.Time // earliest time to retry when state == subPending after a failure
+}
+
 // Client owns one persistent connection (with reconnect) and exposes Events
 // over a Go channel.
 type Client struct {
 	cfg Config
 
-	// channels is the set we want to be subscribed to. Mutated by the caller
-	// via Subscribe / Unsubscribe; the connection loop reads it on every
-	// reconnect to re-subscribe.
+	// channels is the set we want to be subscribed to, with per-channel
+	// subscribe lifecycle state. Mutated by the caller via Subscribe /
+	// Unsubscribe and by the read/retry loops; everything goes through mu.
 	mu       sync.Mutex
-	channels map[string]struct{}
+	channels map[string]*subEntry
 
 	// nextID is the JSON-RPC request id counter. Atomic because the ping
 	// goroutine and the subscribe path both consume IDs.
@@ -138,14 +182,14 @@ func Dial(parent context.Context, cfg Config) (*Client, error) {
 
 	c := &Client{
 		cfg:      cfg,
-		channels: make(map[string]struct{}),
+		channels: make(map[string]*subEntry),
 		events:   make(chan Event, 256),
 		errs:     make(chan error, 16),
 		ctx:      ctx,
 		cancel:   cancel,
 	}
 	for _, ch := range cfg.Channels {
-		c.channels[ch] = struct{}{}
+		c.channels[ch] = &subEntry{state: subPending}
 	}
 
 	go c.run()
@@ -161,24 +205,17 @@ func (c *Client) Events() <-chan Event { return c.events }
 // fatal errors close Events instead.
 func (c *Client) Errs() <-chan error { return c.errs }
 
-// Subscribe adds a channel to the active set and immediately attempts to
-// subscribe on the live connection. Idempotent.
+// Subscribe adds a channel to the active set. Idempotent. The channel
+// will be picked up by the per-channel subscribe loop on its next tick
+// (or on the next reconnect if the connection is currently down).
 func (c *Client) Subscribe(channels ...string) error {
 	c.mu.Lock()
-	added := make([]string, 0, len(channels))
 	for _, ch := range channels {
 		if _, exists := c.channels[ch]; !exists {
-			c.channels[ch] = struct{}{}
-			added = append(added, ch)
+			c.channels[ch] = &subEntry{state: subPending}
 		}
 	}
 	c.mu.Unlock()
-	if len(added) == 0 {
-		return nil
-	}
-	// run() will pick this up on its next reconnect; for the live session
-	// we rely on the next iteration of the read loop. Calling sites that
-	// need synchronous confirmation should manage that themselves.
 	return nil
 }
 
@@ -258,15 +295,25 @@ func (c *Client) connectAndServe() error {
 
 	defer conn.Close(websocket.StatusNormalClosure, "client closing")
 
-	// Subscribe to whatever's in the active set.
-	if err := c.subscribeAll(conn); err != nil {
+	// Reset per-channel subscribe bookkeeping — the server has no memory
+	// of our prior subs across a TCP teardown, so retry budgets and
+	// in-flight IDs from the previous connection don't carry over.
+	c.resetSubsForReconnect()
+
+	// First subscribe pass before starting the read/retry loops. Errors
+	// here are write errors (socket already broken) — surface as a hard
+	// connection failure so run() reconnects with backoff. Per-channel
+	// RPC errors aren't returned here; they come back asynchronously via
+	// reply frames and are handled by the retry loop.
+	if err := c.subscribePending(conn); err != nil {
 		return fmt.Errorf("initial subscribe: %w", err)
 	}
 
-	// Ping loop runs for the lifetime of this connection.
+	// Ping + retry loops run for the lifetime of this connection.
 	pingCtx, pingCancel := context.WithCancel(c.ctx)
 	defer pingCancel()
 	go c.pingLoop(pingCtx, conn)
+	go c.subscribeRetryLoop(pingCtx, conn)
 
 	// Read loop — terminates on error or context cancellation.
 	for {
@@ -341,33 +388,112 @@ func (c *Client) pingLoop(ctx context.Context, conn *websocket.Conn) {
 	}
 }
 
-// subscribeAll sends a single subscribe request for every channel in the
-// active set. Server returns subscriptionIds we don't track today — the
-// channel string in incoming events is enough to dispatch.
-func (c *Client) subscribeAll(conn *websocket.Conn) error {
+// resetSubsForReconnect flips every entry back to subPending and clears
+// retry counters. Called once at the top of each connection so the
+// per-channel subscribe state reflects "nothing subscribed yet on this
+// socket" — server-side state is gone after a TCP teardown.
+func (c *Client) resetSubsForReconnect() {
 	c.mu.Lock()
-	channels := make([]string, 0, len(c.channels))
-	for ch := range c.channels {
-		channels = append(channels, ch)
+	defer c.mu.Unlock()
+	for _, e := range c.channels {
+		e.state = subPending
+		e.attempts = 0
+		e.rpcID = 0
+		e.nextTry = time.Time{}
 	}
-	c.mu.Unlock()
-	if len(channels) == 0 {
+}
+
+// subscribePending issues one bundled subscribe RPC carrying every
+// channel currently in subPending state whose nextTry has elapsed. All
+// included channels share the same rpcID (the bundle's id); the reply
+// (handled in handleMessage) flips them to subAcked or schedules
+// another retry.
+//
+// Bundled rather than per-channel because the gateway protocol
+// (https://apiv2.laevitas.ch/websocket/) accepts an array of channels
+// per subscribe and that's the form the rate limiter (20 inbound
+// msgs/sec) is sized for. The success reply echoes back a `channels`
+// array — anything we asked for that's missing from that echo gets
+// retried; a full RPC error puts the whole bundle back into pending.
+//
+// Returns a write error (socket dead) if conn.Write fails. Per-channel
+// rejections come back asynchronously and are not returned here.
+func (c *Client) subscribePending(conn *websocket.Conn) error {
+	now := time.Now()
+	c.mu.Lock()
+	due := make([]string, 0)
+	dueEntries := make([]*subEntry, 0)
+	for ch, e := range c.channels {
+		if e.state != subPending {
+			continue
+		}
+		if !e.nextTry.IsZero() && e.nextTry.After(now) {
+			continue
+		}
+		due = append(due, ch)
+		dueEntries = append(dueEntries, e)
+	}
+	if len(due) == 0 {
+		c.mu.Unlock()
 		return nil
 	}
+	id := c.nextID.Add(1)
+	for _, e := range dueEntries {
+		e.state = subInFlight
+		e.attempts++
+		e.rpcID = id
+	}
+	c.mu.Unlock()
 
 	req := map[string]interface{}{
-		"id":     c.nextID.Add(1),
+		"id":     id,
 		"method": "subscribe",
-		"params": map[string]interface{}{"channels": channels},
+		"params": map[string]interface{}{"channels": due},
 	}
 	payload, err := json.Marshal(req)
 	if err != nil {
+		// Marshal failure is unexpected (we built the map ourselves).
+		// Roll all entries back so they get retried on the next tick.
+		c.mu.Lock()
+		for _, e := range dueEntries {
+			e.state = subPending
+			e.rpcID = 0
+			e.nextTry = now.Add(subRetryDelay)
+		}
+		c.mu.Unlock()
+		return nil
+	}
+	writeCtx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+	err = conn.Write(writeCtx, websocket.MessageText, payload)
+	cancel()
+	if err != nil {
+		// Write failure means the socket is dead — bail out so the
+		// caller can reconnect. Don't bother updating per-entry state
+		// here; resetSubsForReconnect wipes it on next attempt.
 		return err
 	}
+	return nil
+}
 
-	writeCtx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
-	defer cancel()
-	return conn.Write(writeCtx, websocket.MessageText, payload)
+// subscribeRetryLoop ticks every subRetryDelay and re-issues subscribes
+// for any entries that bounced back into subPending after an RPC error.
+// Lifetime tied to the connection (ctx is the same pingCtx so it dies
+// with the read loop).
+func (c *Client) subscribeRetryLoop(ctx context.Context, conn *websocket.Conn) {
+	t := time.NewTicker(subRetryDelay)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := c.subscribePending(conn); err != nil {
+				// Write failure → connection is going down anyway; the
+				// read loop will return an error and run() will reconnect.
+				return
+			}
+		}
+	}
 }
 
 // handleMessage dispatches one inbound frame. Three shapes possible:
@@ -414,16 +540,141 @@ func (c *Client) handleMessage(msg []byte) {
 				})
 				return
 			}
-			c.softErr(fmt.Errorf("server error on rpc id=%d: %s", reply.ID, reply.Error))
+			// Map the RPC id back to the channel that initiated it. If
+			// the id matches a subscribe in flight, schedule a retry
+			// (or mark failed if the budget's exhausted) instead of
+			// silently swallowing the error — the original "flaky first
+			// subscribe" symptom was the bundle subscribe getting one
+			// rejection that took down the whole session's data flow.
+			c.handleSubscribeError(reply.ID, reply.Error)
+			return
 		}
-		// result frames (subscribe ack, pong) are intentionally silent on
-		// the happy path — we don't need to surface every pong.
+		// result frames: most are subscribe acks. Look up the id, read
+		// the echoed `channels` array (which the gateway returns parallel
+		// to the subscriptionIds — see protocol spec) and flip those
+		// entries to subAcked. Any subInFlight entries that shared the
+		// rpcID but were missing from the echo go back to subPending —
+		// the gateway rejected them silently and the retry loop should
+		// pick them up. Pongs come through here too; their id won't
+		// match any pending subscribe so the lookup no-ops.
+		c.handleSubscribeAck(reply.ID, reply.Result)
 		return
 	}
 
 	// Anything else: log as soft error so the user knows the server sent
 	// something we don't understand.
 	c.softErr(fmt.Errorf("unrecognised frame: %s", truncate(msg, 200)))
+}
+
+// handleSubscribeAck reconciles a subscribe `result` frame against the
+// channels we asked for under that rpc id. The gateway echoes back a
+// `channels` array (parallel to subscriptionIds) listing the channels
+// it actually accepted — anything we asked for that's missing from the
+// echo gets re-armed for retry, anything present flips to subAcked.
+//
+// Pongs and other unmatched-id replies fall through silently (no entry
+// has rpcID == id, so the loop touches nothing).
+func (c *Client) handleSubscribeAck(id int64, result json.RawMessage) {
+	if id == 0 {
+		return
+	}
+	// Decode the result payload. Failure to decode (e.g. a non-subscribe
+	// reply that happens to share the id of a finished subscribe — which
+	// shouldn't happen but we don't crash on it) is treated as "all
+	// in-flight under this id are acked", which is the existing behavior.
+	accepted := map[string]struct{}{}
+	if len(result) > 0 {
+		var resBody struct {
+			Channels []string `json:"channels"`
+		}
+		if err := json.Unmarshal(result, &resBody); err == nil {
+			for _, ch := range resBody.Channels {
+				accepted[ch] = struct{}{}
+			}
+		}
+	}
+
+	now := time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for ch, e := range c.channels {
+		if e.rpcID != id || e.state != subInFlight {
+			continue
+		}
+		if _, ok := accepted[ch]; ok || len(accepted) == 0 {
+			// Either the gateway echoed this channel back (full ack)
+			// or we couldn't parse the echo and fall back to optimistic
+			// "id matched, treat as acked" — same as the old behaviour.
+			e.state = subAcked
+			e.rpcID = 0
+			continue
+		}
+		// Asked for, but missing from the echo → re-arm for retry.
+		// Keeps attempts incrementing so the retry budget still bounds
+		// permanently-bad channels.
+		if e.attempts >= subRetryMax {
+			e.state = subFailed
+			e.rpcID = 0
+			continue
+		}
+		e.state = subPending
+		e.rpcID = 0
+		e.nextTry = now.Add(subRetryDelay)
+	}
+}
+
+// handleSubscribeError reacts to an RPC error frame for a bundled
+// subscribe. The gateway returns a single error per request rather than
+// per-channel errors, so we roll every channel that shared the rpc id
+// back into subPending (or terminally subFailed if the per-channel
+// retry budget is exhausted). One soft-error is emitted per affected
+// channel so the user sees which channels were impacted.
+//
+// Errors with no matching id are surfaced as a generic soft error
+// (could be a stale subscribe whose ack we already saw, or an error
+// for an RPC we don't track — pings, future methods).
+func (c *Client) handleSubscribeError(id int64, errPayload json.RawMessage) {
+	now := time.Now()
+	type affected struct {
+		channel  string
+		attempts int
+		failed   bool
+	}
+	c.mu.Lock()
+	hits := make([]affected, 0)
+	for ch, e := range c.channels {
+		if e.rpcID != id || e.state != subInFlight {
+			continue
+		}
+		e.rpcID = 0
+		if e.attempts >= subRetryMax {
+			e.state = subFailed
+			hits = append(hits, affected{channel: ch, attempts: e.attempts, failed: true})
+			continue
+		}
+		e.state = subPending
+		e.nextTry = now.Add(subRetryDelay)
+		hits = append(hits, affected{channel: ch, attempts: e.attempts, failed: false})
+	}
+	c.mu.Unlock()
+
+	if len(hits) == 0 {
+		c.softErr(fmt.Errorf("server error on rpc id=%d: %s", id, errPayload))
+		return
+	}
+	for _, h := range hits {
+		if h.failed {
+			c.softErr(fmt.Errorf(
+				"subscribe failed for %s after %d attempts: %s",
+				h.channel, subRetryMax, errPayload,
+			))
+		} else {
+			c.softErr(fmt.Errorf(
+				"subscribe rejected for %s (attempt %d/%d, retrying in %s): %s",
+				h.channel, h.attempts, subRetryMax, subRetryDelay, errPayload,
+			))
+		}
+	}
 }
 
 // softErr pushes a non-fatal error to the errs channel without blocking.

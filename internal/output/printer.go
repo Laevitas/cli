@@ -925,6 +925,12 @@ func (p *Printer) compactOrderbookRows(rows [][]string) [][]string {
 // formatValue converts a raw value to its string representation.
 // Numbers are kept as plain strings here — formatNumber() is applied
 // later only for table output.
+//
+// Slices and maps (e.g. asks/bids arrays in book payloads) are
+// JSON-encoded so CSV/table cells stay machine-parseable. The default
+// fmt.Sprintf("%v", …) path emits Go map literals like
+// `[map[price:78390.5 size:140120] …]` which no CSV consumer can
+// parse — JSON encoding round-trips through any standard tooling.
 func formatValue(v interface{}) string {
 	switch val := v.(type) {
 	case float64:
@@ -935,6 +941,12 @@ func formatValue(v interface{}) string {
 		return fmt.Sprintf("%g", val)
 	case nil:
 		return ""
+	case []interface{}, map[string]interface{}:
+		b, err := json.Marshal(val)
+		if err != nil {
+			return fmt.Sprintf("%v", val)
+		}
+		return string(b)
 	default:
 		return fmt.Sprintf("%v", val)
 	}
