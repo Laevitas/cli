@@ -16,6 +16,8 @@ Examples:
   laevitas analytics realized-volatility --instrument {{FUT}} --window-days 30
   laevitas analytics rv --instrument BTC-PERPETUAL --estimator parkinson
   laevitas analytics rv --instrument BTC-PERPETUAL -p 30d -r 1d`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error { return cmd.Help() },
 }
 
 // ─── realized-volatility ────────────────────────────────────────────────────

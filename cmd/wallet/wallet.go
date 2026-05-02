@@ -34,13 +34,15 @@ the resulting credit token so subsequent requests don't require new on-chain
 payments until the token expires.
 
 Examples:
-  laevitas wallet                    # show wallet, credits, auth mode
+  laevitas wallet show               # show wallet, credits, auth mode
   laevitas wallet show -o json       # same, agent-friendly JSON
   laevitas wallet init               # interactive: paste private key, validate, save
   laevitas wallet set-key 0x<hex>    # non-interactive equivalent
   laevitas wallet address            # just print the address (pipe-friendly)
   laevitas wallet credits            # just print credits remaining (pipe-friendly)
   laevitas wallet unset              # clear wallet key + cached credit token`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error { return cmd.Help() },
 }
 
 // ─── show ───────────────────────────────────────────────────────────────────

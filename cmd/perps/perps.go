@@ -19,6 +19,20 @@ Examples:
   laevitas perps ohlcvt BTCUSDT --exchange binance -p 3d -r 1h
   laevitas perps oi BTC-PERPETUAL -p 7d
   laevitas perps snapshot --currency BTC`,
+	// Reject unknown positional args so typos like `perps banana` exit
+	// non-zero instead of silently falling through to group help. Without
+	// this, cobra's default for a parent with no Run is to print help and
+	// exit 0 — dangerous for agents that rely on exit codes to detect
+	// typos. Args validation alone isn't enough; we also need a RunE
+	// that returns an error so Execute propagates non-zero.
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Reached when no subcommand matched. Args validator above
+		// already returned non-nil for unknown args; this branch covers
+		// the bare `laevitas perps` invocation by showing help and
+		// returning nil (success), preserving the help-on-no-args UX.
+		return cmd.Help()
+	},
 }
 
 var catalogFlags struct {
@@ -303,6 +317,7 @@ var refPriceCmd = &cobra.Command{
 		client, _ := cmdutil.MustClient()
 		params := refPriceFlags.ToParams()
 		params.InstrumentName = args[0]
+		params.Exchange = cmdutil.Exchange
 		cmdutil.RunAndPrint(client, api.PerpsReferencePrice, params)
 	},
 }

@@ -144,9 +144,10 @@ var configSetKeys = []string{
 	"api_key", "exchange", "output", "base_url", "wallet_key", "auth",
 }
 
-// configUnsetKeys are valid keys for "config unset <key>".
+// configUnsetKeys are valid keys for "config unset <key>". Mirrors
+// configSetKeys — anything settable is also unsettable.
 var configUnsetKeys = []string{
-	"api_key", "wallet_key",
+	"api_key", "wallet_key", "exchange", "output", "base_url", "auth",
 }
 
 // configValueOptions maps config keys to their valid values for "config set <key> <value>".

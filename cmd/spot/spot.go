@@ -30,6 +30,8 @@ Examples:
   laevitas spot ohlcvt BTCUSDT -p 24h -r 1h
   laevitas spot trades --currency BTC --min-quote-amount 100000
   laevitas spot volume BTCUSDT -p 7d -r 1d`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error { return cmd.Help() },
 }
 
 // ─── catalog ────────────────────────────────────────────────────────────────

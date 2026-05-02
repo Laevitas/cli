@@ -20,6 +20,8 @@ var Cmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage CLI configuration",
 	Long:  "Configure API key, default exchange, output format, and base URL.",
+	Args:  cobra.NoArgs,
+	RunE:  func(cmd *cobra.Command, args []string) error { return cmd.Help() },
 }
 
 var initCmd = &cobra.Command{
@@ -229,7 +231,7 @@ var setCmd = &cobra.Command{
 
 var unsetCmd = &cobra.Command{
 	Use:   "unset <key>",
-	Short: "Clear a config value (api_key, wallet_key)",
+	Short: "Clear a config value (api_key, wallet_key, exchange, output, base_url, auth)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := internalConfig.Load()
@@ -239,14 +241,26 @@ var unsetCmd = &cobra.Command{
 
 		key := args[0]
 
+		// Mirror the set-side key vocabulary so any settable key is also
+		// unsettable. Clearing a key reverts the field to its zero value;
+		// the next config load fills in the documented default at read time
+		// (see internal/config/config.go's defaulting).
 		switch strings.ToLower(key) {
 		case "api_key", "apikey", "key":
 			cfg.APIKey = ""
 		case "wallet_key", "walletkey", "wallet":
 			cfg.WalletKey = ""
 			internalConfig.ClearCreditToken()
+		case "exchange":
+			cfg.Exchange = ""
+		case "output":
+			cfg.Output = ""
+		case "base_url", "baseurl", "url":
+			cfg.BaseURL = ""
+		case "auth", "auth_type":
+			cfg.Auth = ""
 		default:
-			return fmt.Errorf("unknown config key: %s (valid: api_key, wallet_key)", key)
+			return fmt.Errorf("unknown config key: %s (valid: api_key, wallet_key, exchange, output, base_url, auth)", key)
 		}
 
 		if err := internalConfig.Save(cfg); err != nil {

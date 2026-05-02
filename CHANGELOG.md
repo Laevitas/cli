@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.8.7] — 2026-05-02
+
+Bundle of real bugs surfaced by the broad smoke test across REST endpoints,
+WebSocket streams, cross-cutting behaviours, and agent UX.
+
+### Fixed
+
+- **`ref-price` lost the configured default exchange**. `options ref-price`
+  failed with "Exchange parameter is required" when the user hadn't passed
+  `--exchange`, because the Run func used `flags.ToParams()` (which only
+  injects exchange when explicitly set) without then threading
+  `cmdutil.Exchange` into the request. Same hole was latent in
+  `perps ref-price` and `futures ref-price`; all three now set
+  `params.Exchange = cmdutil.Exchange` like every other concrete-instrument
+  command.
+- **JSON envelope key order broken**. `-o json` output started with `data`
+  instead of the documented `success` field — agents matching on
+  `{"success":true,"data":` would see byte-level mismatches. Two issues:
+  (a) `wrapSuccessEnvelope` built the envelope as `map[string]interface{}`,
+  whose JSON encoding is alphabetical key order; (b) `printJSON` then
+  re-parsed the bytes through `interface{}`, losing any order that did
+  survive. Fixed by assembling the envelope as raw bytes in canonical
+  order (`success`, `data`, `meta`) and indenting in-place via
+  `json.Indent` instead of round-tripping.
+- **`config unset` rejected keys that `config set` accepts**. `set` accepts
+  `api_key, exchange, output, base_url, wallet_key, auth`; `unset` only
+  handled `api_key` and `wallet_key`. Asymmetric — you could set
+  `output csv` but not unset it. Mirrored the set-side vocabulary on
+  `unset`, plus updated the REPL completer's `configUnsetKeys`.
+- **Unknown subcommand exited 0 with group help**. `laevitas perps banana`
+  printed perps' help and exited zero — dangerous for agents that rely on
+  exit codes to detect typos. Added `Args: cobra.NoArgs` plus a
+  `RunE: cmd.Help()` to every product group's top-level `Cmd`, so unknown
+  positionals now produce `✗ unknown command "banana" for "laevitas perps"`
+  with rc=1 while bare invocations still print help. Applies to:
+  futures, perps, options, options vol-surface, spot, predictions,
+  instruments, analytics, wallet, config.
+- **Non-TTY missing-auth UX**. When no API key was configured and stdin
+  wasn't a terminal (agent piping commands, CI), the onboarding prompt's
+  `bufio.NewReader.ReadString` hit EOF immediately and produced a confusing
+  "Reading input: EOF" with no recovery hint. Now detects non-TTY callers
+  up front and emits a single agent-friendly error pointing at the three
+  setup paths (`LAEVITAS_API_KEY` env var, `laevitas config set api_key`,
+  or interactive `laevitas config init` in a TTY).
+- **`laevitas watch` randomised the table's column order on every tick**.
+  Watch's hand-rolled JSON-to-grid parser built headers by iterating
+  Go maps — whose iteration order is unspecified — so columns shuffled
+  between refreshes. The non-watch table printer already had an
+  API-order extractor (`extractFirstObjectKeyOrder`) that walks the raw
+  JSON byte stream to recover the field order the API chose. Made the
+  extractor public (`output.ExtractFirstObjectKeyOrder`) and replaced
+  watch's broken header logic with a single call to it. REST table
+  rendering and watch table rendering now share one column-order source
+  of truth.
+
 ## [0.8.6] — 2026-05-02
 
 Two follow-up fixes from the v0.8.5 smoke test.
