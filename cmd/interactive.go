@@ -68,7 +68,7 @@ func runInteractive() error {
 		fmt.Printf("    %slaevitas perps carry BTC-PERPETUAL%s  Check funding rates\n", bold, reset)
 		fmt.Println()
 		fmt.Printf("  Get an API key: %shttps://app.laevitas.ch%s (Enterprise plan)\n", bold, reset)
-		fmt.Printf("  %sDocs:    https://apiv2.laevitas.ch/redoc%s\n", dim, reset)
+		fmt.Printf("  %sDocs:    https://cli.laevitas.ch  ·  API: https://apiv2.laevitas.ch%s\n", dim, reset)
 		fmt.Printf("  %sDiscord: https://discord.com/invite/yaXc4EFFay%s\n", dim, reset)
 		fmt.Println()
 
