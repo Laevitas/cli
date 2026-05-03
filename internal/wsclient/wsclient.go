@@ -126,15 +126,26 @@ const (
 	// subFailed: retry budget exhausted on the current connection; we
 	// stop retrying until the next reconnect (which resets all states).
 	subFailed
+	// subUnsubAfterAck: caller invoked Unsubscribe on a channel whose
+	// subscribe RPC was in flight. We can't unsubscribe immediately —
+	// the server hasn't issued a subscriptionId yet — so we mark the
+	// entry to be torn down as soon as the ack arrives. handleSubscribeAck
+	// looks for this state and fires the unsubscribe RPC using the
+	// just-received subscriptionId, then drops the entry from the map.
+	// Without this state, an Unsubscribe-during-subscribe-in-flight
+	// would leave the server holding a phantom subscription for the
+	// remainder of the connection's lifetime.
+	subUnsubAfterAck
 )
 
 // subEntry is the per-channel record threaded through the subscribe
 // retry loop. Bookkeeping that doesn't escape the wsclient package.
 type subEntry struct {
-	state    subState
-	attempts int       // how many RPCs sent on this connection
-	rpcID    int64     // current in-flight RPC id (when state == subInFlight)
-	nextTry  time.Time // earliest time to retry when state == subPending after a failure
+	state          subState
+	attempts       int       // how many RPCs sent on this connection
+	rpcID          int64     // current in-flight RPC id (when state == subInFlight)
+	nextTry        time.Time // earliest time to retry when state == subPending after a failure
+	subscriptionID string    // server-issued id from the subscribe ack; required to unsubscribe
 }
 
 // Client owns one persistent connection (with reconnect) and exposes Events
@@ -147,6 +158,14 @@ type Client struct {
 	// Unsubscribe and by the read/retry loops; everything goes through mu.
 	mu       sync.Mutex
 	channels map[string]*subEntry
+
+	// activeConn holds the live websocket connection during the lifetime
+	// of one connectAndServe call, nil otherwise. Set under mu at the top
+	// of connectAndServe and cleared via defer when that function returns.
+	// Callers (Unsubscribe) read it under mu to send out-of-band RPCs to
+	// the live socket; the underlying coder/websocket Conn is documented
+	// safe for concurrent Write calls (Read/Reader is the only exclusion).
+	activeConn *websocket.Conn
 
 	// nextID is the JSON-RPC request id counter. Atomic because the ping
 	// goroutine and the subscribe path both consume IDs.
@@ -208,15 +227,139 @@ func (c *Client) Errs() <-chan error { return c.errs }
 // Subscribe adds a channel to the active set. Idempotent. The channel
 // will be picked up by the per-channel subscribe loop on its next tick
 // (or on the next reconnect if the connection is currently down).
+//
+// Resubscribe-before-ack handling: if a channel exists in the
+// subUnsubAfterAck tombstone state (caller previously called
+// Unsubscribe while the subscribe RPC was still in flight), Subscribe
+// flips it back to subInFlight to preserve the in-flight RPC. The ack
+// handler will then treat it as a normal subscribe ack rather than
+// firing the tombstone unsubscribe path. Without this, sequence
+// "subscribe→unsubscribe→subscribe" all before the first ack would
+// silently drop the renewed intent.
 func (c *Client) Subscribe(channels ...string) error {
 	c.mu.Lock()
 	for _, ch := range channels {
-		if _, exists := c.channels[ch]; !exists {
+		entry, exists := c.channels[ch]
+		if !exists {
 			c.channels[ch] = &subEntry{state: subPending}
+			continue
+		}
+		if entry.state == subUnsubAfterAck {
+			// Restore: caller changed their mind about unsubscribing.
+			// rpcID is preserved (the same subscribe RPC is still
+			// in flight server-side), so the ack handler matches it
+			// and lands in the normal subAcked path.
+			entry.state = subInFlight
 		}
 	}
 	c.mu.Unlock()
 	return nil
+}
+
+// Unsubscribe removes channels from the active set. Behaviour by
+// per-channel state at the time of the call:
+//
+//   - subAcked (subscriptionId known): drop the local entry, send a
+//     JSON-RPC unsubscribe to the gateway using the recorded id.
+//   - subInFlight (subscribe RPC pending, no id yet): keep the entry
+//     and flip its state to subUnsubAfterAck. The ack handler picks
+//     this up and fires the unsubscribe RPC as soon as the id arrives.
+//     Without this, an Unsubscribe-during-in-flight-subscribe would
+//     leave the server holding a phantom subscription for the rest of
+//     the connection.
+//   - subUnsubAfterAck (already tombstoned by a prior Unsubscribe):
+//     no-op. The tombstone must persist until the ack/error/reconnect
+//     resolves it, so a second Unsubscribe deliberately does NOT
+//     delete it — deleting would resurrect the original leak.
+//   - subPending / subFailed: drop the local entry. Nothing to tell
+//     the gateway — those channels were never acked server-side.
+//
+// Idempotent: unsubscribing a channel that was never subscribed is a
+// no-op. Repeated Unsubscribe of an in-flight subscribe converges on
+// the tombstone state (first call sets it, subsequent calls preserve
+// it). Returns the first write error encountered when sending
+// unsubscribe RPCs; local state is always updated regardless, so a
+// transient write failure still removes the channels from the client's
+// intent set.
+func (c *Client) Unsubscribe(channels ...string) error {
+	type pending struct {
+		channel        string
+		subscriptionID string
+	}
+	c.mu.Lock()
+	toUnsub := make([]pending, 0, len(channels))
+	for _, ch := range channels {
+		entry, ok := c.channels[ch]
+		if !ok {
+			continue
+		}
+		switch entry.state {
+		case subAcked:
+			if entry.subscriptionID != "" {
+				toUnsub = append(toUnsub, pending{channel: ch, subscriptionID: entry.subscriptionID})
+			}
+			delete(c.channels, ch)
+		case subInFlight:
+			// Tombstone: keep the entry so handleSubscribeAck can match
+			// the imminent ack against it and fire unsubscribe with the
+			// server-issued id. Caller's intent (this channel is gone)
+			// is honoured by the read loop: data events for an entry in
+			// subUnsubAfterAck are still delivered until the unsubscribe
+			// completes (the gateway can keep emitting until it processes
+			// our unsubscribe). That's acceptable; the alternative
+			// (dropping the entry now) leaks server-side subscription
+			// for the connection's lifetime.
+			entry.state = subUnsubAfterAck
+		case subUnsubAfterAck:
+			// Already tombstoned by a prior Unsubscribe. Keep it — the
+			// ack handler still needs the entry to fire the unsubscribe
+			// RPC when the in-flight subscribe ack arrives. Deleting it
+			// here would resurrect the original leak (subscribe in
+			// flight, server happily creates the subscription, we have
+			// no entry to match the ack against, nothing fires the
+			// unsubscribe). Idempotent: second/Nth Unsubscribe is a
+			// no-op against a tombstoned entry.
+			continue
+		default:
+			// subPending, subFailed — never acked server-side. Local-only drop.
+			delete(c.channels, ch)
+		}
+	}
+	conn := c.activeConn
+	c.mu.Unlock()
+
+	if conn == nil || len(toUnsub) == 0 {
+		// Either no live connection or nothing to tell the gateway about;
+		// local state is already updated.
+		return nil
+	}
+
+	// Per protocol spec (apiv2.laevitas.ch/websocket/), unsubscribe takes
+	// one subscriptionId per call. Send one RPC per channel rather than
+	// trying to bundle — bundling is not documented for unsubscribe and
+	// the per-RPC cost is negligible compared to a typical reconnect.
+	var firstErr error
+	for _, p := range toUnsub {
+		req := map[string]interface{}{
+			"id":     c.nextID.Add(1),
+			"method": "unsubscribe",
+			"params": map[string]interface{}{"subscriptionId": p.subscriptionID},
+		}
+		payload, err := json.Marshal(req)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		writeCtx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+		err = conn.Write(writeCtx, websocket.MessageText, payload)
+		cancel()
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // Close cancels the parent context, closes the socket, and drains channels.
@@ -295,10 +438,19 @@ func (c *Client) connectAndServe() error {
 
 	defer conn.Close(websocket.StatusNormalClosure, "client closing")
 
-	// Reset per-channel subscribe bookkeeping — the server has no memory
-	// of our prior subs across a TCP teardown, so retry budgets and
-	// in-flight IDs from the previous connection don't carry over.
-	c.resetSubsForReconnect()
+	// Atomically install the new conn AND reset the per-channel bookkeeping
+	// (clear stale subscriptionIDs, drop tombstones, reset retry counters)
+	// under a single mutex acquisition. If we published activeConn first
+	// and reset after, a concurrent Unsubscribe in the window between
+	// could read the new activeConn but a stale subscriptionID from the
+	// previous connection — and address the wrong subscription on the
+	// fresh gateway. Doing both under one lock closes that race.
+	c.installConnAndReset(conn)
+	defer func() {
+		c.mu.Lock()
+		c.activeConn = nil
+		c.mu.Unlock()
+	}()
 
 	// First subscribe pass before starting the read/retry loops. Errors
 	// here are write errors (socket already broken) — surface as a hard
@@ -388,18 +540,61 @@ func (c *Client) pingLoop(ctx context.Context, conn *websocket.Conn) {
 	}
 }
 
+// installConnAndReset publishes the new conn and resets per-channel
+// bookkeeping atomically under one mutex acquisition. Both operations
+// must happen together: if we published the conn first and any
+// concurrent Unsubscribe ran in the window before reset, the call
+// could read the new activeConn paired with a stale subscriptionID
+// from the previous connection — and ship the wrong id to the fresh
+// gateway. Single-lock helper closes that window.
+//
+// Tombstoned entries (subUnsubAfterAck) are deleted outright rather
+// than reset; see resetSubsForReconnectLocked for the rationale.
+func (c *Client) installConnAndReset(conn *websocket.Conn) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.activeConn = conn
+	c.resetSubsForReconnectLocked()
+}
+
 // resetSubsForReconnect flips every entry back to subPending and clears
 // retry counters. Called once at the top of each connection so the
 // per-channel subscribe state reflects "nothing subscribed yet on this
-// socket" — server-side state is gone after a TCP teardown.
+// socket" — server-side state is gone after a TCP teardown, including
+// any subscriptionIds we'd recorded under the previous connection.
+// Carrying them over would be unsafe: a fresh subscribe gets a fresh
+// id, and an Unsubscribe call between disconnect and re-ack might
+// otherwise send the previous connection's id to the new gateway,
+// which would either no-op or hit a different subscription.
+//
+// Tombstoned entries (subUnsubAfterAck) are deleted outright on
+// reconnect rather than reset to subPending. They were created by an
+// Unsubscribe call against an in-flight subscribe; the connection
+// teardown already wiped the server-side subscription, so there's
+// nothing to unsubscribe and the caller's intent (channel gone) wins.
+// Resurrecting them as subPending would re-subscribe a channel the
+// caller explicitly removed.
+//
+// The exported wrapper acquires c.mu; resetSubsForReconnectLocked is
+// the inner version for callers (installConnAndReset) that already
+// hold the lock.
 func (c *Client) resetSubsForReconnect() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, e := range c.channels {
+	c.resetSubsForReconnectLocked()
+}
+
+func (c *Client) resetSubsForReconnectLocked() {
+	for ch, e := range c.channels {
+		if e.state == subUnsubAfterAck {
+			delete(c.channels, ch)
+			continue
+		}
 		e.state = subPending
 		e.attempts = 0
 		e.rpcID = 0
 		e.nextTry = time.Time{}
+		e.subscriptionID = "" // gateway will issue a fresh one on this connection
 	}
 }
 
@@ -442,6 +637,12 @@ func (c *Client) subscribePending(conn *websocket.Conn) error {
 		e.state = subInFlight
 		e.attempts++
 		e.rpcID = id
+		// Clear any stale subscriptionId from a prior failed attempt or
+		// an earlier connection that resetSubsForReconnect missed (e.g.
+		// the entry was added mid-reconnect). Each fresh subscribe RPC
+		// gets a fresh id from the gateway; keeping a stale one risks
+		// addressing the wrong subscription on a later Unsubscribe.
+		e.subscriptionID = ""
 	}
 	c.mu.Unlock()
 
@@ -582,44 +783,103 @@ func (c *Client) handleSubscribeAck(id int64, result json.RawMessage) {
 	// reply that happens to share the id of a finished subscribe — which
 	// shouldn't happen but we don't crash on it) is treated as "all
 	// in-flight under this id are acked", which is the existing behavior.
-	accepted := map[string]struct{}{}
+	//
+	// The gateway returns subscriptionIds[] parallel to channels[] in the
+	// success result — we record subscriptionId per channel so a future
+	// Unsubscribe call can address the server-side subscription. Without
+	// this we'd only be able to drop the channel from our local map and
+	// hope the server eventually reaps it.
+	accepted := map[string]string{} // channel → subscriptionId (may be empty)
 	if len(result) > 0 {
 		var resBody struct {
-			Channels []string `json:"channels"`
+			Channels        []string `json:"channels"`
+			SubscriptionIDs []string `json:"subscriptionIds"`
 		}
 		if err := json.Unmarshal(result, &resBody); err == nil {
-			for _, ch := range resBody.Channels {
-				accepted[ch] = struct{}{}
+			for i, ch := range resBody.Channels {
+				subID := ""
+				if i < len(resBody.SubscriptionIDs) {
+					subID = resBody.SubscriptionIDs[i]
+				}
+				accepted[ch] = subID
 			}
 		}
 	}
 
 	now := time.Now()
+	// Tombstoned channels (Unsubscribe called while subscribe was in
+	// flight) need an unsubscribe RPC fired now that we have their
+	// subscriptionId. We collect them under the lock and fire the
+	// writes after unlock — conn.Write doesn't need the mutex and
+	// holding it during a network op would block other RPCs.
+	type tombstoneRPC struct {
+		channel        string
+		subscriptionID string
+	}
+	tombstones := []tombstoneRPC{}
+
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	for ch, e := range c.channels {
-		if e.rpcID != id || e.state != subInFlight {
+		if e.rpcID != id {
 			continue
 		}
-		if _, ok := accepted[ch]; ok || len(accepted) == 0 {
-			// Either the gateway echoed this channel back (full ack)
-			// or we couldn't parse the echo and fall back to optimistic
-			// "id matched, treat as acked" — same as the old behaviour.
-			e.state = subAcked
+		switch e.state {
+		case subInFlight:
+			if subID, ok := accepted[ch]; ok || len(accepted) == 0 {
+				// Either the gateway echoed this channel back (full ack)
+				// or we couldn't parse the echo and fall back to optimistic
+				// "id matched, treat as acked" — same as the old behaviour.
+				e.state = subAcked
+				e.rpcID = 0
+				if subID != "" {
+					e.subscriptionID = subID
+				}
+				continue
+			}
+			// Asked for, but missing from the echo → re-arm for retry.
+			// Keeps attempts incrementing so the retry budget still bounds
+			// permanently-bad channels.
+			if e.attempts >= subRetryMax {
+				e.state = subFailed
+				e.rpcID = 0
+				continue
+			}
+			e.state = subPending
 			e.rpcID = 0
-			continue
+			e.nextTry = now.Add(subRetryDelay)
+		case subUnsubAfterAck:
+			// Caller invoked Unsubscribe while the subscribe was in flight.
+			// Now that the ack arrived, fire the unsubscribe with the
+			// just-received subscriptionId and drop the entry. If the
+			// gateway didn't echo this channel (server-side rejection)
+			// there's nothing to unsubscribe — just drop locally.
+			if subID, ok := accepted[ch]; ok && subID != "" {
+				tombstones = append(tombstones, tombstoneRPC{channel: ch, subscriptionID: subID})
+			}
+			delete(c.channels, ch)
 		}
-		// Asked for, but missing from the echo → re-arm for retry.
-		// Keeps attempts incrementing so the retry budget still bounds
-		// permanently-bad channels.
-		if e.attempts >= subRetryMax {
-			e.state = subFailed
-			e.rpcID = 0
-			continue
+	}
+	conn := c.activeConn
+	c.mu.Unlock()
+
+	// Fire tombstone unsubscribes outside the lock. Errors here are
+	// non-fatal — the local intent is already removed; if the gateway
+	// missed our unsubscribe it'll be reset on next reconnect anyway.
+	if conn != nil {
+		for _, t := range tombstones {
+			req := map[string]interface{}{
+				"id":     c.nextID.Add(1),
+				"method": "unsubscribe",
+				"params": map[string]interface{}{"subscriptionId": t.subscriptionID},
+			}
+			payload, err := json.Marshal(req)
+			if err != nil {
+				continue
+			}
+			writeCtx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+			_ = conn.Write(writeCtx, websocket.MessageText, payload)
+			cancel()
 		}
-		e.state = subPending
-		e.rpcID = 0
-		e.nextTry = now.Add(subRetryDelay)
 	}
 }
 
@@ -642,8 +902,21 @@ func (c *Client) handleSubscribeError(id int64, errPayload json.RawMessage) {
 	}
 	c.mu.Lock()
 	hits := make([]affected, 0)
+	matched := false // any entry whatsoever under this rpcID, tombstones included
 	for ch, e := range c.channels {
-		if e.rpcID != id || e.state != subInFlight {
+		if e.rpcID != id {
+			continue
+		}
+		matched = true
+		// Tombstoned channels get dropped: the server rejected the
+		// subscribe AND the caller already wants this channel gone.
+		// Nothing for either side to do; remove the entry quietly so
+		// it doesn't sit in subUnsubAfterAck forever.
+		if e.state == subUnsubAfterAck {
+			delete(c.channels, ch)
+			continue
+		}
+		if e.state != subInFlight {
 			continue
 		}
 		e.rpcID = 0
@@ -659,6 +932,12 @@ func (c *Client) handleSubscribeError(id int64, errPayload json.RawMessage) {
 	c.mu.Unlock()
 
 	if len(hits) == 0 {
+		if matched {
+			// Matched only tombstones — caller already abandoned these
+			// channels. Server's rejection of the subscribe is moot;
+			// don't pollute Errs with a soft error for it.
+			return
+		}
 		c.softErr(fmt.Errorf("server error on rpc id=%d: %s", id, errPayload))
 		return
 	}

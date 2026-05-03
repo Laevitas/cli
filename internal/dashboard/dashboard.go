@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -54,6 +55,13 @@ type Selection struct {
 	Expiry   string // e.g. "26JUN26"
 	Strike   float64
 	Venue    string // optional venue lock
+	// Market is the canonical product family (perpetuals, futures,
+	// options, spot, predictions). Required for panels that build WS
+	// channel strings from the selection — `book.<market>.<venue>.<symbol>`
+	// can't be assembled without it. Added in v0.9.3 for the
+	// upcoming flow dashboard's screener→detail drill-down; existing
+	// dashboards that don't read Market are unaffected.
+	Market string
 }
 
 // SelectionChangedMsg is fanned out to every panel whenever the root
@@ -462,8 +470,20 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return r, r.broadcast(msg)
 
 	case SelectionChangedMsg:
-		// Panels react (e.g. invalidate their cache); after they've
-		// processed, recompute the live subscription set and apply.
+		// Mutate r.selection BEFORE broadcasting so panels reading
+		// PanelContext or calling Subscriptions(sel) see the new state.
+		// The msg's Old/New fields are the authoritative pair; we
+		// install msg.New unconditionally rather than computing a diff
+		// here so senders don't have to coordinate with us about which
+		// fields changed.
+		//
+		// Without this write, the broadcast/refreshSubscriptions pair
+		// downstream would still be working off the previous selection
+		// — drill-down across panels (e.g. screener → detail) would
+		// silently fail to propagate. The kernel's contract is "send
+		// this message and the selection updates"; that contract had
+		// been documented but not implemented.
+		r.selection = m.New
 		cmd := r.broadcast(msg)
 		r.refreshSubscriptions()
 		return r, cmd
@@ -927,17 +947,33 @@ type FeedRouter struct {
 	cli  *wsclient.Client
 	pump chan tea.Msg
 
-	// channels currently subscribed. Used by subscribe() to compute
-	// add/remove deltas without re-dialing.
-	current map[string]struct{}
-
-	// pending holds subscription requests received before the WS
-	// client finished dialling. Root.Init calls refreshSubscriptions
-	// synchronously, but the dial happens asynchronously inside
-	// start()'s tea.Cmd — so the first subscribe() races with dial.
-	// We stash the desired set here and replay it from inside
-	// start() once cli is assigned.
+	// mu guards every read and write of cli, current, and pending —
+	// Root.Update goroutine and start()'s tea.Cmd goroutine race on
+	// all three during the dial window AND across the post-dial
+	// reconciliation. Specifically:
+	//   - pending: written by subscribe() pre-dial, read by start()
+	//     to seed wsclient.Dial AND to capture latest-desired-set
+	//     for post-dial reconciliation.
+	//   - cli: written once by start() after dial succeeds; read by
+	//     subscribe()/diffAndInstallLocked and by stop().
+	//   - current: written by start() during post-dial install AND
+	//     by every diffAndInstallLocked call; read by both. Without
+	//     coverage here, a subscribe() could observe (cli != nil
+	//     AND current empty) during the post-dial install window.
+	//
+	// Held across wsclient RPC calls only during start()'s post-dial
+	// reconciliation (startup-only, no concurrent traffic blocked in
+	// practice). Regular subscribe() releases the lock before firing
+	// RPCs — see diffAndInstallLocked + subscribe.
+	mu      sync.Mutex
 	pending []string
+
+	// current holds the channel set the wsclient layer is currently
+	// subscribed to from FeedRouter's perspective. Treated as desired
+	// state, not confirmed wire state — wsclient's own state machine
+	// reconciles toward it asynchronously via subscribe/unsubscribe
+	// RPCs. All reads and writes go through mu.
+	current map[string]struct{}
 }
 
 func newFeedRouter(apiKey, gatewayURL string) *FeedRouter {
@@ -973,14 +1009,22 @@ func newFeedRouter(apiKey, gatewayURL string) *FeedRouter {
 // are pulled by the re-arming next() Cmd.
 func (f *FeedRouter) start() tea.Cmd {
 	return func() tea.Msg {
+		// Snapshot pending under lock — without this, subscribe() can
+		// race with our read here. We dial against this snapshot, then
+		// reconcile any further pending arrivals after dial completes
+		// so the latest-desired set wins even if subscribe() raced us.
+		f.mu.Lock()
+		dialChannels := append([]string(nil), f.pending...)
+		f.mu.Unlock()
+
 		if dashDebug {
 			fmt.Fprintf(os.Stderr, "[dash] FeedRouter.start: dialing with channels=%v apiKey=%s url=%s\n",
-				f.pending, maskKey(f.apiKey), f.gatewayURL)
+				dialChannels, maskKey(f.apiKey), f.gatewayURL)
 		}
 		cli, err := wsclient.Dial(f.ctx, wsclient.Config{
 			URL:      f.gatewayURL,
 			APIKey:   f.apiKey,
-			Channels: f.pending,
+			Channels: dialChannels,
 		})
 		if err != nil {
 			// Dial failure is fatal — no events will ever arrive.
@@ -988,16 +1032,66 @@ func (f *FeedRouter) start() tea.Cmd {
 			// "disconnected" rather than a bare error toast.
 			return feedStateMsg{state: FeedFatal, err: err}
 		}
-		f.cli = cli
 
-		// Move the pending set into current — the wsclient.Dial call
-		// already subscribed to these on our behalf, so they're now
-		// the live set. Any post-dial subscribe() call deltas
-		// against this map.
-		for _, ch := range f.pending {
+		// Post-dial install + reconciliation must happen under one
+		// critical section, INCLUDING the wsclient RPC calls for
+		// reconciliation. Two distinct races would otherwise occur:
+		//
+		//  1) Visibility race: between f.cli=cli and the f.current
+		//     population, an Update-goroutine subscribe() call could
+		//     observe cli != nil with empty f.current and compute the
+		//     wrong diff baseline.
+		//
+		//  2) Stale-pending race: if we unlock after capturing
+		//     latestPending and a concurrent subscribe(want=A)
+		//     races our reconciliation, one of two bad outcomes lands
+		//     depending on ordering:
+		//       (a) reconciliation overwrites f.current=A back to
+		//           latestPending, losing the user's newer intent.
+		//       (b) RPC ordering at the wsclient level interleaves
+		//           start()'s startupAdd/Remove with subscribe()'s,
+		//           briefly leaving channels missing.
+		//
+		// Holding the FeedRouter mutex across the wsclient RPC calls
+		// here is acceptable because this is startup-only — there's no
+		// concurrent traffic to block in practice. The wsclient layer
+		// never calls back into FeedRouter, so no deadlock risk.
+		f.mu.Lock()
+		f.cli = cli
+		for _, ch := range dialChannels {
 			f.current[ch] = struct{}{}
 		}
+		latestPending := append([]string(nil), f.pending...)
 		f.pending = nil
+		if !channelSetsEqual(latestPending, dialChannels) {
+			wantSet := make(map[string]struct{}, len(latestPending))
+			for _, ch := range latestPending {
+				wantSet[ch] = struct{}{}
+			}
+			var add, remove []string
+			for ch := range wantSet {
+				if _, has := f.current[ch]; !has {
+					add = append(add, ch)
+				}
+			}
+			for ch := range f.current {
+				if _, keep := wantSet[ch]; !keep {
+					remove = append(remove, ch)
+				}
+			}
+			f.current = wantSet
+			// Fire the wsclient RPCs WHILE STILL HOLDING the lock —
+			// any concurrent Update-goroutine subscribe() blocks until
+			// we're done so it sees the post-reconciliation state and
+			// doesn't get stomped.
+			if len(add) > 0 {
+				_ = cli.Subscribe(add...)
+			}
+			if len(remove) > 0 {
+				_ = cli.Unsubscribe(remove...)
+			}
+		}
+		f.mu.Unlock()
 
 		// Forward events into our pump channel.
 		go func() {
@@ -1044,53 +1138,130 @@ func (f *FeedRouter) waitOnce() tea.Msg {
 	}
 }
 
-// subscribe aligns the live subscription set to the given list. Any
-// channel currently subscribed but not in `want` is unsubscribed;
-// any channel in `want` not currently subscribed is added. Order
-// doesn't matter; idempotent within a single call.
+// subscribe aligns the live subscription set to exactly `want`.
+// Channels in `want` that are not currently subscribed are added;
+// channels currently subscribed that are not in `want` are removed.
+// Idempotent — calling with the same set twice in a row sends no
+// RPCs the second time.
 //
 // Pre-dial: subscribe stashes the desired set into f.pending instead
 // of returning silently. start()'s tea.Cmd reads pending when it
 // dials, passing the full channel list to wsclient.Dial as part of
 // the upgrade handshake — so the dashboard receives events from the
 // very first tick rather than dialing then waiting indefinitely.
+//
+// Drift-free contract: the desired set is exactly `want`, no more no
+// less. Earlier versions only added channels (the unsubscribe path
+// was deferred); panels that rotated their subscription set as the
+// user navigated would accumulate forever, eventually tripping the
+// gateway's 200-subs-per-connection cap.
+// channelSetsEqual reports whether two channel-name slices represent
+// the same set (order-independent, duplicates collapsed). Used by
+// start() to decide whether the latest pending differs from what we
+// dialed with, gating the post-dial reconciliation pass.
+//
+// Always dedupes both inputs into sets and compares — earlier same-
+// length fast path was wrong for cases like ["a","b"] vs ["a","a"]
+// (would have returned true). Production callers don't currently
+// produce duplicates, but the helper's contract claims it handles
+// them, so it does.
+func channelSetsEqual(a, b []string) bool {
+	aSet := make(map[string]struct{}, len(a))
+	for _, x := range a {
+		aSet[x] = struct{}{}
+	}
+	bSet := make(map[string]struct{}, len(b))
+	for _, x := range b {
+		bSet[x] = struct{}{}
+	}
+	if len(aSet) != len(bSet) {
+		return false
+	}
+	for x := range aSet {
+		if _, ok := bSet[x]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func (f *FeedRouter) subscribe(want []string) {
-	if f.cli == nil {
-		// Replace pending — Root.Init may call refreshSubscriptions
-		// multiple times before dial completes; we want the latest
-		// set, not an accumulation.
-		f.pending = append(f.pending[:0], want...)
+	// All access to f.cli, f.current, and f.pending goes through the
+	// mutex — start() can race with Update-goroutine subscribe() calls
+	// up to and including the post-dial reconciliation, where f.current
+	// is being populated by start() concurrently with subscribe()
+	// reading it.
+	//
+	// We compute the diff and install the new f.current under the lock,
+	// then release the lock before issuing the actual Subscribe /
+	// Unsubscribe RPCs to wsclient — those are network ops and shouldn't
+	// hold the FeedRouter mutex while they run.
+	add, remove, cli := f.diffAndInstallLocked(want)
+	if cli == nil {
+		// Pre-dial: diffAndInstallLocked already stashed `want` into
+		// f.pending; nothing else to do.
 		return
 	}
+	if len(add) > 0 {
+		_ = cli.Subscribe(add...)
+	}
+	if len(remove) > 0 {
+		_ = cli.Unsubscribe(remove...)
+	}
+}
+
+// diffAndInstallLocked atomically reads f.cli, computes add/remove
+// vs f.current, and installs the new f.current. Pre-dial it stashes
+// the desired set into f.pending and returns nil cli + nil deltas
+// (caller is a no-op). Returns the cli ref so the caller can issue
+// the actual RPCs after releasing the lock.
+func (f *FeedRouter) diffAndInstallLocked(want []string) (add, remove []string, cli *wsclient.Client) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.cli == nil {
+		// Pre-dial. Replace pending — Root.Init may call
+		// refreshSubscriptions multiple times before dial completes; we
+		// want the latest set, not an accumulation.
+		f.pending = append(f.pending[:0], want...)
+		return nil, nil, nil
+	}
+
 	wantSet := make(map[string]struct{}, len(want))
 	for _, ch := range want {
 		wantSet[ch] = struct{}{}
 	}
-	add := []string{}
 	for ch := range wantSet {
 		if _, has := f.current[ch]; !has {
 			add = append(add, ch)
 		}
 	}
-	// Remove handling deferred to v0.8.4 — the wsclient API doesn't
-	// expose unsubscribe yet, and dashboards in v0.8.3 don't change
-	// their channel set after init except via SelectionChangedMsg
-	// (which today only adds, never removes). Worth revisiting when
-	// the chain dashboard lands.
-	if len(add) > 0 {
-		_ = f.cli.Subscribe(add...)
+	for ch := range f.current {
+		if _, keep := wantSet[ch]; !keep {
+			remove = append(remove, ch)
+		}
 	}
 	f.current = wantSet
+	return add, remove, f.cli
 }
 
 // stop cancels the feed context and closes the WS. Returned as a
 // Cmd in the Quit sequence so the goroutine drains cleanly before
 // the program exits.
+//
+// Reads f.cli under the mutex because start()'s tea.Cmd may still
+// be writing it concurrently (user hits 'q' during the dial window).
+// Copy out the cli ref under the lock, release, then close — Close
+// is a long-ish op (writes a close frame) that shouldn't be holding
+// the FeedRouter mutex.
 func (f *FeedRouter) stop() tea.Cmd {
 	return func() tea.Msg {
 		f.cancel()
-		if f.cli != nil {
-			_ = f.cli.Close()
+		f.mu.Lock()
+		cli := f.cli
+		f.mu.Unlock()
+		if cli != nil {
+			_ = cli.Close()
 		}
 		return nil
 	}
