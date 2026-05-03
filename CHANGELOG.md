@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.9.1] — 2026-05-03
+
+Polish bundle: two v0.9.0 paper-cuts plus REPL slash-command syntax.
+
+### Added
+
+- **REPL slash commands** (`/help`, `/save`, `/run`, `/saves`, `/unsave`,
+  `/search`, `/commands`, `/clear`, `/quit`, `/exit`). Matches the
+  convention every modern AI/dev CLI now uses (Claude Code, Codex,
+  Copilot CLI) — the slash signals "REPL meta-command", visually
+  separating control-plane actions from data-plane queries.
+  Bare-keyword forms (`save`, `run`, etc.) keep working as aliases, so
+  existing muscle memory and any scripted REPL input don't break.
+
+  - `/help` (or bare `/`) prints a reference of all slash commands plus
+    a reminder that agents and scripts should pipe subcommands directly
+    rather than entering the REPL.
+  - `/commands` (with no other args) is a human-context shortcut for
+    `laevitas commands -o table`. Explicit forms like
+    `/commands --filter ws` or `/commands -o json` flow through to the
+    real cobra command unchanged.
+
+### Fixed
+
+- **`laevitas doctor` now defaults to text output regardless of TTY.**
+  The standard `-o auto` resolver picked JSON when stdout wasn't a
+  terminal (agent tool wrappers, log capture, etc.), surprising users
+  who expected the human-readable ✓/⚠/✗/○ report. Doctor's primary
+  audience is humans debugging their setup; agents opt into JSON
+  explicitly via `-o json`. Mirrors the inverse asymmetry on
+  `laevitas commands`, which defaults to JSON because its audience
+  is agents.
+- **TTY help footer always renders content, ANSI colour gated on
+  TTY-ness only.** v0.9.0's branded help template was registered only
+  when stdout was a terminal — non-TTY callers (e.g.
+  `laevitas --help | cat`, agent tools capturing help output) saw
+  cobra's default template with no footer at all. Now the template
+  applies always; ANSI escape codes are only emitted when stdout is a
+  real terminal. Agents reading help via pipes see the same Docs / API
+  / WebSocket / x402 / Changelog / Discord / Twitter URLs without
+  escape-code noise.
+
 ## [0.9.0] — 2026-05-03
 
 Agent-introspection release. Two new commands let agents discover the CLI

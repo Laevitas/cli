@@ -150,12 +150,34 @@ func runInteractive() error {
 			continue
 		}
 
+		// Slash-command syntax: /help, /save, /run, /quit, etc.
+		// Strips a single leading "/" before dispatching so REPL meta-
+		// commands match the convention humans expect from modern AI/dev
+		// CLIs (Claude Code, Codex, Copilot CLI). The bare-keyword form
+		// (`save foo ...`, `quit`, etc.) keeps working unchanged so
+		// existing muscle memory and scripted REPL input don't break.
+		// Only one leading slash is stripped — `//literal` would survive
+		// for a hypothetical future case where a real command name
+		// starts with "/", though none do today.
+		if strings.HasPrefix(line, "/") {
+			line = strings.TrimPrefix(line, "/")
+			line = strings.TrimSpace(line)
+			if line == "" {
+				// Bare "/" — show the slash-command reference.
+				printREPLHelp()
+				continue
+			}
+		}
+
 		switch strings.ToLower(line) {
 		case "quit", "exit":
 			fmt.Println("Bye!")
 			return nil
 		case "clear":
 			fmt.Print("\033[H\033[2J")
+			continue
+		case "help":
+			printREPLHelp()
 			continue
 		}
 
@@ -170,6 +192,18 @@ func runInteractive() error {
 
 		if len(args) >= 1 {
 			switch strings.ToLower(args[0]) {
+			case "help":
+				printREPLHelp()
+				continue
+			case "commands":
+				// Bare `commands` in the REPL is a human-context shortcut
+				// for the table view. Any explicit args/flags
+				// (`commands -o json`, `commands --filter ws`) flow
+				// through to the real cobra command unchanged.
+				if len(args) == 1 {
+					line = "commands -o table"
+				}
+				// Fall through to cobra dispatch.
 			case "search":
 				runSearch(args[1:])
 				continue
@@ -190,6 +224,39 @@ func runInteractive() error {
 
 		executeREPLCommand(line, client)
 	}
+}
+
+// printREPLHelp lists the REPL meta-commands. Both slash form (the
+// preferred form, matching modern AI/dev CLIs) and the bare-keyword
+// alias are shown so users can pick whichever they prefer. Triggered
+// by /help, help, or a bare /.
+func printREPLHelp() {
+	bold := output.Bold
+	dim := output.BrandGreyMid
+	reset := output.Reset
+
+	fmt.Println()
+	fmt.Printf("  %sREPL meta-commands%s — slash form preferred; bare keyword works too.\n", bold, reset)
+	fmt.Println()
+	fmt.Printf("    %s/help%s              Show this reference.\n", bold, reset)
+	fmt.Printf("    %s/clear%s             Clear the screen.\n", bold, reset)
+	fmt.Printf("    %s/quit%s, %s/exit%s       Leave the REPL.\n", bold, reset, bold, reset)
+	fmt.Println()
+	fmt.Printf("    %s/save <name> <cmd>%s    Save a command under a name.\n", bold, reset)
+	fmt.Printf("    %s/run <name>%s          Run a saved command.\n", bold, reset)
+	fmt.Printf("    %s/saves%s              List saved commands.\n", bold, reset)
+	fmt.Printf("    %s/unsave <name>%s      Remove a saved command.\n", bold, reset)
+	fmt.Println()
+	fmt.Printf("    %s/search <keywords>%s  Search instruments by keyword.\n", bold, reset)
+	fmt.Printf("    %s/commands%s          Browse command inventory (table). Use %scommands -o json%s for manifest.\n", bold, reset, bold, reset)
+	fmt.Println()
+	fmt.Printf("  %sFor data queries, type the command directly:%s\n", dim, reset)
+	fmt.Printf("    perps snapshot --currency BTC\n")
+	fmt.Printf("    options vol-surface snapshot --currency BTC -o json\n")
+	fmt.Println()
+	fmt.Printf("  %sAt the system shell, run %slaevitas <subcommand>%s%s — the REPL is\n", dim, bold, reset, dim)
+	fmt.Printf("  %sa human-only convenience surface; agents and scripts pipe directly.%s\n", dim, reset)
+	fmt.Println()
 }
 
 func executeREPLCommand(line string, client *api.Client) {
