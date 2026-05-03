@@ -184,6 +184,18 @@ func runInteractive() error {
 		// Handle REPL-only commands before passing to cobra
 		args := splitArgs(line)
 
+		// Pipe / redirect detection — the REPL is a thin readline-on-cobra
+		// dispatcher, not a shell. `|`, `>`, `>>`, `&&` are common things
+		// users will reach for (especially after seeing `command -o json`
+		// in agent examples), and cobra parses the trailing tokens as
+		// flags, producing confusing errors like "unknown shorthand flag:
+		// '5' in -5". Catch it explicitly and point them at the system
+		// shell where these actually work.
+		if hint := replPipeHint(args); hint != "" {
+			fmt.Println(hint)
+			continue
+		}
+
 		// Strip leading "laevitas" — users often copy examples from help text
 		if len(args) > 1 && strings.ToLower(args[0]) == "laevitas" {
 			args = args[1:]
@@ -257,6 +269,47 @@ func printREPLHelp() {
 	fmt.Printf("  %sAt the system shell, run %slaevitas <subcommand>%s%s — the REPL is\n", dim, bold, reset, dim)
 	fmt.Printf("  %sa human-only convenience surface; agents and scripts pipe directly.%s\n", dim, reset)
 	fmt.Println()
+}
+
+// replPipeHint detects shell-control tokens (|, >, >>, &&) in the
+// argument list and returns a friendly hint pointing the user at the
+// system shell. Returns empty string when no shell control is present
+// (the common case — caller proceeds to dispatch normally).
+//
+// The REPL is a thin readline-on-cobra dispatcher, not a shell. We
+// don't (and shouldn't) implement pipes/redirects — that's its own
+// subsystem and we'd be reimplementing bash. But cobra's parse error
+// when these tokens leak through is awful UX ("unknown shorthand flag:
+// '5' in -5" when the user typed `... | head -5`), so we trap and
+// give a clear "exit and run at shell" pointer instead.
+func replPipeHint(args []string) string {
+	red := output.Red
+	dim := output.BrandGreyMid
+	bold := output.Bold
+	reset := output.Reset
+
+	for i, a := range args {
+		switch a {
+		case "|", ">", ">>", "&&", "||", "2>", "2>&1":
+			// Reconstruct the user's intended shell command for the hint.
+			// Strip a leading slash from the first token (the user might
+			// have typed /commands -o json | head) so the suggestion is
+			// directly copy-pastable at the system shell.
+			rebuilt := append([]string{}, args...)
+			if len(rebuilt) > 0 {
+				rebuilt[0] = strings.TrimPrefix(rebuilt[0], "/")
+			}
+			cmd := "laevitas " + strings.Join(rebuilt, " ")
+			_ = i // kept for future "highlight the offending token" UX
+			return fmt.Sprintf(
+				"%s✗%s pipes and redirects don't work inside the REPL — they're a shell feature.\n"+
+					"  %sExit the REPL (/quit) and run at your system shell:%s\n"+
+					"    %s%s%s",
+				red, reset, dim, reset, bold, cmd, reset,
+			)
+		}
+	}
+	return ""
 }
 
 func executeREPLCommand(line string, client *api.Client) {
