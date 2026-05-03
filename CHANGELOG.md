@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.9.0] — 2026-05-03
+
+Agent-introspection release. Two new commands let agents discover the CLI
+surface and validate their setup without crawling `--help` for 80+
+commands or guessing why an authenticated call fails.
+
+### Added
+
+- **`laevitas commands`** — machine-readable inventory of every command,
+  flag, argument, and execution constraint. Walks the cobra command
+  tree and emits one JSON document with:
+  - `path`, `short`, `long`, `args`, `flags`, `examples`, `aliases`
+  - `requires_auth` — does this command need an API key or wallet?
+  - `requires_wallet` — does this command strictly need an x402 wallet?
+  - `streaming` — does this open a long-lived NDJSON stream?
+  - `output_modes` — which `-o` values the command accepts.
+  - `endpoint_hint` — the REST URL the command typically hits
+    (metadata, not contract — URLs may change between server versions).
+
+  Defaults to JSON regardless of TTY (the only command that does — its
+  audience is agents). Add `--filter <substring>` to narrow the output
+  to matching command paths. `-o table` for a human-readable summary.
+- **`laevitas doctor`** — health check for the user's setup. Runs an
+  ordered battery of read-only checks (version freshness, config file,
+  API key presence and validity, base URL reachability, WS gateway,
+  wallet key, x402 token cache). Each check reports
+  `pass / warn / fail / skipped` with a one-line remediation when not
+  pass. `skipped` is distinct from `fail` — it means "this would work
+  but you haven't configured it yet".
+
+  Exit code is non-zero only on a real fail. Doctor never costs money:
+  the wallet check decodes the key locally and reports the address but
+  does not dial chain; no x402 payment is attempted. JSON output
+  includes an environment block (`binary_path`, `config_path`,
+  `config_source`, `api_key_source`, `wallet_key_source`, `platform`,
+  `network_timeout_ms`) useful when an agent reports a diagnostic to
+  the user.
+
+### Changed
+
+- **Endpoint registry centralised**. The watch endpoint map (`cmd/watch.go`)
+  and the new commands manifest both consume `api.CommandEndpoints()`,
+  a single map living in `internal/api/command_endpoints.go`. Single
+  source of truth so the two surfaces can't drift.
+
+### Fixed
+
+- **Vol-surface watch resolution.** The watch endpoint map's keys for
+  `options vol-surface` were stale: `by-expiry`/`by-tenor`/`by-time`
+  (the legacy endpoint constants) instead of the actual subcommand
+  names `snapshot`/`term-structure`/`history`. `laevitas watch 5s
+  options vol-surface snapshot --currency BTC` would have errored
+  "unsupported command for watch" before — now resolves correctly via
+  the centralised registry.
+
 ## [0.8.8] — 2026-05-03
 
 Polish bundle from agent-feedback follow-up — UX paper-cuts that don't

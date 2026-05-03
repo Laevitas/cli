@@ -4,7 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Laevitas CLI — Crypto Derivatives Analytics</title>
-  <meta name="description" content="Crypto derivatives analytics from your terminal. Futures, perpetuals, options, volatility surfaces, and prediction markets.">
+  <meta name="description" content="Real-time crypto derivatives data from your terminal. Futures, perpetuals, options, vol surfaces, prediction markets, live WebSocket streams. Built for humans and AI agents.">
+  <meta property="og:title" content="Laevitas CLI">
+  <meta property="og:description" content="Real-time crypto derivatives data from your terminal. Built for humans and AI agents.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://cli.laevitas.ch">
   <style>
     :root {
       --bg: #0d1117;
@@ -13,7 +17,8 @@
       --text: #e6edf3;
       --muted: #8b949e;
       --accent: #58a6ff;
-      --green: #3fb950;
+      --green: #46be52;
+      --green-dim: #2f8a37;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -25,41 +30,62 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 4rem 1.5rem;
+      padding: 4rem 1.5rem 2rem;
     }
-    .container { max-width: 720px; width: 100%; }
+    .container { max-width: 760px; width: 100%; }
     h1 {
       font-size: 2.5rem;
       font-weight: 700;
       margin-bottom: 0.5rem;
+      letter-spacing: -0.02em;
     }
-    h1 span { color: var(--accent); }
+    h1 span { color: var(--green); }
     .tagline {
       color: var(--muted);
       font-size: 1.15rem;
       margin-bottom: 2.5rem;
     }
+    .lede {
+      color: var(--text);
+      font-size: 1rem;
+      margin-bottom: 2.5rem;
+      padding: 1.25rem 1.5rem;
+      background: var(--surface);
+      border-left: 3px solid var(--green);
+      border-radius: 4px;
+    }
+    h2.section {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-top: 2.5rem;
+      margin-bottom: 0.9rem;
+      font-weight: 600;
+    }
+    h2.section:first-of-type { margin-top: 0; }
     .install-block {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 1.5rem;
-      margin-bottom: 1.5rem;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1rem;
     }
-    .install-block h2 {
+    .install-block h3 {
       font-size: 0.85rem;
       text-transform: uppercase;
       letter-spacing: 0.05em;
       color: var(--muted);
-      margin-bottom: 0.75rem;
+      margin-bottom: 0.6rem;
+      font-weight: 600;
     }
     .code-line {
       background: var(--bg);
       border: 1px solid var(--border);
       border-radius: 6px;
-      padding: 0.75rem 1rem;
+      padding: 0.7rem 1rem;
       font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-      font-size: 0.9rem;
+      font-size: 0.88rem;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -77,7 +103,7 @@
       padding: 0.3rem 0.6rem;
       border-radius: 4px;
       cursor: pointer;
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       white-space: nowrap;
       transition: color 0.15s, border-color 0.15s;
     }
@@ -85,51 +111,102 @@
     .copy-btn.copied { color: var(--green); border-color: var(--green); }
     .methods {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1rem;
-      margin-bottom: 2.5rem;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 0.8rem;
+      margin-bottom: 0.5rem;
     }
-    @media (max-width: 540px) { .methods { grid-template-columns: 1fr; } }
+    @media (max-width: 640px) { .methods { grid-template-columns: 1fr; } }
     .method {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 1.25rem;
+      padding: 1rem 1.1rem;
     }
     .method h3 {
-      font-size: 0.95rem;
+      font-size: 0.9rem;
       margin-bottom: 0.4rem;
     }
     .method code {
       font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       color: var(--muted);
+      word-break: break-all;
     }
+    .examples {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 0.85rem;
+      line-height: 1.7;
+      overflow-x: auto;
+    }
+    .examples .prompt { color: var(--muted); user-select: none; }
+    .examples .cmd { color: var(--green); }
+    .examples .comment { color: var(--muted); font-style: italic; }
+    .examples .out { color: var(--text); opacity: 0.7; }
+    ul.features {
+      list-style: none;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem 1.5rem;
+    }
+    @media (max-width: 640px) { ul.features { grid-template-columns: 1fr; } }
+    ul.features li {
+      color: var(--text);
+      padding-left: 1.4rem;
+      position: relative;
+      font-size: 0.94rem;
+    }
+    ul.features li::before {
+      content: '▲';
+      color: var(--green);
+      position: absolute;
+      left: 0;
+      font-size: 0.75rem;
+      top: 0.4rem;
+    }
+    ul.features li strong { color: var(--text); font-weight: 600; }
+    ul.features li span { color: var(--muted); }
     .links {
       display: flex;
-      gap: 1.5rem;
-      margin-top: 2rem;
+      gap: 1.25rem;
+      margin-top: 2.5rem;
+      flex-wrap: wrap;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
     }
     .links a {
       color: var(--accent);
       text-decoration: none;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
     }
     .links a:hover { text-decoration: underline; }
     footer {
-      margin-top: 4rem;
+      margin-top: 3rem;
       color: var(--muted);
-      font-size: 0.85rem;
+      font-size: 0.82rem;
+      text-align: center;
     }
+    footer a { color: var(--muted); text-decoration: underline; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1><span>laevitas</span> cli</h1>
-    <p class="tagline">Crypto derivatives analytics from your terminal. Built for humans and AI agents.</p>
+    <p class="tagline">Real-time crypto derivatives data from your terminal. Built for humans and AI agents.</p>
+
+    <p class="lede">
+      One CLI for the entire Laevitas market data surface — futures, perpetuals, options, spot,
+      vol surfaces, prediction markets, live WebSocket streams, and multi-venue book dashboards.
+      Stable JSON envelope for agents; rich TUI for humans. No SDK to learn.
+    </p>
+
+    <h2 class="section">Install</h2>
 
     <div class="install-block">
-      <h2>macOS / Linux</h2>
+      <h3>macOS &middot; Linux</h3>
       <div class="code-line">
         <code>curl -sSL https://cli.laevitas.ch/install.sh | sh</code>
         <button class="copy-btn" onclick="copyCmd(this, 'curl -sSL https://cli.laevitas.ch/install.sh | sh')">Copy</button>
@@ -137,7 +214,7 @@
     </div>
 
     <div class="install-block">
-      <h2>Windows (PowerShell)</h2>
+      <h3>Windows &middot; PowerShell</h3>
       <div class="code-line">
         <code>irm https://cli.laevitas.ch/install.ps1 | iex</code>
         <button class="copy-btn" onclick="copyCmd(this, 'irm https://cli.laevitas.ch/install.ps1 | iex')">Copy</button>
@@ -147,30 +224,100 @@
     <div class="methods">
       <div class="method">
         <h3>Homebrew</h3>
-        <code>brew tap laevitas/cli && brew install laevitas</code>
+        <code>brew install laevitas/cli/laevitas</code>
+      </div>
+      <div class="method">
+        <h3>Scoop</h3>
+        <code>scoop bucket add laevitas https://github.com/Laevitas/scoop-bucket && scoop install laevitas</code>
       </div>
       <div class="method">
         <h3>Go</h3>
-        <code>go install github.com/laevitas/cli@latest</code>
+        <code>go install github.com/Laevitas/cli@latest</code>
       </div>
-      <div class="method">
-        <h3>Docker</h3>
-        <code>docker run --rm laevitas/cli --help</code>
-      </div>
-      <div class="method">
-        <h3>From source</h3>
-        <code>git clone &amp; make build</code>
-      </div>
+    </div>
+
+    <h2 class="section">Verify &amp; configure</h2>
+    <div class="examples">
+<span class="prompt">$</span> <span class="cmd">laevitas version</span>           <span class="comment"># confirm install</span>
+<span class="prompt">$</span> <span class="cmd">laevitas config init</span>       <span class="comment"># one-time API key setup</span>
+<span class="prompt">$</span> <span class="cmd">laevitas doctor</span>            <span class="comment"># validate auth + API + WebSocket health</span>
+    </div>
+
+    <h2 class="section">What it does</h2>
+    <ul class="features">
+      <li><strong>Futures &amp; perps</strong> <span>— catalog, OHLCVT, open interest, funding/carry, liquidations</span></li>
+      <li><strong>Options</strong> <span>— flow, vol surface, IV / Greeks, skew, term structure</span></li>
+      <li><strong>Spot</strong> <span>— catalog, OHLCVT, ticker, L2 order book across major venues</span></li>
+      <li><strong>Predictions</strong> <span>— Polymarket probabilities, trades, snapshots</span></li>
+      <li><strong>Live streams</strong> <span>— WebSocket NDJSON for trades, ticker, book, liquidations</span></li>
+      <li><strong>Dashboards</strong> <span>— multi-venue book ladder, perp screener, options chain</span></li>
+      <li><strong>x402 wallet</strong> <span>— pay-per-request in USDC on Base, no API key required</span></li>
+      <li><strong>Self-updating</strong> <span>— <code>laevitas update</code> pulls the latest release</span></li>
+    </ul>
+
+    <h2 class="section">Quick examples</h2>
+    <div class="examples">
+<span class="comment"># Snapshot of every BTC perp across configured venues</span>
+<span class="prompt">$</span> <span class="cmd">laevitas perps snapshot --currency BTC</span>
+
+<span class="comment"># BTC funding rate over the last 24 hours, with inline chart</span>
+<span class="prompt">$</span> <span class="cmd">laevitas perps carry BTC-PERPETUAL -p 24h</span>
+
+<span class="comment"># Live trades on Binance perps, NDJSON to stdout</span>
+<span class="prompt">$</span> <span class="cmd">laevitas ws perpetuals trades binance:BTCUSDT</span>
+
+<span class="comment"># Multi-venue order book ladder (live TUI)</span>
+<span class="prompt">$</span> <span class="cmd">laevitas dash book perpetuals BTCUSDT</span>
+
+<span class="comment"># Vol surface across all maturities</span>
+<span class="prompt">$</span> <span class="cmd">laevitas options vol-surface snapshot --currency BTC</span>
+    </div>
+
+    <h2 class="section">For AI agents</h2>
+    <p style="color: var(--muted); margin-bottom: 1rem; font-size: 0.95rem;">
+      Stable <code style="color: var(--green);">{success, data, meta}</code> JSON envelope on every REST response.
+      NDJSON for WebSocket streams. Machine-readable command manifest for first-run discovery.
+      <code style="color: var(--green);">laevitas doctor</code> reports environment state in JSON for
+      diagnostic round-trips.
+    </p>
+    <div class="examples">
+<span class="comment"># Full command manifest — every path, flag, arg, example</span>
+<span class="prompt">$</span> <span class="cmd">laevitas commands -o json | jq '.data.commands | length'</span>
+<span class="out">100+</span>
+
+<span class="comment"># All streaming commands</span>
+<span class="prompt">$</span> <span class="cmd">laevitas commands -o json | jq '.data.commands[] | select(.streaming) | .path'</span>
+
+<span class="comment"># Single record from a snapshot, agent-friendly</span>
+<span class="prompt">$</span> <span class="cmd">laevitas perps snapshot --currency BTC -o json | jq '.data[0]'</span>
+
+<span class="comment"># Health report including binary path, config source, platform</span>
+<span class="prompt">$</span> <span class="cmd">laevitas doctor -o json | jq '.data.summary, .data.env'</span>
+    </div>
+
+    <h2 class="section">Upgrade</h2>
+    <div class="examples">
+<span class="prompt">$</span> <span class="cmd">laevitas update</span>             <span class="comment"># in-place upgrade to the latest release</span>
+<span class="prompt">$</span> <span class="cmd">laevitas update --check</span>     <span class="comment"># report current vs. latest, don't upgrade</span>
     </div>
 
     <div class="links">
-      <a href="https://github.com/laevitas/cli">GitHub</a>
-      <a href="https://github.com/laevitas/cli#commands">Documentation</a>
-      <a href="https://docs.laevitas.ch/api">API Reference</a>
+      <a href="https://github.com/Laevitas/cli">GitHub</a>
+      <a href="https://github.com/Laevitas/cli#commands">CLI commands</a>
+      <a href="https://apiv2.laevitas.ch/swagger">REST API (Swagger)</a>
+      <a href="https://apiv2.laevitas.ch/redoc">REST API (Redoc)</a>
+      <a href="https://apiv2.laevitas.ch/websocket/">WebSocket protocol</a>
+      <a href="https://apiv2.laevitas.ch/x402/">x402 payments</a>
+      <a href="https://apiv2.laevitas.ch/changelog.html">API changelog</a>
     </div>
   </div>
 
-  <footer>&copy; Laevitas</footer>
+  <footer>
+    &copy; Laevitas &middot;
+    <a href="https://github.com/Laevitas/cli/blob/main/LICENSE">MIT</a> &middot;
+    <a href="https://discord.com/invite/yaXc4EFFay">Discord</a> &middot;
+    <a href="https://twitter.com/laevitas1">Twitter</a>
+  </footer>
 
   <script>
     function copyCmd(btn, text) {

@@ -54,11 +54,14 @@ Data sourced from Laevitas REST and WebSocket APIs across supported venues.
   Authenticate:  laevitas config init
   Quick start:   laevitas futures snapshot --currency BTC
   Agent mode:    laevitas perps carry BTCUSDT -o json | jq '.data[0]'
+  Discover:      laevitas commands -o json    (full command manifest)
+  Diagnose:      laevitas doctor              (auth + API + WS health check)
   Interactive:   laevitas   (no arguments → REPL shell, humans only —
                             agents/scripts: pipe subcommands directly)
 
-Documentation:  https://apiv2.laevitas.ch/redoc
-API Reference:  https://apiv2.laevitas.ch/redoc`,
+CLI install + docs:  https://cli.laevitas.ch
+REST API (Swagger):  https://apiv2.laevitas.ch/swagger
+WebSocket protocol:  https://apiv2.laevitas.ch/websocket/`,
 	Version: fmt.Sprintf("%s (commit: %s, built: %s)", version.Version, version.CommitSHA, version.BuildDate),
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		switch outputFormat {
@@ -144,9 +147,13 @@ func init() {
 {{.InheritedFlags.FlagUsages}}{{end}}
 Use "{{.CommandPath}} [command] --help" for more info.
 
-` + bgm + `Docs:    https://apiv2.laevitas.ch/redoc
-Discord: https://discord.com/invite/yaXc4EFFay
-Twitter: https://twitter.com/laevitas1` + reset + `
+` + bgm + `Docs:       https://cli.laevitas.ch
+API:        https://apiv2.laevitas.ch          (Swagger: /swagger · Redoc: /redoc)
+WebSocket:  https://apiv2.laevitas.ch/websocket/
+x402:       https://apiv2.laevitas.ch/x402/
+Changelog:  https://apiv2.laevitas.ch/changelog.html
+Discord:    https://discord.com/invite/yaXc4EFFay
+Twitter:    https://twitter.com/laevitas1` + reset + `
 `)
 	}
 

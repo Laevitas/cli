@@ -322,8 +322,26 @@ The CLI is designed to be used by AI agents (Claude, GPT, Codex, etc.) as a nati
 - **Structured REST output** — `-o json` returns a stable `{success,data,meta}` envelope
 - **Streaming output** — `ws` emits NDJSON when piped
 - **Composable** — pipe, filter, combine with `jq`, `awk`, other CLIs
-- **Discoverable** — `--help` on every command
+- **Discoverable** — `--help` on every command, plus `laevitas commands -o json` for a full machine-readable manifest
 - **Deterministic** — same input → same output
+- **Self-diagnosing** — `laevitas doctor` validates auth, config, API reachability, and wallet state in one shot
+
+### Introspection (v0.9.0+)
+
+```bash
+# Full command manifest — every path, flag, arg, example
+laevitas commands -o json
+
+# Narrow by substring
+laevitas commands --filter ws
+
+# Find streaming-only commands
+laevitas commands -o json | jq '.data.commands[] | select(.streaming) | .path'
+
+# Health check — pass/warn/fail/skipped per check
+laevitas doctor
+laevitas doctor -o json | jq '.data.summary'
+```
 
 ### Agent examples
 
