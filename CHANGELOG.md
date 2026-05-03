@@ -7,6 +7,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.9.3] — 2026-05-03
+
+Foundation release for the upcoming `dash flow` dashboard. Hardens the
+dashboard kernel and wsclient subscription state machine so panels can
+rotate their subscription set safely as the user drills in and out.
+No user-facing feature changes; existing surfaces (`dash book`,
+`ws book`, all REST commands) verified unchanged. `go test ./...`
+green; targeted state-machine tests added for the lifecycle paths
+fixed below.
+
+### Added
+
+- **`wsclient.Client.Unsubscribe(channels ...string)`** — public
+  method that removes channels from the active subscription set and,
+  for acked channels, sends a JSON-RPC `unsubscribe` RPC using the
+  server-issued `subscriptionId`. The ack handler now captures
+  `subscriptionIds[]` from the subscribe success result (parallel
+  to the existing `channels[]` parse) so unsubscribe can address
+  the right server-side subscription.
+- **`subUnsubAfterAck` tombstone state** in the wsclient subscribe
+  state machine. Caller invokes `Unsubscribe(ch)` while `ch`'s
+  subscribe RPC is still awaiting an ack → entry is kept (not
+  deleted) so the ack handler matches the imminent ack against it
+  and fires the unsubscribe RPC as soon as the server-issued id
+  arrives. Without the tombstone, an Unsubscribe-during-in-flight-
+  subscribe leaked the server-side subscription for the rest of the
+  connection's lifetime.
+- **`Selection.Market` field** on `dashboard.Selection` carrying the
+  canonical product family (`perpetuals`, `futures`, `options`,
+  `spot`, `predictions`). Required by panels that build WS channel
+  strings from selection state — `book.<market>.<venue>.<symbol>`
+  can't be assembled without it. Other future fields (margin, quote,
+  etc.) intentionally not pre-modeled; they land when their
+  dashboards do.
+
+### Fixed
+
+- **`SelectionChangedMsg` now mutates `r.selection`** before the
+  kernel broadcasts the message and refreshes subscriptions. The
+  contract was documented in v0.8.3 but the handler had only
+  broadcast — drill-down across panels would have silently failed
+  to propagate. Unobserved until now because no existing dashboard
+  drilled down; `dash flow`'s screener→detail navigation is the
+  first user.
+- **`FeedRouter.subscribe` reconciles add and remove** on every
+  call instead of add-only. Earlier comment said "remove handling
+  deferred"; panels rotating their subscription set as the user
+  navigated would have accumulated channels forever, eventually
+  tripping the gateway's 200-subs-per-connection cap.
+- **Subscribe-after-Unsubscribe-before-ack** now correctly restores
+  the in-flight entry instead of being silently dropped. Without
+  this, the sequence `Subscribe(ch) → Unsubscribe(ch) → Subscribe(ch)`
+  all before the first ack would tombstone, see the entry exists
+  on the second Subscribe, no-op, and then have the ack handler
+  unsubscribe and delete despite the renewed intent.
+- **Tombstones are deleted on reconnect**, not flipped to
+  `subPending` like every other state. Resetting them would
+  resurrect channels the caller explicitly removed.
+- **`Unsubscribe` is idempotent against tombstoned entries.**
+  Repeated `Unsubscribe(ch)` on a channel already in
+  `subUnsubAfterAck` preserves the tombstone (deletes would
+  resurrect the original ack-arrives-after-delete leak). All other
+  states fall through to local-only drop.
+- **Atomic conn install + state reset** at the top of every
+  connection. Earlier, `activeConn` was published before
+  `resetSubsForReconnect()` ran; a concurrent `Unsubscribe` in
+  the window between could read the new connection paired with
+  a stale `subscriptionID` from the previous one and address the
+  wrong subscription on the fresh gateway.
+- **`subscriptionID` cleared on every reconnect and before every
+  fresh subscribe attempt** so a stale id from a prior connection
+  can never be sent to a different gateway.
+- **`FeedRouter` mutex now covers `cli`, `current`, and `pending`
+  together.** Earlier, the post-dial install populated `f.current`
+  outside the lock — a concurrent `subscribe()` could observe
+  `cli != nil` with empty `current` and compute the wrong diff
+  baseline.
+- **Post-dial reconciliation runs under the same critical section**
+  as the install, including the wsclient `Subscribe`/`Unsubscribe`
+  RPCs for any latest-pending arrivals that beat the dial snapshot.
+  Without this, a concurrent `subscribe(want=A)` during startup
+  could land between the unlock and the reconciliation and have
+  its intent reverted by stale latestPending.
+- **`stop()` reads `f.cli` under the mutex** before closing —
+  earlier unlocked read could race with `start()`'s write if the
+  user quit during the dial window.
+- **Tombstone-only subscribe errors** are dropped silently. If a
+  bundled subscribe RPC errors and every matched entry was a
+  tombstone, no soft error is emitted (previously surfaced a
+  generic "server error on rpc id=N" that the user could do nothing
+  about — they'd already abandoned the channels).
+- **Write errors from `Unsubscribe`'s RPC sends** are returned
+  (first error wins) instead of silently dropped. Local intent
+  removal remains unconditional, so callers always see the channel
+  removed from the client's intent set even on transient gateway
+  communication failure.
+
+### Tests
+
+- Eight focused state-machine tests in `internal/wsclient/wsclient_test.go`
+  and `internal/dashboard/dashboard_test.go` covering the lifecycle
+  paths fixed above:
+  - tombstone idempotency under repeated Unsubscribe
+  - subscribe-restores-tombstone preserving the in-flight rpcID
+  - reconnect deletes tombstones (no resurrection)
+  - Unsubscribe of pending and unknown channels
+  - ack handler drops tombstoned entries
+  - pre-dial pending replacement (no additive drift)
+  - `channelSetsEqual` set semantics including same-length-with-duplicates
+    edge case
+
 ## [0.9.2] — 2026-05-03
 
 ### Fixed
