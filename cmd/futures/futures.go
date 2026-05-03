@@ -391,7 +391,12 @@ var tradesSummaryCmd = &cobra.Command{
 	Aliases: []string{"ts"},
 	Short:   "Aggregated trade statistics grouped by axis",
 	Long: `Returns aggregated trade statistics grouped by a chosen axis.
-Valid --group-by values: exchange, instrument_name, maturity, direction, strategy.`,
+Valid --group-by values: exchange, instrument_name, maturity, direction, strategy.
+
+Flag notes:
+  --group-by is required (the API needs to know what axis to aggregate on).
+  Standard -n / --limit / pagination flags apply to the row count returned;
+    each row represents one bucket of the chosen group.`,
 	Example: `  laevitas futures trades-summary --currency BTC --group-by maturity
   laevitas futures trades-summary --currency BTC --group-by direction --block-only
   laevitas futures ts --currency ETH --group-by exchange -p 24h`,
@@ -423,7 +428,13 @@ var flowCmd = &cobra.Command{
 	Short: "Aggregated flow summary — trades, volume, OI, liquidations",
 	Long: `Returns a complete futures flow summary including trade volume,
 buy/sell breakdown, OI changes, liquidation pressure, notable trades,
-and most active instruments — all in a single call.`,
+and most active instruments — all in a single call.
+
+Flag notes:
+  --currency is required.
+  --top-n caps the notable-trades / active-instruments lists. NOT a
+    pagination flag — flow returns a single aggregated record per
+    request, so -n / --limit / --cursor do not apply.`,
 	Example: `  laevitas futures flow --currency BTC
   laevitas futures flow --currency BTC --min-amount 10 --top-n 20
   laevitas futures flow --currency ETH --start 2026-02-26T00:00:00Z`,

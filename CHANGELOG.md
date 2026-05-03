@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.8.8] — 2026-05-03
+
+Polish bundle from agent-feedback follow-up — UX paper-cuts that don't
+change behaviour but make the CLI easier to discover and use unaided.
+
+### Changed
+
+- **`wallet address` writes a stderr hint when no wallet is configured.**
+  Stdout stays empty (the documented pipe-friendly contract) and the
+  exit code is still non-zero, so `addr=$(laevitas wallet address)`
+  scripts behave identically. Interactive users now see
+  `no wallet key configured — run "laevitas wallet init" or set
+  LAEVITAS_WALLET_KEY` instead of a silent failure.
+- **REPL is documented as human-only.** The bare `laevitas` command
+  opens a readline shell that hangs waiting for input from non-TTY
+  callers — agents and scripts should pipe subcommands directly. New
+  rule in `docs/SKILL.md` ("Operating Rules for LLMs" #7) and a
+  one-line note on the root `--help` Interactive line make the
+  intended audience explicit.
+- **`flow` and `trades-summary` help text clarifies the unique flag
+  vocabulary.** Both commands have a `Flag notes:` block in their
+  `--help` long text:
+  - `flow`: `--currency` is required, `--top-n` caps notable-trades
+    lists (NOT pagination — a flow request returns a single
+    aggregated record, so `-n` / `--limit` / `--cursor` don't apply).
+  - `trades-summary`: `--group-by` is required (the API needs the
+    aggregation axis), and standard `-n` pagination applies to the
+    bucket count returned.
+  Applied across futures, perps, and options so the same vocabulary
+  surfaces on every group.
+
 ## [0.8.7] — 2026-05-02
 
 Bundle of real bugs surfaced by the broad smoke test across REST endpoints,

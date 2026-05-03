@@ -54,7 +54,8 @@ Data sourced from Laevitas REST and WebSocket APIs across supported venues.
   Authenticate:  laevitas config init
   Quick start:   laevitas futures snapshot --currency BTC
   Agent mode:    laevitas perps carry BTCUSDT -o json | jq '.data[0]'
-  Interactive:   laevitas   (no arguments → REPL shell)
+  Interactive:   laevitas   (no arguments → REPL shell, humans only —
+                            agents/scripts: pipe subcommands directly)
 
 Documentation:  https://apiv2.laevitas.ch/redoc
 API Reference:  https://apiv2.laevitas.ch/redoc`,

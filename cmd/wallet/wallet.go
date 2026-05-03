@@ -190,11 +190,17 @@ var addressCmd = &cobra.Command{
 	Use:   "address",
 	Short: "Print the wallet address (pipe-friendly)",
 	Long: `Prints just the wallet address with no formatting — suitable for
-shell substitution. Exits non-zero with an empty line if no wallet is configured.`,
+shell substitution. Exits non-zero with an empty line if no wallet is
+configured; a one-line hint is written to stderr in that case so an
+interactive user sees what to do, while scripts using
+` + "`addr=$(laevitas wallet address)`" + ` still get a clean empty stdout.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := loadWalletState()
 		if state.Address == "" {
+			// Stdout stays empty (pipe-friendly contract); stderr carries
+			// the actionable hint so interactive users know what's missing.
 			fmt.Println()
+			fmt.Fprintln(os.Stderr, `no wallet key configured — run "laevitas wallet init" or set LAEVITAS_WALLET_KEY`)
 			os.Exit(1)
 		}
 		fmt.Println(state.Address)
