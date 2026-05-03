@@ -30,6 +30,45 @@ Read `.meta.auth` on every REST response to confirm which path served the reques
 
 WebSocket auth is API-key only for now. If `LAEVITAS_AUTH=x402` is set, use REST commands or switch to API-key auth before calling `laevitas ws`.
 
+## Introspection (v0.9.0+)
+
+Two commands let an agent discover and validate its setup without crawling `--help`:
+
+### `laevitas commands -o json`
+
+Returns one JSON document with every command's path, args, flags, examples, and execution constraints. Defaults to JSON regardless of TTY (the only command that does — its purpose is machine-readability). Add `--filter <substring>` to narrow the manifest by command path.
+
+Each entry includes:
+
+- `path` — the command as you'd type it (e.g. `perps orderbook-raw`).
+- `requires_auth` — true for commands that need an API key or wallet. Local commands like `version`, `commands`, `doctor`, `config show/set/unset/path`, `wallet show/init/set-key/unset/address` are false.
+- `requires_wallet` — true only for `wallet init/set-key/unset` (commands that strictly need an x402 wallet, distinct from any auth path).
+- `streaming` — true for `ws *` and `dash *`. Streaming commands emit NDJSON, not the canonical envelope; consumers parse one JSON object per line.
+- `output_modes` — which `-o` values the command accepts. Streaming is `[auto, json]`; watch is `[table]`; everything else is `[auto, json, table, csv]`.
+- `endpoint_hint` — the REST URL the command typically hits. **Metadata, not contract** — URLs may change between server versions.
+
+Example:
+
+```bash
+laevitas commands -o json | jq '.data.commands[] | select(.streaming) | .path'
+laevitas commands --filter ws -o json
+laevitas commands -o table | less   # human-readable summary
+```
+
+### `laevitas doctor`
+
+Runs an ordered battery of read-only checks: version freshness, config file, API key presence and validity, base URL reachability, WebSocket gateway, wallet key, x402 token cache. Each check reports `pass / warn / fail / skipped` with a one-line remediation.
+
+`skipped` is distinct from `fail` — it means "this would work but you haven't configured it yet". The exit code is non-zero **only** on a real fail. Doctor never costs money to run; the wallet check decodes the key locally without dialing chain.
+
+Use `-o json` for a machine-parseable report including an environment block (`binary_path`, `config_path`, `config_source`, `api_key_source`, `wallet_key_source`, `platform`, `network_timeout_ms`). Useful when an agent reports a diagnostic to the user — they can repro the same environment.
+
+```bash
+laevitas doctor                      # full text report
+laevitas doctor --quiet              # only print failures (CI-friendly)
+laevitas doctor -o json | jq '.data.summary'
+```
+
 ## Response shape (v0.6.0+, extended in v0.7.0)
 
 Every REST JSON response uses a stable envelope. Always parse `.success` first, then either `.data` (on success) or `.error` (on failure).

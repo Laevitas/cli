@@ -53,6 +53,14 @@ func configPath() (string, error) {
 	return filepath.Join(dir, configFileName), nil
 }
 
+// Path returns the full path to the config.json file (or empty + error
+// if the user's home dir can't be resolved). Public wrapper around the
+// internal configPath so doctor and other introspection callers can
+// surface the path in their reports.
+func Path() (string, error) {
+	return configPath()
+}
+
 // Load reads config from disk, falling back to defaults.
 // Environment variables override file values:
 //

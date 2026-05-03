@@ -323,86 +323,11 @@ func resolveWatchCommand(args []string) (string, *api.RequestParams, error) {
 func watchEndpointForCommand(cmd *cobra.Command) (string, error) {
 	path := cmd.CommandPath() // e.g. "laevitas perps funding"
 
-	// Map of "parent child" → endpoint
-	endpointMap := map[string]string{
-		// Futures
-		"futures catalog":   api.FuturesCatalog,
-		"futures snapshot":  api.FuturesSnapshot,
-		"futures ohlcvt":    api.FuturesOHLCVT,
-		"futures oi":        api.FuturesOpenInterest,
-		"futures carry":     api.FuturesCarry,
-		"futures trades":    api.FuturesTrades,
-		"futures volume":    api.FuturesVolume,
-		"futures level1":    api.FuturesLevel1,
-		"futures orderbook":     api.FuturesOrderbook,
-		"futures orderbook-raw": api.FuturesOrderbookRaw,
-		"futures ticker":        api.FuturesTickerHistory,
-		"futures ref-price": api.FuturesReferencePrice,
-		"futures metadata":       api.FuturesMetadata,
-		"futures liquidations":   api.FuturesLiquidations,
-		"futures trades-summary": api.FuturesTradesSummary,
-		"futures flow":           api.FuturesFlow,
-		// Perps
-		"perps catalog":   api.PerpsCatalog,
-		"perps snapshot":  api.PerpsSnapshot,
-		"perps carry":     api.PerpsCarry,
-		"perps ohlcvt":    api.PerpsOHLCVT,
-		"perps oi":        api.PerpsOpenInterest,
-		"perps trades":    api.PerpsTrades,
-		"perps volume":    api.PerpsVolume,
-		"perps level1":    api.PerpsLevel1,
-		"perps orderbook":     api.PerpsOrderbook,
-		"perps orderbook-raw": api.PerpsOrderbookRaw,
-		"perps ticker":        api.PerpsTickerHistory,
-		"perps ref-price": api.PerpsReferencePrice,
-		"perps metadata":       api.PerpsMetadata,
-		"perps liquidations":   api.PerpsLiquidations,
-		"perps trades-summary": api.PerpsTradesSummary,
-		"perps flow":           api.PerpsFlow,
-		// Options
-		"options catalog":    api.OptionsCatalog,
-		"options snapshot":   api.OptionsSnapshot,
-		"options ohlcvt":     api.OptionsOHLCVT,
-		"options trades":     api.OptionsTrades,
-		"options oi":         api.OptionsOpenInterest,
-		"options volume":     api.OptionsVolume,
-		"options level1":     api.OptionsLevel1,
-		"options ref-price":  api.OptionsReferencePrice,
-		"options flow":       api.OptionsFlow,
-		"options ticker":     api.OptionsTickerHistory,
-		"options volatility": api.OptionsVolatility,
-		"options metadata":       api.OptionsMetadata,
-		"options trades-summary": api.OptionsTradesSummary,
-		// Vol surface (under options)
-		"options vol-surface by-expiry": api.VolSurfaceByExpiry,
-		"options vol-surface by-tenor":  api.VolSurfaceByTenor,
-		"options vol-surface by-time":   api.VolSurfaceByTime,
-		// Predictions
-		"predictions catalog":    api.PredictionsCatalog,
-		"predictions categories": api.PredictionsCategories,
-		"predictions snapshot":   api.PredictionsSnapshot,
-		"predictions ohlcvt":     api.PredictionsOHLCVT,
-		"predictions trades":     api.PredictionsTrades,
-		"predictions orderbook":  api.PredictionsOrderbookRaw,
-		"predictions ticker":     api.PredictionsTickerHistory,
-		"predictions metadata":   api.PredictionsMetadata,
-		// Spot
-		"spot catalog":       api.SpotCatalog,
-		"spot snapshot":      api.SpotSnapshot,
-		"spot metadata":      api.SpotMetadata,
-		"spot ohlcvt":        api.SpotOHLCVT,
-		"spot ticker":        api.SpotTicker,
-		"spot volume":        api.SpotVolume,
-		"spot level1":        api.SpotLevel1,
-		"spot orderbook":     api.SpotL2Orderbook,
-		"spot orderbook-raw": api.SpotL2OrderbookRaw,
-		"spot trades":        api.SpotTrades,
-		// Cross-product instruments registry
-		"instruments list":   api.InstrumentsList,
-		"instruments detail": api.InstrumentsDetail,
-		// Analytics
-		"analytics realized-volatility": api.AnalyticsRealizedVolatility,
-	}
+	// Endpoint map for "parent child" → REST endpoint.
+	// Single source of truth lives in internal/api/command_endpoints.go;
+	// the introspection command (cmd/commands.go) consumes the same map
+	// so both surfaces stay in sync as commands are added.
+	endpointMap := api.CommandEndpoints()
 
 	// Extract command key from full path "laevitas parent child [subchild]"
 	parts := strings.Fields(path)
