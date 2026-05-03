@@ -122,11 +122,15 @@ Run with --quiet to print only the failures (useful in CI). Use
 	RunE: func(cmd *cobra.Command, args []string) error {
 		report := runDoctor()
 
-		// Force JSON when explicitly requested or piped; default to the
-		// human-readable text report otherwise. Doctor's primary audience
-		// is humans debugging their setup; agents pass -o json.
-		format := output.Resolve(cmdutil.OutputFormat)
-		if format == output.FormatJSON {
+		// Doctor's primary audience is humans debugging their setup, so
+		// default to the text report regardless of TTY-ness. The standard
+		// auto-resolve (table in TTY, JSON when piped) would surprise
+		// users who pipe doctor through a logger or tool wrapper expecting
+		// the human-readable report. JSON is opt-in via `-o json`.
+		// Mirror image of `commands`, which defaults to JSON because its
+		// audience is agents.
+		jsonRequested := cmdutil.OutputFormat == "json"
+		if jsonRequested {
 			if err := printDoctorJSON(report, os.Stdout); err != nil {
 				return err
 			}

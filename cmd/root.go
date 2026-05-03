@@ -124,16 +124,24 @@ func init() {
 	}
 
 	// Branded help template — banner + section headers in the brand
-	// palette (#46be52 green wordmark, mid-grey footer links). The
-	// previous template hard-coded plain ANSI cyan (\033[36m); the
-	// rest of the CLI's TUI surfaces had migrated to the brand
-	// palette long ago — this template was the last hold-out.
+	// palette (#46be52 green wordmark, mid-grey footer links).
+	//
+	// The template applies ALWAYS (TTY or not) so the footer URLs
+	// (Docs / API / WebSocket / x402 / Changelog / Discord / Twitter)
+	// stay visible to agents and tool wrappers that capture --help
+	// output. ANSI colour codes are only emitted when stdout is a real
+	// terminal — non-TTY callers get the same content without escape
+	// noise. Previous gating skipped the entire template on non-TTY,
+	// which made the footer invisible to agents reading help via
+	// `laevitas --help | cat` or similar.
+	bg, bgl, bgm, reset := "", "", "", ""
 	if term.IsTerminal(int(os.Stdout.Fd())) {
-		bg := output.BrandGreen
-		bgl := output.BrandGreyLight
-		bgm := output.BrandGreyMid
-		reset := output.Reset
-		rootCmd.SetUsageTemplate(bg + helpBanner + reset + bgm + `            v` + version.Version + reset + `
+		bg = output.BrandGreen
+		bgl = output.BrandGreyLight
+		bgm = output.BrandGreyMid
+		reset = output.Reset
+	}
+	rootCmd.SetUsageTemplate(bg + helpBanner + reset + bgm + `            v` + version.Version + reset + `
 
 ` + bgl + `USAGE:` + reset + `
   {{.UseLine}}{{if .HasAvailableSubCommands}} [command]{{end}}
@@ -155,7 +163,6 @@ Changelog:  https://apiv2.laevitas.ch/changelog.html
 Discord:    https://discord.com/invite/yaXc4EFFay
 Twitter:    https://twitter.com/laevitas1` + reset + `
 `)
-	}
 
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", internalConfig.DefaultOutput, "Output format: auto, json, table, csv")
 	rootCmd.PersistentFlags().StringVar(&exchange, "exchange", "", "Exchange filter/override (market-dependent).")
