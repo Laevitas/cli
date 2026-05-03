@@ -91,6 +91,16 @@ var flowFlags struct {
 var flowCmd = &cobra.Command{
 	Use:   "flow",
 	Short: "Aggregated options flow summary — premium, Greeks, notable trades",
+	Long: `Returns a complete options flow summary including premium-weighted
+volume, Greeks exposure, notable trades, and most active strikes — all
+in a single call.
+
+Flag notes:
+  --currency is required.
+  --top-n caps the notable-trades / active-strikes lists. NOT a
+    pagination flag — flow returns a single aggregated record per
+    request, so -n / --limit / --cursor do not apply.
+  --min-premium filters notable trades to those above the threshold (USD).`,
 	Example: `  laevitas options flow --currency BTC
   laevitas options flow --currency BTC --min-premium 10000 --top-n 20`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -174,7 +184,12 @@ var tradesSummaryCmd = &cobra.Command{
 	Aliases: []string{"ts"},
 	Short:   "Aggregated options trade statistics grouped by axis",
 	Long: `Returns aggregated options trade statistics grouped by a chosen axis.
-Valid --group-by values: exchange, instrument_name, strike, maturity, option_type, direction, strategy.`,
+Valid --group-by values: exchange, instrument_name, strike, maturity, option_type, direction, strategy.
+
+Flag notes:
+  --group-by is required (the API needs to know what axis to aggregate on).
+  Standard -n / --limit / pagination flags apply to the row count returned;
+    each row represents one bucket of the chosen group.`,
 	Example: `  laevitas options trades-summary --currency BTC --group-by maturity
   laevitas options trades-summary --currency BTC --group-by option_type --min-premium 5000
   laevitas options ts --currency ETH --group-by strike -p 24h`,

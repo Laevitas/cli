@@ -15,6 +15,7 @@ For REST automation, always use `-o json`, parse `.success` first, then read `.d
 4. For WebSocket commands, parse one JSON object per line; there is no REST-style `.success` envelope.
 5. Use catalog or `instruments list` to discover real instrument names before fetching time-series data.
 6. Do not pass time-series flags to snapshots. Snapshot commands do not accept `-n`, `--period`, `--start`, `--end`, `--resolution`, or `--cursor`.
+7. **Do not invoke the bare `laevitas` command (REPL mode).** The REPL is an interactive ergonomic surface for humans (readline, tab-completion, persistent history). It will hang waiting for input when run from a non-TTY context. Always run subcommands directly: `laevitas <group> <subcommand> ... -o json`.
 
 ## Authentication
 
