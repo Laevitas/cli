@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.9.2] — 2026-05-03
+
+### Fixed
+
+- **REPL now points users at the system shell when they type pipes or
+  redirects.** v0.9.1 verification surfaced this: typing
+  `/commands -o json | head -5` inside the REPL produced
+  `unknown shorthand flag: '5' in -5` because cobra parsed the
+  trailing tokens as flags. The REPL is a readline-on-cobra dispatcher,
+  not a shell — implementing pipes properly would mean reimplementing
+  bash. Instead we detect `|`, `>`, `>>`, `&&`, `||`, `2>`, `2>&1` in
+  the args and emit a clear hint:
+
+      ✗ pipes and redirects don't work inside the REPL — they're a shell feature.
+        Exit the REPL (/quit) and run at your system shell:
+          laevitas commands -o json | head -5
+
 ## [0.9.1] — 2026-05-03
 
 Polish bundle: two v0.9.0 paper-cuts plus REPL slash-command syntax.
