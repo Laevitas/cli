@@ -10,12 +10,12 @@
 // Three message classes flow through the root:
 //
 //   - tea.KeyMsg       → routed to the focused panel only (so j/k
-//                        doesn't navigate every panel at once).
+//     doesn't navigate every panel at once).
 //   - tea.WindowSizeMsg → broadcast to every panel after the root
-//                        recomputes its size budget.
+//     recomputes its size budget.
 //   - data messages    → broadcast to every panel (FeedTickMsg from
-//                        the WS pump, SelectionChangedMsg when the
-//                        active symbol/expiry/etc. changes).
+//     the WS pump, SelectionChangedMsg when the
+//     active symbol/expiry/etc. changes).
 //
 // Hidden panes still receive data messages so re-focus is instant —
 // no warm-up gap when the user Tabs to a panel they haven't viewed
@@ -28,6 +28,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -262,6 +263,20 @@ type Root struct {
 	feedState FeedState
 	lastErr   string
 
+	// tickCount counts every FeedTickMsg the kernel has handled
+	// since healthy state was reached. Used by renderFeedPill to
+	// surface a live updates-per-second rate in the header. Reset
+	// to 0 each time we transition to FeedHealthy so the rate
+	// reflects the current connection's traffic, not lifetime.
+	tickCount int64
+
+	// healthySince is the wall-clock anchor for tickCount's rate
+	// computation. Set when feedState first transitions to
+	// FeedHealthy; the rate is tickCount / time.Since(healthySince).
+	// Zero value means "no healthy session yet" — rate renders as
+	// "—" instead of dividing by zero.
+	healthySince time.Time
+
 	// spinner is the single source of animation for every "loading"
 	// indicator across the dashboard — header pill, panel-level
 	// placeholders, per-row waiting cells. Owning it on Root means
@@ -408,29 +423,41 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Otherwise fall through to focused panel — Esc may have
 			// panel-specific meaning (back out of a drill-down).
 			return r, r.dispatchToFocused(msg)
-		case keymap.ActCycleFocus:
-			if r.activeCapabilities().MultiPane {
-				r.cycleFocus(+1)
+		case keymap.ActCycleFocus, keymap.ActReverseFocus,
+			keymap.ActJumpPane1, keymap.ActJumpPane2, keymap.ActJumpPane3:
+			// Composite panels (e.g. FlowPanel) own internal
+			// multi-pane state the kernel's PaneSlot map doesn't
+			// see — only one slot is registered, but the panel has
+			// its own children. When the focused panel declares
+			// MultiPane in its Capabilities, defer these keys to
+			// it via the focused-panel dispatch so its internal
+			// focus/jump handlers fire. Otherwise (kernel-level
+			// LayoutSplit/Triad with multiple slots), keep the
+			// existing PaneSlot routing.
+			if p, ok := r.panels[r.focused]; ok && p.Capabilities().MultiPane {
+				return r, r.dispatchToFocused(msg)
 			}
-			return r, nil
-		case keymap.ActReverseFocus:
-			if r.activeCapabilities().MultiPane {
-				r.cycleFocus(-1)
-			}
-			return r, nil
-		case keymap.ActJumpPane1:
-			if _, ok := r.panels[PaneMain]; ok {
-				r.focused = PaneMain
-			}
-			return r, nil
-		case keymap.ActJumpPane2:
-			if _, ok := r.panels[PaneSide]; ok {
-				r.focused = PaneSide
-			}
-			return r, nil
-		case keymap.ActJumpPane3:
-			if _, ok := r.panels[PaneStrip]; ok {
-				r.focused = PaneStrip
+			switch keymap.ClassifyKey(m.String()) {
+			case keymap.ActCycleFocus:
+				if r.activeCapabilities().MultiPane {
+					r.cycleFocus(+1)
+				}
+			case keymap.ActReverseFocus:
+				if r.activeCapabilities().MultiPane {
+					r.cycleFocus(-1)
+				}
+			case keymap.ActJumpPane1:
+				if _, ok := r.panels[PaneMain]; ok {
+					r.focused = PaneMain
+				}
+			case keymap.ActJumpPane2:
+				if _, ok := r.panels[PaneSide]; ok {
+					r.focused = PaneSide
+				}
+			case keymap.ActJumpPane3:
+				if _, ok := r.panels[PaneStrip]; ok {
+					r.focused = PaneStrip
+				}
 			}
 			return r, nil
 		}
@@ -496,6 +523,15 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if dashDebug && r.feedState != FeedHealthy {
 			fmt.Fprintf(os.Stderr, "[dash] first FeedTickMsg received: channel=%s\n", m.Event.Channel)
 		}
+		// Track the rate: anchor the wall clock the first time we
+		// transition to Healthy, then increment per tick. Surfaced
+		// in the header pill as "live · N.N/s". Anchor reset on
+		// reconnection so the rate reflects current traffic.
+		if r.feedState != FeedHealthy {
+			r.healthySince = time.Now()
+			r.tickCount = 0
+		}
+		r.tickCount++
 		r.feedState = FeedHealthy
 		return r, tea.Batch(r.broadcast(msg), r.feed.next())
 
@@ -521,13 +557,31 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// is feedStateMsg{Subscribed} — without this, the pump
 		// fills with FeedTickMsgs that never reach Update().
 		//
-		// Fatal is the one terminal state; nothing more will arrive,
-		// so don't re-arm.
-		r.feedState = m.state
+		// Don't regress from Healthy to Subscribed. The Subscribed
+		// state is "dialed but no events have arrived"; if we're
+		// already Healthy then events HAVE arrived (FeedTickMsg's
+		// handler sets r.feedState = FeedHealthy) and a stale
+		// Subscribed state msg from start()'s tail end would lie
+		// to the user about the pill ("subscribed · waiting…"
+		// while live data is clearly flowing). Same logic applies
+		// to Dialing — never regress backwards in the lifecycle
+		// once we've seen real data.
+		//
+		// Reconnecting and Fatal are real backwards transitions
+		// (the connection genuinely dropped) and must apply.
+		//
+		// Fatal is the one terminal state; nothing more will
+		// arrive, so don't re-arm.
+		newState := m.state
+		isRegression := r.feedState == FeedHealthy &&
+			(newState == FeedSubscribed || newState == FeedDialing)
+		if !isRegression {
+			r.feedState = newState
+		}
 		if m.err != nil {
 			r.lastErr = m.err.Error()
 		}
-		if m.state == FeedFatal {
+		if newState == FeedFatal {
 			return r, nil
 		}
 		return r, r.feed.next()
@@ -542,7 +596,28 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return r, cmd
 	}
 
-	return r, nil
+	// Unknown message type — broadcast to every panel. This is the
+	// catch-all for panel-private message types (e.g. the flow
+	// dashboard's flowScreenerSnapshotMsg, FlowDrillMsg, refresh
+	// ticks): a panel returns one via tea.Cmd, Bubble Tea routes it
+	// back to Root.Update, and we hand it to every panel so the
+	// panel that owns the type can react.
+	//
+	// Earlier versions returned (r, nil) here, dropping every
+	// message the kernel didn't explicitly classify. That worked
+	// for the v0.8.x book panel because its Init returns nil and
+	// it only consumes kernel-known messages (FeedTickMsg / size /
+	// keys). Any panel that needs custom internal messages — and
+	// the flow screener does, both for REST snapshot results and
+	// for refresh-tick scheduling — would have its messages
+	// silently swallowed.
+	//
+	// Broadcasting unknown messages costs O(panels) per message,
+	// which is at most 3 in any current layout. Panels that don't
+	// recognise the message type return immediately via the
+	// type-switch's default branch, so the actual work is bounded
+	// by "one map iteration + one type assertion per panel."
+	return r, r.broadcast(msg)
 }
 
 // panelContext builds the per-render handoff struct passed to every
@@ -784,22 +859,28 @@ func (r *Root) renderHeader() string {
 	return bold + green + "▲ " + title + reset + sel + r.renderFeedPill()
 }
 
-// renderFeedPill returns a small connection-state badge appended to
-// the header. Hidden when the feed is healthy (the dashboard speaks
-// for itself); shown for any other state with the spinner glyph
-// when relevant. Three visual treatments:
+// renderFeedPill returns a small connection-state badge appended
+// to the header. Five states:
 //
-//	dialing       grey  ⠼ connecting…
-//	subscribed    grey  ⠼ subscribed · waiting for first event…
-//	healthy       (no pill — the live data IS the signal)
+//	dialing       grey   ⠼ connecting…
+//	subscribed    grey   ⠼ subscribed · waiting…
+//	healthy       green  ● live · N.N/s
 //	reconnecting  yellow ⠼ reconnecting…
-//	fatal         red   ✗ disconnected
+//	fatal         red    ✗ disconnected
 //
-// Single source for "what's the connection doing" — both the header
-// and panel-internal "loading" placeholders read FeedState, so the
-// dashboard never disagrees with itself.
+// The "live · N.N/s" pill replaces the previous "no pill on
+// healthy" treatment. The user's feedback was clear: even when
+// data flows, the user wants explicit confirmation that the
+// connection is alive AND a sense of how fast events are
+// arriving. The rate is computed from r.tickCount /
+// time.Since(r.healthySince).
+//
+// Single source for "what's the connection doing" — both the
+// header and panel-internal "loading" placeholders read
+// FeedState, so the dashboard never disagrees with itself.
 func (r *Root) renderFeedPill() string {
 	grey := output.BrandGreyMid
+	green := output.BrandGreen
 	yellow := output.Yellow
 	red := output.Red
 	reset := output.Reset
@@ -807,7 +888,17 @@ func (r *Root) renderFeedPill() string {
 
 	switch r.feedState {
 	case FeedHealthy:
-		return ""
+		// Compute rate. healthySince is set the first time we
+		// reach Healthy (and reset on reconnection). Avoid the
+		// divide-by-zero edge case in the first ~1s by clamping
+		// the elapsed window to 1s minimum.
+		elapsed := time.Since(r.healthySince).Seconds()
+		if elapsed < 1.0 {
+			elapsed = 1.0
+		}
+		rate := float64(r.tickCount) / elapsed
+		return "   " + green + "● " + reset +
+			grey + "live · " + fmt.Sprintf("%.1f", rate) + "/s" + reset
 	case FeedDialing:
 		return "   " + grey + frame + " connecting…" + reset
 	case FeedSubscribed:
@@ -859,9 +950,15 @@ func (r *Root) activeCapabilities() keymap.Capabilities {
 		caps.Recenter = caps.Recenter || pc.Recenter
 		caps.LadderMode = caps.LadderMode || pc.LadderMode
 		caps.VenueToggle = caps.VenueToggle || pc.VenueToggle
-		// Pause/Help/MultiPane stay kernel-controlled — panels can't
-		// suppress them. (A panel that doesn't support pause just
-		// no-ops the action.)
+		// MultiPane: kernel sets it when more than one slot is
+		// populated, but composite panels (FlowPanel) own internal
+		// multi-pane state the kernel can't see — only one slot is
+		// registered. Honour the panel's declaration too so detail
+		// mode's tab/jump/expand hints surface in the footer.
+		caps.MultiPane = caps.MultiPane || pc.MultiPane
+		// Pause/Help stay kernel-controlled — panels can't suppress
+		// them. (A panel that doesn't support pause just no-ops the
+		// action.)
 	}
 	return caps
 }

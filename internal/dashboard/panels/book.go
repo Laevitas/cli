@@ -848,34 +848,22 @@ func (p *BookPanel) renderLadder(w, h int, books map[string]*api.BookSnapshot, v
 		bids = ladder.BucketLevels(bids, p.groupTickSize, false)
 	}
 
-	// rowsPerSide is the smaller of:
-	//   1. terminal height minus chrome, halved (rowCap)
-	//   2. depth tier (10 / 20 / 50)
-	//
-	// Earlier dev removed the tier cap when fixing the conflation
-	// between "stats depth" and "rendered row count" — that swung
-	// too far the other way. Tier should still cap rows, just no
-	// longer drive them. Cap = `min(rowCap, tier)` is the right
-	// shape: a tall terminal at tier=10 shows 10 levels per side;
-	// at tier=50, shows 50 (or rowCap if the terminal is short).
-	const chrome = 3
-	rowCap := (h - chrome) / 2
-	if rowCap < 1 {
-		rowCap = 1
+	// Allocate the actual ladder body rows across asks and bids.
+	// The stacked layout shares PRICE / SIZE / CUM / bar columns
+	// across both sides and reallocates spare room to whichever side
+	// still has depth, so tall panes do not end with artificial blank
+	// space.
+	askRows, bidRows := stackedBookRows(len(asks), len(bids), h, p.viewport.Offset)
+	if p.depthTier > 0 {
+		if askRows > p.depthTier {
+			askRows = p.depthTier
+		}
+		if bidRows > p.depthTier {
+			bidRows = p.depthTier
+		}
 	}
-	if rowCap > 60 {
-		rowCap = 60 // safety cap on absurdly tall windows
-	}
-	rowsPerSide := rowCap
-	if p.depthTier > 0 && p.depthTier < rowsPerSide {
-		rowsPerSide = p.depthTier
-	}
-
-	// Apply viewport offset, then slice to rowsPerSide. positive
-	// offset = scrolled up (showing deeper asks, fewer bids);
-	// negative = scrolled down. Clamp so the user can't scroll
-	// into negative-row territory on either side.
-	asks, bids = p.viewport.Apply(asks, bids, rowsPerSide)
+	asks = asks[:askRows]
+	bids = bids[:bidRows]
 
 	// Bar scaling reads max size across the visible window only —
 	// using the full 100-level max would compress the visible bars
@@ -892,19 +880,14 @@ func (p *BookPanel) renderLadder(w, h int, books map[string]*api.BookSnapshot, v
 		}
 	}
 
-	// Column widths derived once and reused so asks + bids align on
-	// the same price column. The ladder is a 7-column grid:
-	//   cum | size | bar | PRICE | bar | size | cum
-	// Bid side fills [cum | size | bar | PRICE]; ask side fills
-	// [PRICE | bar | size | cum]. Cumulative columns explode
-	// outward from the spread — each one the running total of the
-	// liquidity between the user and that price level. Lets the
-	// trader eyeball "how much do I walk through to fill X size".
+	// Column widths derived once and reused so asks + bids share the
+	// same stacked ladder geometry:
+	//   PRICE | SIZE | CUM | segmented venue bar
 	const sizeW = 10
 	const priceW = 12
 	const cumW = 9
 	const gutter = 1
-	barW := (w - 2*sizeW - 2*cumW - priceW - 6*gutter) / 2
+	barW := w - priceW - sizeW - cumW - 3*gutter
 	if barW < 6 {
 		barW = 6
 	}
@@ -949,59 +932,85 @@ func (p *BookPanel) renderLadder(w, h int, books map[string]*api.BookSnapshot, v
 		}
 	}
 
+	header := padCellRight("PRICE", priceW) + " " +
+		padCellRight("SIZE", sizeW) + " " +
+		padCellRight("CUM", cumW) + " " +
+		padCellLeft("", barW)
+	b.WriteString(output.Bold + output.BrandGreyLight + output.TruncateAnsi(header, w) + output.Reset + "\n")
+
 	// ─── asks block: worst-price top, best-price bottom ───────────
-	// Layout per row:
-	//   [left-half-pad] [PRICE] [gutter] [bar] [gutter] [size] [gutter] [CUM]
-	// Left half pad fills the columns where bid content will sit
-	// below, so the centre PRICE column lines up across both blocks.
-	leftHalfPad := strings.Repeat(" ", cumW+gutter+sizeW+gutter+barW+gutter)
 	for i := len(asks) - 1; i >= 0; i-- {
 		lvl := asks[i]
 		segments := segmentsForLevel(lvl, venues, vbs, true)
 		priceCell := padCellRight(red+output.FormatBookPrice(lvl.Price)+reset, priceW)
-		bar := output.SegmentedBarRight(segments, maxSize, barW)
 		sizeCell := padCellRight(output.FormatBookSize(lvl.Size), sizeW)
 		cumCell := padCellRight(grey+output.FormatBookSize(askCum[i])+reset, cumW)
-		b.WriteString(leftHalfPad + priceCell + " " + bar + " " + sizeCell + " " + cumCell + "\n")
+		bar := output.SegmentedBarRight(segments, maxSize, barW)
+		b.WriteString(output.TruncateAnsi(priceCell+" "+sizeCell+" "+cumCell+" "+bar, w) + "\n")
 	}
 
 	// ─── spread / arb separator ───────────────────────────────────
-	// Centre the separator under the price column so it visually
-	// links the asks block (above) to the bids block (below). Left
-	// pad equals the bar+size columns on the bid side; that puts
-	// the dashes on either side of the spread/arb label flush with
-	// the price column above and below.
 	sepLabel := "spread " + output.FormatBookPrice(q.Spread)
 	if q.Arb > 0 {
 		sepLabel = "ARB +" + output.FormatBookPrice(q.Arb)
 	}
 	sepDashes := strings.Repeat("─", 8)
-	// Land the leading dash run so its trailing space sits flush
-	// with the start of the PRICE column. PRICE column starts at
-	// column (cumW + gutter + sizeW + gutter + barW + gutter); we
-	// subtract the 8-char dash run + its 1-char trailing space.
-	sepPadW := cumW + gutter + sizeW + gutter + barW + gutter - len(sepDashes) - 1
-	if sepPadW < 0 {
-		sepPadW = 0
-	}
-	b.WriteString(strings.Repeat(" ", sepPadW) + grey + sepDashes + " " + sepLabel + " " + sepDashes + reset + "\n")
+	b.WriteString(grey + output.PadRightAnsi(output.TruncateAnsi(sepDashes+" "+sepLabel+" "+sepDashes, w), w) + reset + "\n")
 
 	// ─── bids block: best-price top, worst-price bottom ───────────
-	// Layout per row:
-	//   [CUM] [gutter] [size] [gutter] [bar] [gutter] [PRICE] [right-half-pad]
-	// Mirror of the asks block: cumulative is the outermost column
-	// on each side, growing as the user reads away from the spread.
-	rightHalfPad := strings.Repeat(" ", gutter+barW+gutter+sizeW+gutter+cumW)
 	for i, lvl := range bids {
 		segments := segmentsForLevel(lvl, venues, vbs, false)
-		cumCell := padCellLeft(grey+output.FormatBookSize(bidCum[i])+reset, cumW)
-		sizeCell := padCellRight(output.FormatBookSize(lvl.Size), sizeW)
-		bar := output.SegmentedBarLeft(segments, maxSize, barW)
 		priceCell := padCellRight(green+output.FormatBookPrice(lvl.Price)+reset, priceW)
-		b.WriteString(cumCell + " " + sizeCell + " " + bar + " " + priceCell + rightHalfPad + "\n")
+		sizeCell := padCellRight(output.FormatBookSize(lvl.Size), sizeW)
+		cumCell := padCellRight(grey+output.FormatBookSize(bidCum[i])+reset, cumW)
+		bar := output.SegmentedBarRight(segments, maxSize, barW)
+		b.WriteString(output.TruncateAnsi(priceCell+" "+sizeCell+" "+cumCell+" "+bar, w) + "\n")
 	}
 
 	return b.String()
+}
+
+func stackedBookRows(askLen, bidLen, height, offset int) (askRows, bidRows int) {
+	const chrome = 2 // column header + spread separator
+	budget := height - chrome
+	if budget < 2 {
+		budget = 2
+	}
+	if budget > 120 {
+		budget = 120
+	}
+	askRows = budget/2 + offset
+	bidRows = budget - askRows
+	if askRows < 0 {
+		askRows = 0
+	}
+	if bidRows < 0 {
+		bidRows = 0
+	}
+	if askRows > askLen {
+		askRows = askLen
+	}
+	if bidRows > bidLen {
+		bidRows = bidLen
+	}
+	spare := budget - askRows - bidRows
+	for spare > 0 && (askRows < askLen || bidRows < bidLen) {
+		if offset >= 0 {
+			if askRows < askLen {
+				askRows++
+			} else if bidRows < bidLen {
+				bidRows++
+			}
+		} else {
+			if bidRows < bidLen {
+				bidRows++
+			} else if askRows < askLen {
+				askRows++
+			}
+		}
+		spare--
+	}
+	return askRows, bidRows
 }
 
 // padCellRight right-aligns content within a cell of `width`

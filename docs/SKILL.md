@@ -450,6 +450,64 @@ lookup in literal mode). Three stages:
 Stage gate fires only after the connection is proven healthy (≥1 snapshot
 received), so connection latency doesn't false-alarm as per-venue silence.
 
+### `dash flow` — perpetuals screener + drill-down (v0.10.0+)
+
+```bash
+# Currency mode — screener of every venue's perp for the currency.
+laevitas dash flow perpetuals BTC
+laevitas dash flow perpetuals ETH
+```
+
+Markets supported in v0.10.0: `perpetuals` only. Futures / options / spot
+land in a later release; the CLI rejects them up front.
+
+Two-mode TUI:
+
+1. **Screener** — REST snapshot of every venue's perp for the currency,
+   one row per `(venue, instrument)`. Columns are
+   `INSTRUMENT / LAST / SPREAD / 24H VOL / OI (USD) / FUNDING`. Width-
+   adaptive: drops columns right-to-left as the pane shrinks. Move with
+   `↑↓` / `j/k`, `Enter` to drill.
+2. **Detail** (after `Enter`) — four-pane composite for the selected
+   instrument:
+   - **Chart** — candle chart seeded from REST OHLCVT history on drill,
+     then live trades fold in. Cycle timeframe with `t`:
+     `1m → 5m → 15m → 1h`. Each cycle re-fetches native resolution
+     (not client-side downsampled).
+   - **Book** — single-venue ladder (same renderer as
+     `ws perpetuals book`). Scroll into deeper depth tiers via
+     `j/k` / `PgUp/PgDn` / `g/G`; cycle stats depth with `d`.
+   - **Tape** — rolling trade tape, colour-coded by direction.
+   - **Liquidations** — forced-close events, colour-coded by side.
+
+   `Esc` backs out to the screener. `tab` / `shift+tab` cycle focused
+   pane; `1/2/3/4` jump-and-expand; `Enter` toggles expanded ↔ grid.
+
+#### Keys
+
+| Key | Action |
+|---|---|
+| `↑↓` / `jk` | Screener cursor / book viewport scroll |
+| `PgUp/PgDn`, `g/G` | Page / jump (book) |
+| `Enter` | Screener: drill. Detail: toggle expanded pane. |
+| `Esc` | Detail → screener |
+| `tab` / `shift+tab` | Cycle focused pane (detail) |
+| `1` / `2` / `3` / `4` | Jump to chart / book / tape / liquidations and expand |
+| `t` | Cycle chart timeframe (chart pane only) |
+| `+` / `-` | Book price grouping |
+| `d` | Book stats depth tier |
+| `c` | Recenter book viewport |
+| `p` | Pause |
+| `?` / `h` | Help overlay |
+| `q` / `Esc` | Quit |
+
+`dash flow` is **TTY-only**. Agents extracting flow data should keep using:
+- `laevitas perps snapshot --currency BTC -o json` (REST, screener-equivalent)
+- `laevitas perps ohlcvt <instr> --exchange <venue> -r 1m -o json` (REST, chart-equivalent)
+- `laevitas ws perpetuals trades <venue>:<instr>` (WS, tape-equivalent)
+- `laevitas ws perpetuals liquidations <venue>:<instr>` (WS, liquidations-equivalent)
+- `laevitas ws perpetuals book <venue>:<instr>` (WS, book-equivalent)
+
 ## Order book commands — REST/WS parity
 
 There are **two distinct order-book shapes** in the API. Pick the right
@@ -507,6 +565,7 @@ affects programmatic consumers.
 - "Show me the current book" → `<group> orderbook-raw <instr>` (REST snapshot, one call)
 - "Stream live book updates for processing" → `ws <market> book <exch>:<instr>` (NDJSON, --depth N --compact recommended)
 - "Live multi-venue TUI" → `dash book <market> <symbol>` (TTY only)
+- "Live perp screener with chart/book/tape/liquidations drill-down" → `dash flow perpetuals <currency>` (TTY only)
 - "How did depth-50 liquidity change over the last hour?" → `<group> orderbook <instr> -p 1h -r 1m --depth 50` (stats time-series)
 - "What's the book at this exact past timestamp?" → `<group> orderbook-raw <instr> --start <ISO> --end <ISO>` (snapshot history)
 

@@ -82,7 +82,7 @@ laevitas ws perpetuals book "*:BTCUSDT"
 | `instruments` | Cross-product instrument registry — `list` + `detail` across all exchanges |
 | `analytics` | Computed cross-asset analytics — realized volatility |
 | `ws` | Live WebSocket streams — trades, OHLC ticker, OHLC vt, liquidations, **L2 book**, with `*` wildcards |
-| `dash` | Multi-pane TUI dashboards — **`dash book`** aggregated multi-venue order book |
+| `dash` | Multi-pane TUI dashboards — **`dash book`** multi-venue order book, **`dash flow`** perp screener + chart/book/tape/liquidations drill-down |
 | `wallet` | x402 wallet — show, init, set-key, address, credits |
 | `config` | Configuration — init, show, set |
 | `watch` | Re-run REST commands at an interval with live-updating table output |
@@ -174,6 +174,66 @@ has no L2 data on the streaming gateway and is rejected.
 The ladder shares its layout primitives (`internal/ladder` and
 `internal/output/layout.go`) with `laevitas ws book` — both surfaces emit
 the same top-line header and stats line, so muscle memory carries.
+
+### `dash flow` — Perp screener + chart/book/tape/liquidations drill-down
+
+A two-mode TUI for perpetual flow analysis. Opens a screener listing every
+venue's perp for the given currency; press `Enter` on a row to drill into a
+four-pane detail view for that instrument.
+
+```bash
+# Currency mode — screener of every venue's BTC perp.
+laevitas dash flow perpetuals BTC
+laevitas dash flow perpetuals ETH
+```
+
+Markets supported in v0.10.0: `perpetuals`. Futures / options / spot land in
+a later release — argument validation rejects them up front.
+
+**Screener columns** (drops right-to-left at narrow widths):
+
+| Column | Source |
+|--------|--------|
+| INSTRUMENT | `<venue>:<instrument_name>` |
+| LAST | `mark_price` |
+| SPREAD | `ask_price − bid_price` |
+| 24H VOL | `volume_usd_24h` |
+| OI | `oi × mark_price` (USD-denominated) |
+| FUNDING | `funding_rate × 100` (signed %) |
+
+**Detail view** (after `Enter` on a screener row):
+
+- **Chart** (top-left) — candle chart seeded from REST OHLCVT history on
+  drill so the pane paints immediately, then live trades fold into the
+  rightmost candle. Cycle timeframe with `t`: `1m → 5m → 15m → 1h`. Each
+  cycle re-fetches the appropriate native resolution (no client-side
+  downsampling). Coloured bodies (green/red), volume strip, latest-close
+  flag in the price gutter, right-anchored time axis with density-adaptive
+  HH:MM labels.
+- **Book** (right half) — single-venue stacked ladder. Same renderer as
+  `laevitas ws perpetuals book` so the ladder, stats line, and key bindings
+  carry over. Honours a viewport (`j/k` / `PgUp/PgDn` / `g/G`) so depth-100
+  is reachable when `d` cycles up.
+- **Tape** (bottom-left) — rolling trade tape, colour-coded by direction.
+- **Liquidations** (bottom-right) — forced-close events, colour-coded by
+  side.
+
+#### Keys
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` / `j` / `k` | Move screener cursor |
+| `Enter` | Drill into selected row (screener) / toggle expanded focused pane (detail) |
+| `Esc` | Back out of detail to the screener |
+| `tab` / `shift+tab` | Cycle focused pane (detail) |
+| `1` / `2` / `3` / `4` | Jump to chart / book / tape / liquidations and expand |
+| `t` | Cycle chart timeframe `1m → 5m → 15m → 1h` (chart pane only) |
+| `+` / `-` | Cycle book price grouping |
+| `d` | Cycle book stats depth tier (10 → 20 → 50 → 100) |
+| `c` | Recenter book viewport on the spread |
+| `p` | Pause |
+| `?` / `h` | Help overlay |
+| `q` / `Esc` | Quit |
 
 ### Global Flags
 

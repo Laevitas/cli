@@ -73,8 +73,8 @@ type BookTable struct {
 	channels []string
 	layout   string // "scan" | "ladder"
 
-	mu      sync.RWMutex
-	books   map[pairKey]*BookSnapshot
+	mu    sync.RWMutex
+	books map[pairKey]*BookSnapshot
 
 	// changes[(pair,price)] -> latest size move recorded for that level
 	// against the previous snapshot. Stored with a timestamp so the
@@ -345,9 +345,9 @@ const (
 type bookModel struct {
 	bt *BookTable
 
-	mode      viewMode
-	width     int
-	height    int
+	mode   viewMode
+	width  int
+	height int
 
 	// Cursor is which scan row is selected (and which pair the ladder view
 	// shows when mode == viewLadder). Always valid when bt has at least one
@@ -380,8 +380,8 @@ type bookModel struct {
 
 	// Paused freezes the latest snapshot in view (events keep flowing into
 	// bt.books but the model snapshots once and re-uses it until 'p').
-	paused      bool
-	pausedSnap  map[pairKey]*BookSnapshot
+	paused     bool
+	pausedSnap map[pairKey]*BookSnapshot
 
 	// helpOpen toggles the keybinding overlay in the body.
 	helpOpen bool
@@ -806,162 +806,28 @@ func (m bookModel) renderLadder(books map[pairKey]*BookSnapshot, updates int64, 
 		return header + "\n  " + output.BrandGreyMid + "waiting for snapshot on " + key.String() + "…" + output.Reset
 	}
 
-	// Header strip: pair, mid, spread, imbalance, depth tier.
-	bid, ask := bestLevels(snap)
-	spread := 0.0
-	bps := 0.0
-	if ask.Price > 0 && bid.Price > 0 {
-		spread = ask.Price - bid.Price
-		if snap.Microprice > 0 {
-			bps = (spread / snap.Microprice) * 10_000
-		}
-	}
-	bidLiq, askLiq, imb := liquidityForTier(snap, m.depthTier)
-
-	// Stats line via shared ladder.StatsLine — identical shape to
-	// the dashboard aggregated ladder. ArbPx is always 0 here:
-	// single-venue books can't cross themselves. Sparkline is
-	// fetched from the per-pair microprice ring buffer so the
-	// "is the mid moving?" signal stays inline with the MID value.
 	spark := sparklineMicro(m.bt.microValuesForPair(key))
-	strip := ladder.StatsLine(ladder.StatsInfo{
-		Mid:       snap.Microprice,
-		BpsSpread: bps,
-		Spread:    spread,
-		ArbPx:     0,
-		BidLiq:    bidLiq,
-		AskLiq:    askLiq,
-		Imb:       imb,
-		DepthTier: m.depthTier,
-		GroupTick: m.groupTickSize,
-		Sparkline: spark,
-	}, ladderHeaderStyle(), ladderStatsFormatter())
-
-	// Layout: cum_bid | bid_size | bid_bar | PRICE | ask_bar | ask_size | cum_ask
-	// Asks descend from top of frame (worst price at top, best price just
-	// above the spread separator); bids descend from spread separator
-	// (best price at top of bid block, worst at bottom). That puts the
-	// best bid and best ask physically adjacent to the spread row.
-	//
-	// Pipeline: tier-cap → bucket (group) → viewport apply → render.
-	// Same shape as the dashboard book panel uses; both surfaces lean
-	// on internal/ladder helpers so the math is identical.
-	asks := bookLevelsToAgg(snap.Asks, snap.Exchange)
-	bids := bookLevelsToAgg(snap.Bids, snap.Exchange)
-
-	// Tier sets the data window — render up to N rows per side.
-	// Default is to consider all of tier; rowCap (terminal height)
-	// further limits, with viewport scroll allowing access to rows
-	// that don't fit on screen at once.
-	tier := m.depthTier
-	if len(asks) > tier {
-		asks = asks[:tier]
-	}
-	if len(bids) > tier {
-		bids = bids[:tier]
-	}
-
-	// Apply price grouping if user has zoomed out via `+`.
-	if m.groupTickSize > 0 {
-		asks = ladder.BucketLevels(asks, m.groupTickSize, true)
-		bids = ladder.BucketLevels(bids, m.groupTickSize, false)
-	}
-
-	// rowCap = how many rows per side we can fit on screen. Then
-	// the viewport carves out a window of {asks, bids} of that
-	// size. Tier-but-not-fitting rows become reachable via scroll.
-	rowCap := ladder.RowCap(m.height)
-	asks, bids = m.viewport.Apply(asks, bids, rowCap)
-
-	maxSize := 0.0
-	for _, l := range asks {
-		if l.Size > maxSize {
-			maxSize = l.Size
-		}
-	}
-	for _, l := range bids {
-		if l.Size > maxSize {
-			maxSize = l.Size
-		}
-	}
-
-	const barWidth = 18
-
-	// Per-side cumulative totals — used both for the cum_ask / cum_bid
-	// columns and for the whale-badge denominator. A whale level is one
-	// that holds >=30% of its side's tier-cumulative liquidity. That's a
-	// conservative threshold: on a normal book the largest level is 5-10%,
-	// so 30% is genuinely "this is the wall."
-	const whaleThreshold = 0.30
-	bidCums := make([]float64, len(bids))
-	bidTotal := 0.0
-	for i, l := range bids {
-		bidTotal += l.Size
-		bidCums[i] = bidTotal
-	}
-	askCums := make([]float64, len(asks))
-	askTotal := 0.0
-	for i, l := range asks {
-		askTotal += l.Size
-		askCums[i] = askTotal
-	}
-
-	// Flashes go quiet on pause — the user has frozen the snapshot, so
-	// arrows tagging "this level just moved" are misleading: nothing
-	// can move while paused. Live mode keeps the 250ms flash window.
 	var flashes map[string]int
 	if !m.paused {
 		flashes = m.bt.flashesForPair(key, 250*time.Millisecond)
 	}
-
-	headers := []string{"CUM BID", "BID SZ", "", "PRICE", "", "ASK SZ", "CUM ASK"}
-	aligns := []colAlign{alignRight, alignRight, alignRight, alignRight, alignLeft, alignLeft, alignLeft}
-
-	rows := make([][]string, 0, len(asks)+len(bids)+1)
-
-	// Asks block — print worst-price at top down to best-price at bottom.
-	// The bid columns (left half) stay empty in this block — keeps the
-	// price column anchored centre and lets the eye flow downward to the
-	// spread row.
-	for i := len(asks) - 1; i >= 0; i-- {
-		l := asks[i]
-		ps := formatBookPrice(l.Price)
-		whale := askTotal > 0 && l.Size/askTotal >= whaleThreshold
-		rows = append(rows, []string{
-			"",
-			"",
-			"",
-			styleLevelPrice(ps, output.Red, flashes[ps]),
-			barLeft(l.Size, maxSize, barWidth, output.Red),
-			styleLevelSize(formatBookSize(l.Size), whale),
-			formatBookSize(askCums[i]),
-		})
+	renderHeight := m.height - 3 // body clip reserves header + footer/breathing outside shared renderer
+	if renderHeight < 1 {
+		renderHeight = m.height
 	}
-
-	// Spread row.
-	rows = append(rows, []string{
-		"", "", "",
-		output.BrandGreyMid + "── spread " + formatBookPrice(spread) + " ──" + output.Reset,
-		"", "", "",
+	body := output.RenderSingleVenueLadder(output.LadderRenderOpts{
+		Snapshot:      snap,
+		DepthTier:     m.depthTier,
+		GroupTickSize: m.groupTickSize,
+		Viewport:      m.viewport,
+		Flashes:       flashes,
+		Sparkline:     spark,
+		BarWidth:      18,
+		Width:         m.width,
+		Height:        renderHeight,
+		Paused:        m.paused,
 	})
-
-	// Bids block — best bid at top, worst at bottom.
-	for i, l := range bids {
-		ps := formatBookPrice(l.Price)
-		whale := bidTotal > 0 && l.Size/bidTotal >= whaleThreshold
-		rows = append(rows, []string{
-			formatBookSize(bidCums[i]),
-			styleLevelSize(formatBookSize(l.Size), whale),
-			barRight(l.Size, maxSize, barWidth, output.BrandGreen),
-			styleLevelPrice(ps, output.BrandGreen, flashes[ps]),
-			"",
-			"",
-			"",
-		})
-	}
-
-	table := renderTable(headers, rows, aligns, m.width)
-	return header + "\n" + strip + "\n\n" + table
+	return header + "\n" + body
 }
 
 // ─── header / footer ────────────────────────────────────────────────────────
@@ -1069,7 +935,7 @@ func liquidityForTier(snap *BookSnapshot, tier int) (bidLiq, askLiq, imb float64
 	return snap.LiquidityForTier(tier)
 }
 
-func colorImbalance(imb float64) string         { return output.ColorImbalance(imb) }
+func colorImbalance(imb float64) string { return output.ColorImbalance(imb) }
 func styleLevelPrice(price, base string, d int) string {
 	return output.StyleLevelPrice(price, base, d)
 }
