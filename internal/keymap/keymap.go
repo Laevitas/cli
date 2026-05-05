@@ -19,10 +19,10 @@
 //     on a single-pane book view where they did nothing visible.
 //
 // Adding a new key:
-//   1. Append a new Action constant.
-//   2. Add the key string(s) to classifyKey.
-//   3. Add a Binding entry under the section it belongs to.
-//   4. (If the key is conditional) extend Capabilities to gate it.
+//  1. Append a new Action constant.
+//  2. Add the key string(s) to classifyKey.
+//  3. Add a Binding entry under the section it belongs to.
+//  4. (If the key is conditional) extend Capabilities to gate it.
 //
 // Every renderer / kernel / panel automatically picks it up.
 package keymap
@@ -78,6 +78,11 @@ const (
 	// have to count rows back to the spread by hand.
 	ActRecenter
 
+	// Chart timeframe cycle — `t` rotates chart panes through
+	// 1m → 5m → 15m → 1h. Panels derive coarser candles from a
+	// canonical 1m stream so live updates stay consistent.
+	ActTimeframeCycle
+
 	// Ladder-mode toggle — `m` cycles between aggregated and split
 	// presentations of the same multi-venue book. Aggregated merges
 	// every venue's depth into one centre-price ladder coloured by
@@ -97,6 +102,7 @@ const (
 	ActJumpPane1
 	ActJumpPane2
 	ActJumpPane3
+	ActJumpPane4
 )
 
 // ClassifyKey maps a Bubble Tea key string to an Action. Returns
@@ -137,6 +143,8 @@ func ClassifyKey(key string) Action {
 		return ActVenueToggle
 	case "c":
 		return ActRecenter
+	case "t", "T":
+		return ActTimeframeCycle
 	case "m":
 		return ActLadderMode
 	case "tab":
@@ -149,6 +157,8 @@ func ClassifyKey(key string) Action {
 		return ActJumpPane2
 	case "3":
 		return ActJumpPane3
+	case "4":
+		return ActJumpPane4
 	}
 	return ActNone
 }
@@ -192,9 +202,9 @@ func ClassifyMouse(btn tea.MouseButton) Action {
 //     panels with no continuous state (e.g. a static settings view)
 //     can opt out so `p` becomes a no-op there too.
 type Capabilities struct {
-	ListNav     bool
-	Drill       bool
-	Back        bool
+	ListNav bool
+	Drill   bool
+	Back    bool
 
 	// Group — `+/-` widens / narrows price grouping. Useful on
 	// surfaces that aggregate multiple venues' books (the dashboard
@@ -224,6 +234,9 @@ type Capabilities struct {
 	// dashboard panel) so the muscle memory carries.
 	Recenter bool
 
+	// ChartTimeframe — `t` cycles chart timeframe views.
+	ChartTimeframe bool
+
 	// LadderMode — `m` toggles aggregated ↔ split presentation of
 	// a multi-venue book. Only the dashboard book panel sets this
 	// today; the legacy single-venue ladder has nothing to split.
@@ -241,8 +254,36 @@ func FullCapabilities() Capabilities {
 	return Capabilities{
 		ListNav: true, Drill: true, Back: true,
 		Group: true, DepthCycle: true, VenueToggle: true,
-		Recenter: true, LadderMode: true,
+		Recenter: true, ChartTimeframe: true, LadderMode: true,
 		MultiPane: true, Pause: true, Help: true,
+	}
+}
+
+// Union combines two Capabilities into one with each field set if
+// either input had it set. Used by composite panels that need to
+// declare the union of their children's capabilities so the kernel's
+// footer hints reflect everything any child can do.
+//
+// Capabilities is a plain struct of bools rather than a bitfield, so
+// composites can't just `|` two values together. This helper is the
+// equivalent. New fields added to Capabilities should be added here
+// in the same commit; missing one drops that capability when
+// composing.
+func (c Capabilities) Union(other Capabilities) Capabilities {
+	return Capabilities{
+		ListNav:        c.ListNav || other.ListNav,
+		Drill:          c.Drill || other.Drill,
+		Back:           c.Back || other.Back,
+		Group:          c.Group || other.Group,
+		DepthTier:      c.DepthTier || other.DepthTier,
+		DepthCycle:     c.DepthCycle || other.DepthCycle,
+		VenueToggle:    c.VenueToggle || other.VenueToggle,
+		Recenter:       c.Recenter || other.Recenter,
+		ChartTimeframe: c.ChartTimeframe || other.ChartTimeframe,
+		LadderMode:     c.LadderMode || other.LadderMode,
+		MultiPane:      c.MultiPane || other.MultiPane,
+		Pause:          c.Pause || other.Pause,
+		Help:           c.Help || other.Help,
 	}
 }
 
@@ -291,6 +332,9 @@ func FooterHints(c Capabilities) string {
 	if c.Recenter {
 		parts = append(parts, "c recenter")
 	}
+	if c.ChartTimeframe {
+		parts = append(parts, "t timeframe")
+	}
 	if c.LadderMode {
 		parts = append(parts, "m mode")
 	}
@@ -299,7 +343,8 @@ func FooterHints(c Capabilities) string {
 	}
 	if c.MultiPane {
 		parts = append(parts, "tab focus")
-		parts = append(parts, "1/2/3 jump")
+		parts = append(parts, "1/2/3/4 jump")
+		parts = append(parts, "enter expand")
 	}
 	if c.Pause {
 		parts = append(parts, "p pause")
@@ -392,6 +437,10 @@ var recenterBindings = []Binding{
 	{"c", "recenter viewport on the spread"},
 }
 
+var chartTimeframeBindings = []Binding{
+	{"t", "cycle chart timeframe (1m → 5m → 15m → 1h)"},
+}
+
 var ladderModeBindings = []Binding{
 	{"m", "toggle aggregated ↔ split ladder"},
 }
@@ -399,7 +448,8 @@ var ladderModeBindings = []Binding{
 var multiPaneBindings = []Binding{
 	{"tab", "focus next pane"},
 	{"shift+tab", "focus previous pane"},
-	{"1 / 2 / 3", "jump to pane 1 / 2 / 3"},
+	{"1 / 2 / 3 / 4", "jump to pane 1 / 2 / 3 / 4"},
+	{"enter", "expand / collapse focused pane"},
 }
 
 // SectionsFor returns the help-overlay sections relevant to a
@@ -420,6 +470,9 @@ func SectionsFor(c Capabilities) []Section {
 	}
 	if c.Recenter {
 		out = append(out, Section{Title: "Recenter", Bindings: recenterBindings})
+	}
+	if c.ChartTimeframe {
+		out = append(out, Section{Title: "Chart", Bindings: chartTimeframeBindings})
 	}
 	if c.LadderMode {
 		out = append(out, Section{Title: "Ladder mode", Bindings: ladderModeBindings})
@@ -448,11 +501,11 @@ func SectionsFor(c Capabilities) []Section {
 // (see output.HelpStyle()) so the keymap package doesn't import
 // any rendering library directly.
 type HelpStyle struct {
-	Bold       string
-	Green      string
-	Grey       string
-	LightGrey  string
-	Reset      string
+	Bold      string
+	Green     string
+	Grey      string
+	LightGrey string
+	Reset     string
 }
 
 // RenderHelpOverlay produces the canonical keybinding reference for

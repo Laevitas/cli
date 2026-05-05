@@ -305,20 +305,20 @@ func parseExamples(example string) []string {
 // rather than spread across each command file.
 func commandRequiresAuth(path string) bool {
 	authFree := map[string]bool{
-		"version":         true,
-		"commands":        true,
-		"doctor":          true,
-		"update":          true,
-		"config init":     true,
-		"config show":     true,
-		"config set":      true,
-		"config unset":    true,
-		"config path":     true,
-		"wallet show":     true,
-		"wallet init":     true,
-		"wallet set-key":  true,
-		"wallet unset":    true,
-		"wallet address":  true,
+		"version":        true,
+		"commands":       true,
+		"doctor":         true,
+		"update":         true,
+		"config init":    true,
+		"config show":    true,
+		"config set":     true,
+		"config unset":   true,
+		"config path":    true,
+		"wallet show":    true,
+		"wallet init":    true,
+		"wallet set-key": true,
+		"wallet unset":   true,
+		"wallet address": true,
 		// `wallet credits` does NOT appear here — it reads cached
 		// state from disk but the canonical path is to refresh from
 		// API responses, so we treat it as auth-touching.
@@ -350,12 +350,22 @@ func commandIsStreaming(path string) bool {
 }
 
 // commandOutputModes enumerates the -o values the command accepts.
-// REST commands accept the full set; streaming commands skip table
-// and csv (the output is line-by-line and non-tabular). Watch is
+// REST commands accept the full set; ws emits NDJSON and skips
+// table/csv; dash is TTY-only and ignores -o entirely. Watch is
 // table-only (its raison d'être is the live grid). Doctor accepts
 // table and json.
+//
+// Dash returns an empty slice deliberately — the manifest's
+// agent-readable shape is "no output modes available", which is
+// the truth: dash refuses to run when stdout is not a TTY, so
+// agents reading the manifest should know up front that piping
+// `dash ...` into a parser will fail with a TTY-only error rather
+// than yielding JSON.
 func commandOutputModes(path string) []string {
-	if strings.HasPrefix(path, "ws") || strings.HasPrefix(path, "dash") {
+	if strings.HasPrefix(path, "dash") {
+		return []string{}
+	}
+	if strings.HasPrefix(path, "ws") {
 		return []string{"auto", "json"}
 	}
 	if path == "watch" {

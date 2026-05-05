@@ -50,6 +50,41 @@ func FormatBookPrice(v float64) string {
 	return formatNum(v, dec)
 }
 
+// FormatSpread renders a price-difference (best-ask − best-bid) at
+// the same precision as FormatBookPrice would use, then strips
+// trailing zeros so a clean tick like 0.10 doesn't render as
+// 0.100000. Used by the screener's SPREAD column and the book
+// pane's mid-price separator — both are derivative quantities
+// where trailing zeros are noise, not column-alignment glue.
+//
+// Differs from FormatBookPrice in two ways:
+//   - Trailing zeros stripped after the decimal point.
+//   - Trailing decimal point stripped if the result reduces to a
+//     whole number (e.g. spread of 1.0 → "1", not "1." nor "1.0").
+//
+// Don't use this for ladder rows — those need fixed-width decimals
+// for column alignment, which is what FormatBookPrice is for.
+func FormatSpread(v float64) string {
+	if v == 0 {
+		return "-"
+	}
+	formatted := FormatBookPrice(v)
+	// FormatBookPrice's output is "<int part>.<dec part>" with the
+	// brand thousand separator in the int part. Strip the trailing
+	// zeros + dangling decimal point. We only touch the part after
+	// the LAST '.' so a number like "1,234.5000" trims to
+	// "1,234.5" without touching the integer side.
+	dot := strings.LastIndexByte(formatted, '.')
+	if dot < 0 {
+		return formatted
+	}
+	formatted = strings.TrimRight(formatted, "0")
+	if strings.HasSuffix(formatted, ".") {
+		formatted = formatted[:len(formatted)-1]
+	}
+	return formatted
+}
+
 // FormatBookSize renders a size or cumulative liquidity with 5
 // significant digits — enough for tick-precise sizes on every venue
 // we support, while dodging the IEEE noise that creeps into

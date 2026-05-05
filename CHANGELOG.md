@@ -7,6 +7,191 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.10.0] — 2026-05-05
+
+`dash flow` ships. New top-level dashboard surfacing perpetuals
+flow data across every venue: a screener of every perp the
+gateway carries for a currency, with drill-down into a four-pane
+detail view (chart, book, tape, liquidations). Reuses the
+v0.9.3 dashboard kernel + wsclient subscription state machine —
+panels rotate their channel set as the user drills in and out
+without leaking subscriptions on the gateway side.
+
+The release also consolidates every order-book renderer in the
+codebase onto one stacked layout (PRICE / SIZE / CUM / segmented
+bar) so the TUI muscle memory carries between `dash book`,
+`dash flow`'s book pane, the `ws perpetuals book` ladder, and
+the REST snapshot table. Adds a strided candle chart with
+coloured bodies, volume strip, and right-anchored axis. Honours
+panel-declared `MultiPane` capability so composite panels can
+self-advertise tab/jump/expand without the kernel having to
+inspect their internals.
+
+`go test ./...` green. Build: `go build -o laevitas .` clean.
+Live API smoke: `doctor`, `perps snapshot --currency BTC`,
+`commands -o json`, `ws perpetuals trades binance:BTCUSDT`
+all confirmed working against `apiv2.laevitas.ch`.
+
+### Added
+
+- **`laevitas dash flow <market> <currency>`** — new top-level
+  TUI dashboard. Opens a screener of every venue's perp for the
+  given currency (one row per venue × instrument), with cursor
+  navigation and `Enter` to drill into a per-instrument detail
+  view. Detail view is a four-pane composite: 1m candle chart
+  (top-left), single-venue order book ladder (right half),
+  trade tape (bottom-left), liquidations feed (bottom-right).
+  Markets supported in v0.10.0: `perpetuals`. Futures / options /
+  spot land in a later release. Argument order matches the rest
+  of the CLI: market first, currency second.
+- **Screener column set** for the `dash flow` snapshot: INSTRUMENT
+  (`venue:symbol`), LAST, SPREAD, 24H VOL, OI (USD-denominated
+  via `oi × mark_price`), FUNDING. Width-adaptive: drops columns
+  right-to-left as the pane shrinks; at very narrow widths
+  renders INSTRUMENT-only rather than refusing.
+- **`internal/output.RenderSingleVenueLadder`** — shared single-
+  venue book ladder used by `dash flow`'s BOOK pane and the
+  legacy `ws perpetuals book` ladder. Stacked layout: stats line,
+  PRICE / SIZE / CUM columns, level-relative bars, whale ▲
+  marker on levels carrying ≥30% of side-cumulative liquidity,
+  spread separator with full price label. Honours a
+  `ladder.Viewport` so callers can scroll into deeper depth tiers.
+- **`internal/candles`** package — 1m candle aggregator + ASCII
+  renderer. Aggregator buckets WS trade events into 1m OHLCV
+  candles with capacity-bound ring; renderer emits a strided
+  ASCII chart with optional ANSI colour per direction. Default
+  stride is 2 (one body cell + one gap cell) so candles read as
+  separated bars; `CandleStride: 1` preserves dense rendering.
+  Gap detection inserts blank columns between non-contiguous
+  `BucketStart` values, scaled by stride so axis labels and
+  candle bodies stay aligned.
+- **Candle volume strip** — small per-candle volume bar row
+  rendered under the price chart when height allows. Latest
+  candle's volume value appears in the right gutter, colour-
+  coded by candle direction (green if up, red if down).
+- **Latest-close price flag** overlaid in the chart's right
+  price gutter at the row corresponding to the latest candle's
+  close price. Computed from the visible price range so the flag
+  always sits on the correct row.
+- **`Capabilities.Union`** on `internal/keymap.Capabilities` —
+  combines two capability values field-by-field. Used by composite
+  panels (`FlowPanel`'s detail mode) to declare the union of
+  their children's capabilities so the kernel's footer hints
+  reflect every key any pane responds to.
+- **`ActJumpPane4`** keymap action + `4` binding — fourth pane
+  jump key. Required because the flow detail composite has four
+  children (chart / book / tape / liquidations) and jump-to-pane
+  expand-on-press is the canonical interaction. Help overlay and
+  footer updated accordingly.
+- **`enter expand` / `1/2/3/4 jump`** advertised in footer hints
+  + multi-pane help section when `MultiPane` is on. The Enter
+  key in detail mode toggles `detailExpanded`; jump-key 1-4 sets
+  focus AND expands.
+- **`output.FormatSpread`** — strips trailing zeros from
+  `FormatBookPrice` output so derivative quantities (best-ask −
+  best-bid) render as `0.10` not `0.100000`. Used by the
+  screener's SPREAD column and the book pane's mid-price separator.
+- **Live rate pill** in dashboard headers — `live · N.N/s`
+  computed from `tickCount / time.Since(healthySince)`. Replaces
+  the previous "no pill on healthy" treatment so users get
+  explicit confirmation that data is flowing AND a sense of how
+  fast events are arriving. Anchor resets on reconnect.
+- **REST OHLCVT seeding for the flow chart pane.** On drill (or
+  any selection change) the chart pane fires a tea.Cmd that
+  fetches the active timeframe's OHLCVT history from the
+  appropriate REST endpoint, parses it into `[]candles.Candle`,
+  and seeds the aggregator. Live trades then fold into the
+  rightmost bucket. Without this, the chart pane was empty for
+  the first 60+ seconds after every drill — poor first
+  impression. Fetch is async, never blocks View. Stale seeds
+  are dropped via a selection+resolution-keyed guard so a fast
+  drill A → B → A doesn't paint A's history over B. REST
+  failure falls back silently to the live-only path.
+- **Chart timeframe cycle** — `t` cycles the flow chart pane
+  through `1m → 5m → 15m → 1h`. Each cycle re-seeds the
+  aggregator from native REST OHLCVT at the new resolution
+  (rather than client-side downsampling, which starts sparse).
+  Live trades continue folding into the current bucket at the
+  selected timeframe; the aggregator's `SetTimeframe` keeps
+  the bucket size in sync with the active resolution. Stats
+  line label reflects the active timeframe. Chart-focused only:
+  pressing `t` when BOOK / TAPE / LIQ is focused is a no-op.
+- **`candles.Aggregator.SetTimeframe(time.Duration)`** — replaces
+  the previous hardcoded `time.Minute` bucket-floor. Callers
+  switching instruments or resolutions Reset / Seed immediately
+  after; the aggregator is now a generic OHLC bucketer rather
+  than a 1m specialist.
+
+### Changed
+
+- **Multi-venue aggregated `dash book` ladder is now stacked** —
+  asks worst-to-best top-down, spread/arb separator, bids
+  best-to-worst top-down. Columns: PRICE / SIZE / CUM / segmented
+  venue bar. Replaces the previous side-by-side
+  `bid_cum / bid_size / bid_bar / PRICE / ask_bar / ask_size / ask_cum`
+  layout. Same data, taller-and-narrower visual; matches the
+  flow BOOK pane and the legacy ws book ladder so muscle memory
+  carries everywhere.
+- **Legacy `ws perpetuals book` ladder lifted into the shared
+  renderer.** No user-visible behaviour change — the ladder
+  emits the same bytes — but the rendering code now lives in
+  `internal/output/book_ladder.go` and is shared with
+  `dash flow`'s book pane. Single source of truth for the
+  single-venue ladder shape.
+- **Agent manifest reports `dash` commands with `output_modes: []`** —
+  the manifest's previous `[auto, json]` was a lie; `dash` is
+  TTY-only and refuses to run when stdout isn't a TTY. Empty
+  `output_modes` tells agents up front that piping `dash …`
+  into a parser will fail with a TTY error rather than producing
+  JSON. WS still reports `[auto, json]` (its NDJSON path is real).
+- **Composite panels now self-advertise `MultiPane`** instead of
+  the kernel guessing from `len(r.panels) > 1`. Composite panels
+  like `FlowPanel` register one slot but own internal multi-pane
+  state the kernel can't see; honouring the panel's declaration
+  is what makes `tab` / `1/2/3/4` route into the panel's
+  internal focus handlers rather than into the kernel's
+  `PaneSlot` map.
+- **`FeedState` no longer regresses from Healthy to Subscribed**
+  on a stale `feedStateMsg`. Once events have proven the
+  connection is live, a late "subscribed · waiting…" message
+  from the dial path can no longer overwrite the live state and
+  flicker the rate pill.
+
+### Fixed
+
+- **Unknown messages are broadcast to every panel** instead of
+  silently dropped. The kernel's earlier default of `return r,
+  nil` for unrecognised message types worked for v0.8.x panels
+  that only consumed kernel-known shapes (FeedTickMsg / size /
+  keys). Panels with custom internal messages — `dash flow`'s
+  screener REST snapshot and refresh-tick scheduling are the
+  first users — would have had their messages swallowed. Fan-out
+  cost is bounded by panel count; panels that don't recognise
+  the type return immediately via the type-switch's default branch.
+- **Composite panels receive `tab` / `1/2/3` keys** instead of
+  having them consumed at the kernel's PaneSlot router. Previous
+  behaviour: `1`/`2`/`3` flipped `r.focused` (a `PaneSlot`) and
+  returned, never reaching `FlowPanel.handleDetailFocusKey`. Now
+  the kernel checks the focused panel's `Capabilities().MultiPane`
+  and defers these keys to it via `dispatchToFocused`.
+- **`(too small)` placeholder removed** from every flow panel
+  (chart, book, tape, liquidations, screener). At narrow widths
+  panels now degrade rather than refuse: the screener drops
+  columns right-to-left, the book switches to a compact two-column
+  bid/ask view, the tape and liquidations strip to TIME / SIDE /
+  PRICE, the chart falls back to a single-line C / Δ% summary.
+  Production CLIs adapt; they don't refuse.
+
+### Deferred (post-v0.10.0)
+
+- Visible "focused pane" highlight. `Tab` updates internal focus
+  but no border or chrome change is visible until `Enter` expands
+  — so `2 → expanded BOOK` is the immediate workflow. Pane
+  highlight is a v0.10.1 candidate.
+- Heatmap mode for `dash book` (Bookmap-style price × time × size).
+  Larger design pass; queued separately.
+- Per-candle VWAP + sparkline overlay in the flow chart pane.
+
 ## [0.9.3] — 2026-05-03
 
 Foundation release for the upcoming `dash flow` dashboard. Hardens the
