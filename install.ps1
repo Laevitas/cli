@@ -54,23 +54,28 @@ try {
         Write-Err "Download failed. Check that $version exists at https://github.com/$Repo/releases"
     }
 
-    # Verify checksum if checksums.txt is published.
+    # Verify checksum — fail closed on every error path.
     $sumsUrl  = "https://github.com/$Repo/releases/download/$version/checksums.txt"
     $sumsPath = Join-Path $tmp 'checksums.txt'
     try {
         Invoke-WebRequest -Uri $sumsUrl -OutFile $sumsPath -UseBasicParsing
-        $line = (Get-Content $sumsPath | Where-Object { $_ -match "  $([regex]::Escape($archive))$" } | Select-Object -First 1)
-        if ($line) {
-            $expected = ($line -split '\s+')[0]
-            $actual   = (Get-FileHash -Algorithm SHA256 -Path $archivePath).Hash.ToLower()
-            if ($expected.ToLower() -ne $actual) {
-                Write-Err "Checksum mismatch for $archive"
-            }
-            Write-Info 'Checksum verified.'
-        }
     } catch {
-        # checksums.txt not present is non-fatal.
+        Write-Err "Failed to download checksums.txt from $sumsUrl — refusing to install without integrity verification."
     }
+
+    # Tolerate both GoReleaser line formats: text-mode "<hash>  <name>" and binary-mode "<hash>  *<name>".
+    $escaped = [regex]::Escape($archive)
+    $line = (Get-Content $sumsPath | Where-Object { $_ -match "\s\*?$escaped$" } | Select-Object -First 1)
+    if (-not $line) {
+        Write-Err "Checksum line for $archive not found in checksums.txt — refusing to install."
+    }
+
+    $expected = ($line -split '\s+')[0].ToLower()
+    $actual   = (Get-FileHash -Algorithm SHA256 -Path $archivePath).Hash.ToLower()
+    if ($expected -ne $actual) {
+        Write-Err "Checksum mismatch for ${archive}: expected $expected, got $actual"
+    }
+    Write-Info "Checksum verified ($actual)."
 
     Expand-Archive -Path $archivePath -DestinationPath $tmp -Force
     $binSrc = Join-Path $tmp $BinName
