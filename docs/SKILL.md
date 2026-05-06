@@ -478,8 +478,8 @@ Two-mode TUI:
    Sort with `--sort <key>`; default is descending `volume`. Use `--asc` to
    invert. Valid keys are market-specific: `volume`, `quote-volume`, `oi`,
    `funding`, `basis`, `dte`, `spread`, `last`, `instrument`. Width-adaptive:
-   drops columns right-to-left as the pane shrinks. Move with `↑↓` / `j/k`,
-   `Enter` to drill.
+   drops columns right-to-left as the pane shrinks. Press `/` to filter rows
+   by `venue:symbol`. Move with `↑↓` / `j/k`, `Enter` to drill.
 2. **Detail** (after `Enter`) — four-pane composite for the selected
    instrument:
    - **Chart** — candle chart seeded from REST OHLCVT history on drill,
@@ -501,6 +501,7 @@ Two-mode TUI:
 | Key | Action |
 |---|---|
 | `↑↓` / `jk` | Screener cursor / book viewport scroll |
+| `/` | Filter screener rows |
 | `PgUp/PgDn`, `g/G` | Page / jump (book) |
 | `Enter` | Screener: drill. Detail: toggle expanded pane. |
 | `Esc` | Detail → screener |

@@ -83,6 +83,10 @@ const (
 	// canonical 1m stream so live updates stay consistent.
 	ActTimeframeCycle
 
+	// Search — `/` opens an in-surface filter prompt. Currently
+	// used by flow screeners to filter instrument tables.
+	ActSearch
+
 	// Ladder-mode toggle — `m` cycles between aggregated and split
 	// presentations of the same multi-venue book. Aggregated merges
 	// every venue's depth into one centre-price ladder coloured by
@@ -145,6 +149,8 @@ func ClassifyKey(key string) Action {
 		return ActRecenter
 	case "t", "T":
 		return ActTimeframeCycle
+	case "/":
+		return ActSearch
 	case "m":
 		return ActLadderMode
 	case "tab":
@@ -237,6 +243,9 @@ type Capabilities struct {
 	// ChartTimeframe — `t` cycles chart timeframe views.
 	ChartTimeframe bool
 
+	// Search — `/` opens a table/list filter prompt.
+	Search bool
+
 	// LadderMode — `m` toggles aggregated ↔ split presentation of
 	// a multi-venue book. Only the dashboard book panel sets this
 	// today; the legacy single-venue ladder has nothing to split.
@@ -254,7 +263,7 @@ func FullCapabilities() Capabilities {
 	return Capabilities{
 		ListNav: true, Drill: true, Back: true,
 		Group: true, DepthCycle: true, VenueToggle: true,
-		Recenter: true, ChartTimeframe: true, LadderMode: true,
+		Recenter: true, ChartTimeframe: true, Search: true, LadderMode: true,
 		MultiPane: true, Pause: true, Help: true,
 	}
 }
@@ -280,6 +289,7 @@ func (c Capabilities) Union(other Capabilities) Capabilities {
 		VenueToggle:    c.VenueToggle || other.VenueToggle,
 		Recenter:       c.Recenter || other.Recenter,
 		ChartTimeframe: c.ChartTimeframe || other.ChartTimeframe,
+		Search:         c.Search || other.Search,
 		LadderMode:     c.LadderMode || other.LadderMode,
 		MultiPane:      c.MultiPane || other.MultiPane,
 		Pause:          c.Pause || other.Pause,
@@ -334,6 +344,9 @@ func FooterHints(c Capabilities) string {
 	}
 	if c.ChartTimeframe {
 		parts = append(parts, "t timeframe")
+	}
+	if c.Search {
+		parts = append(parts, "/ search")
 	}
 	if c.LadderMode {
 		parts = append(parts, "m mode")
@@ -441,6 +454,13 @@ var chartTimeframeBindings = []Binding{
 	{"t", "cycle chart timeframe (1m → 5m → 15m → 1h)"},
 }
 
+var searchBindings = []Binding{
+	{"/", "filter table"},
+	{"type", "update filter"},
+	{"backspace", "delete filter character"},
+	{"enter / esc", "close filter prompt"},
+}
+
 var ladderModeBindings = []Binding{
 	{"m", "toggle aggregated ↔ split ladder"},
 }
@@ -473,6 +493,9 @@ func SectionsFor(c Capabilities) []Section {
 	}
 	if c.ChartTimeframe {
 		out = append(out, Section{Title: "Chart", Bindings: chartTimeframeBindings})
+	}
+	if c.Search {
+		out = append(out, Section{Title: "Search", Bindings: searchBindings})
 	}
 	if c.LadderMode {
 		out = append(out, Section{Title: "Ladder mode", Bindings: ladderModeBindings})

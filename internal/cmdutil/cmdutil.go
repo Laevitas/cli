@@ -547,6 +547,8 @@ func RunAndPrintFiltered(client *api.Client, endpoint string, params *api.Reques
 // printer so the stats-shape table can pick its tier columns from
 // --depth (snapshot shape consumes filters via the transform).
 func runAndPrintWith(client *api.Client, endpoint string, params *api.RequestParams, transform func(json.RawMessage) json.RawMessage, filters output.BookFilterFlags) {
+	normalizeRequestInstrument(endpoint, params)
+
 	// Warn if instrument is specified but exchange is missing
 	if params != nil && params.InstrumentName != "" && params.Exchange == "" {
 		output.Warnf("No --exchange specified. Add --exchange <name> (e.g. --exchange deribit, --exchange binance) for accurate results.")
@@ -674,6 +676,19 @@ func runAndPrintWith(client *api.Client, endpoint string, params *api.RequestPar
 
 	// Show request metadata footer
 	printRequestMeta(client, endpoint, params, recordCount, totalCount)
+}
+
+func normalizeRequestInstrument(endpoint string, params *api.RequestParams) {
+	if params == nil || params.InstrumentName == "" {
+		return
+	}
+	market := api.MarketFromEndpoint(endpoint)
+	if market == "" && params.MarketType != "" {
+		if canonical, ok := api.NormalizeMarket(params.MarketType); ok {
+			market = canonical
+		}
+	}
+	params.InstrumentName = api.NormalizeInstrument(market, params.InstrumentName)
 }
 
 func emptyContext(endpoint string, params *api.RequestParams) output.EmptyContext {

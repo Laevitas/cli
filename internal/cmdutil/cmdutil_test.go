@@ -3,6 +3,7 @@ package cmdutil
 import (
 	"testing"
 
+	"github.com/laevitas/cli/internal/api"
 	"github.com/spf13/cobra"
 )
 
@@ -66,5 +67,19 @@ func TestNamedArgs(t *testing.T) {
 				t.Fatalf("error = %q, want %q", got, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestNormalizeRequestInstrument(t *testing.T) {
+	params := &api.RequestParams{InstrumentName: "btcusdt"}
+	normalizeRequestInstrument(api.PerpsOHLCVT, params)
+	if params.InstrumentName != "BTCUSDT" {
+		t.Fatalf("perps instrument = %q, want BTCUSDT", params.InstrumentName)
+	}
+
+	params = &api.RequestParams{InstrumentName: "some-CaseSensitive-Slug"}
+	normalizeRequestInstrument(api.PredictionsOHLCVT, params)
+	if params.InstrumentName != "some-CaseSensitive-Slug" {
+		t.Fatalf("prediction instrument = %q, want case preserved", params.InstrumentName)
 	}
 }

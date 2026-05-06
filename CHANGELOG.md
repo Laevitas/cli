@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.11.1] — 2026-05-06
+
+Polish + small-fix release on top of v0.11.0. No breaking changes;
+backwards compatible with every existing invocation. Adds an in-pane
+filter to the screener, makes book-grouping price-aware, surfaces live
+tick direction + funding colour on the screener, normalises instrument
+names at the wire boundary so `btcusdt` doesn't fail with a 400, drops
+hidden commands from the agent manifest, and replaces the volume
+strip's coarse one-row-or-nothing rendering with fractional block
+glyphs. Restores dashboard pause as a kernel-level control.
+
+### Added
+
+- `/` opens an in-place filter prompt on the `dash flow` screener.
+  Type to narrow the row list (matches against
+  `venue:instrument`); `enter` / `esc` closes the prompt;
+  `backspace` deletes the last character; `ctrl+u` clears.
+  Cursor navigation works on the filtered set. Footer + help
+  overlay advertise `/ search` when the active panel declares
+  the new `Search` capability.
+- `dash flow` screener rows colour positive funding green,
+  negative funding red, and surface live up/down tick markers in
+  the `LAST` column when overscanned trade subscriptions deliver
+  fresh prints for nearby instruments.
+
+### Changed
+
+- Order-book grouping (`+/-` to widen / narrow) now uses an
+  adaptive price-relative cycle across `dash flow`, `dash book`,
+  and `ws ... book`. Cycles are computed from the instrument's
+  reference price (1e-6 → 1e-3 fractions), so an 80,000 BTC
+  book and a 0.00003 micro-cap book each get sensible bucket
+  steps instead of sharing one fixed absolute scale. Falls back
+  to the legacy fixed cycle when reference price is unknown.
+- `dash flow` chart bearish candles now render as solid red
+  blocks instead of shaded `░` bodies. Plain-text rendering
+  (no colour palette) preserves the distinct up/down glyphs as
+  before for callers that need glyph-based direction.
+
+### Fixed
+
+- Instrument-name positional arguments are now normalised at the
+  REST request boundary for crypto markets, so `perps ohlcvt
+  btcusdt --exchange binance` is sent as `BTCUSDT` and returns
+  data instead of `BAD_REQUEST: instrument_name must be ...`.
+  Prediction-market instrument IDs pass through unchanged because
+  their slugs are case-sensitive.
+- The `commands` agent manifest now excludes hidden internal
+  commands (e.g. `dash demo`). Matches `--help` output, which
+  already hid them; the manifest had been listing them, polluting
+  the public command inventory agents read at first-run discovery.
+- `dash flow` chart volume strip uses fractional block glyphs
+  (`▁▂▃▄▅▆▇█`) instead of one-or-two-row solid bars. At a 1-row
+  strip height, eight distinct intensity levels are visible
+  instead of "empty or full"; at 2 rows, sixteen levels.
+  Quantization fix that was masking volume gradients on quiet
+  pairs.
+- `p` now actually pauses across every dashboard. The kernel
+  previously had no `ActPause` branch — `dash book` worked only
+  because its panel handled `p` directly, while `dash flow` did
+  nothing despite the footer advertising it. Pause is now kernel-
+  level: the WS feed stays connected and drained, but
+  `FeedTickMsg` broadcasts are suppressed so panels visibly
+  freeze. Header pill flips to a yellow `● paused`; unpausing
+  resets the live-rate anchor so the `N.N/s` value isn't diluted
+  by frozen time. `PanelContext.Paused` is exposed so panels can
+  also gate render-time effects (e.g. `flow_book` flash
+  suppression) without needing their own pause state.
+
 ## [0.11.0] — 2026-05-06
 
 ### Added

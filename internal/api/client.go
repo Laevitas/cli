@@ -109,15 +109,15 @@ func (c *Client) WalletAddress() string {
 // Stable error codes surfaced in the JSON error envelope. These are the
 // contract agents key off of — values must not change without a major bump.
 const (
-	ErrCodeAuthInvalid    = "AUTH_INVALID"
-	ErrCodeAuthForbidden  = "AUTH_FORBIDDEN"
-	ErrCodeRateLimited    = "RATE_LIMITED"
-	ErrCodePaymentReq     = "PAYMENT_REQUIRED"
-	ErrCodeBadRequest     = "BAD_REQUEST"
-	ErrCodeNotFound       = "NOT_FOUND"
-	ErrCodeServerError    = "SERVER_ERROR"
-	ErrCodeNetworkError   = "NETWORK_ERROR"
-	ErrCodeUnknown        = "UNKNOWN_ERROR"
+	ErrCodeAuthInvalid   = "AUTH_INVALID"
+	ErrCodeAuthForbidden = "AUTH_FORBIDDEN"
+	ErrCodeRateLimited   = "RATE_LIMITED"
+	ErrCodePaymentReq    = "PAYMENT_REQUIRED"
+	ErrCodeBadRequest    = "BAD_REQUEST"
+	ErrCodeNotFound      = "NOT_FOUND"
+	ErrCodeServerError   = "SERVER_ERROR"
+	ErrCodeNetworkError  = "NETWORK_ERROR"
+	ErrCodeUnknown       = "UNKNOWN_ERROR"
 
 	// x402-specific. Distinguish *why* a payment-required path failed so
 	// agents can branch deterministically without parsing human-readable text.
@@ -293,7 +293,7 @@ func (c *Client) buildURL(path string, params *RequestParams) string {
 		q.Set("exchange", params.Exchange)
 	}
 	if params.InstrumentName != "" {
-		q.Set("instrument_name", params.InstrumentName)
+		q.Set("instrument_name", NormalizeInstrument(requestMarket(path, params), params.InstrumentName))
 	}
 	if params.Currency != "" {
 		q.Set("currency", params.Currency)
@@ -418,6 +418,18 @@ func (c *Client) buildURL(path string, params *RequestParams) string {
 		return u + "?" + q.Encode()
 	}
 	return u
+}
+
+func requestMarket(path string, params *RequestParams) string {
+	if market := MarketFromEndpoint(path); market != "" {
+		return market
+	}
+	if params != nil && params.MarketType != "" {
+		if canonical, ok := NormalizeMarket(params.MarketType); ok {
+			return canonical
+		}
+	}
+	return ""
 }
 
 // isNetworkError checks if an error is a connectivity issue (DNS, TCP, timeout).

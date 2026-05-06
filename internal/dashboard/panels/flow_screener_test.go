@@ -376,6 +376,86 @@ func TestFlowScreenerCursorBoundsClamped(t *testing.T) {
 	}
 }
 
+func TestFlowScreenerSearchFiltersRows(t *testing.T) {
+	p := newTestFlowScreenerPanel(fakeClient(), "BTC", "perpetuals")
+	p.Update(snapMsg([]columns.PerpRow{
+		{Exchange: "binance", InstrumentName: "BTCUSDT", MarkPrice: 100},
+		{Exchange: "binance", InstrumentName: "TAOUSDT", MarkPrice: 200},
+		{Exchange: "bybit", InstrumentName: "TAOUSDT", MarkPrice: 300},
+	}))
+
+	p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	for _, r := range "tao" {
+		p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	p.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if got := p.searchQuery; got != "tao" {
+		t.Fatalf("searchQuery = %q, want tao", got)
+	}
+	view := p.View(90, 6, dashboard.PanelContext{})
+	if strings.Contains(view, "BTCUSDT") {
+		t.Fatalf("unmatched BTC row rendered under TAO filter:\n%s", view)
+	}
+	if !strings.Contains(view, "TAOUSDT") || !strings.Contains(view, "filter: tao") || !strings.Contains(view, "(2/3)") {
+		t.Fatalf("filtered view missing TAO rows/footer:\n%s", view)
+	}
+}
+
+func TestFlowScreenerTypingWithoutSlashDoesNotSearch(t *testing.T) {
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p.Update(snapMsg(makeRows(3)))
+
+	p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	if p.searchActive || p.searchQuery != "" {
+		t.Fatalf("typing without / should not search: active=%v query=%q", p.searchActive, p.searchQuery)
+	}
+}
+
+func TestFlowScreenerSearchNavigationUsesFilteredRows(t *testing.T) {
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p.Update(snapMsg([]columns.PerpRow{
+		{Exchange: "binance", InstrumentName: "BTCUSDT"},
+		{Exchange: "binance", InstrumentName: "TAOUSDT"},
+		{Exchange: "bybit", InstrumentName: "ETHUSDT"},
+		{Exchange: "okx", InstrumentName: "TAO-USDT-SWAP"},
+	}))
+	p.searchQuery = "tao"
+	p.ensureCursorVisible()
+	if p.cursor != 1 {
+		t.Fatalf("cursor after filter = %d, want first TAO row index 1", p.cursor)
+	}
+
+	p.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if p.cursor != 3 {
+		t.Fatalf("down under filter cursor = %d, want next TAO row index 3", p.cursor)
+	}
+	p.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if p.cursor != 1 {
+		t.Fatalf("up under filter cursor = %d, want first TAO row index 1", p.cursor)
+	}
+}
+
+func TestFlowScreenerSearchBackspaceAndClear(t *testing.T) {
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p.Update(snapMsg(makeRows(2)))
+	p.searchActive = true
+	p.searchQuery = "tao"
+
+	p.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	if p.searchQuery != "ta" {
+		t.Fatalf("after backspace searchQuery = %q, want ta", p.searchQuery)
+	}
+	p.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	if p.searchQuery != "" {
+		t.Fatalf("after ctrl+u searchQuery = %q, want empty", p.searchQuery)
+	}
+	p.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if p.searchActive {
+		t.Fatal("esc should close search prompt")
+	}
+}
+
 // ─── Subscriptions / overscan window ──────────────────────────────────────
 
 func TestFlowScreenerSubscriptionsBoundedByOverscan(t *testing.T) {
@@ -428,6 +508,27 @@ func TestFlowScreenerSubscriptionsBuildCorrectChannelStrings(t *testing.T) {
 	}
 }
 
+func TestFlowScreenerSubscriptionsRespectSearchFilter(t *testing.T) {
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p.Update(snapMsg([]columns.PerpRow{
+		{Exchange: "binance", InstrumentName: "BTCUSDT"},
+		{Exchange: "binance", InstrumentName: "TAOUSDT"},
+		{Exchange: "bybit", InstrumentName: "TAOUSDT"},
+	}))
+	p.searchQuery = "tao"
+	p.ensureCursorVisible()
+
+	got := p.Subscriptions(dashboard.Selection{})
+	if len(got.Channels) != 2 {
+		t.Fatalf("filtered subscriptions = %v, want 2 TAO channels", got.Channels)
+	}
+	for _, ch := range got.Channels {
+		if !strings.Contains(ch, "TAO") {
+			t.Fatalf("non-TAO channel subscribed under filter: %v", got.Channels)
+		}
+	}
+}
+
 // ─── Capabilities ────────────────────────────────────────────────────────
 
 func TestFlowScreenerCapabilitiesListNavAndDrill(t *testing.T) {
@@ -438,6 +539,9 @@ func TestFlowScreenerCapabilitiesListNavAndDrill(t *testing.T) {
 	}
 	if !caps.Drill {
 		t.Errorf("expected Drill capability")
+	}
+	if !caps.Search {
+		t.Errorf("expected Search capability")
 	}
 }
 
@@ -565,6 +669,46 @@ func TestFlowScreenerSortRows(t *testing.T) {
 	p.sortRows(rows)
 	if rows[0].InstrumentName != "HIGH" {
 		t.Fatalf("basis sort first row = %s, want HIGH", rows[0].InstrumentName)
+	}
+}
+
+func TestFlowScreenerViewColorsFundingBySign(t *testing.T) {
+	p := newTestFlowScreenerPanel(fakeClient(), "BTC", "perpetuals")
+	rows := makeRows(3)
+	rows[0].FundingRate = 0.0001
+	rows[1].FundingRate = -0.0001
+	rows[2].FundingRate = 0
+	p.Update(snapMsg(rows))
+	p.cursor = 2
+
+	view := p.View(130, 6, dashboard.PanelContext{})
+	if !strings.Contains(view, output.BrandGreen+"+0.0100%"+output.Reset) {
+		t.Errorf("expected positive funding to be green, got:\n%s", view)
+	}
+	if !strings.Contains(view, output.Red+"-0.0100%"+output.Reset) {
+		t.Errorf("expected negative funding to be red, got:\n%s", view)
+	}
+}
+
+func TestFlowScreenerViewRendersLiveLastTickDirection(t *testing.T) {
+	p := newTestFlowScreenerPanel(fakeClient(), "BTC", "perpetuals")
+	rows := makeRows(2)
+	p.Update(snapMsg(rows))
+	p.cursor = 1
+
+	channel := "trades.perpetuals.binance.BTCUSDT"
+	p.Update(makeTradeEvent(channel, 100, 1, "buy"))
+	p.Update(makeTradeEvent(channel, 101, 1, "buy"))
+
+	view := p.View(130, 6, dashboard.PanelContext{})
+	if !strings.Contains(view, output.BrandGreen+"▲ 101.00"+output.Reset) {
+		t.Errorf("expected live LAST up tick, got:\n%s", view)
+	}
+
+	p.Update(makeTradeEvent(channel, 99, 1, "sell"))
+	view = p.View(130, 6, dashboard.PanelContext{})
+	if !strings.Contains(view, output.Red+"▼ 99.0000"+output.Reset) {
+		t.Errorf("expected live LAST down tick, got:\n%s", view)
 	}
 }
 

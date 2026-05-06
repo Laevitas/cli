@@ -208,6 +208,8 @@ options flow.
 Sort with `--sort <key>`; default is descending `volume`. Use `--asc` to
 invert. Valid keys are market-specific: `volume`, `quote-volume`, `oi`,
 `funding`, `basis`, `dte`, `spread`, `last`, `instrument`.
+Press `/` on the screener to filter rows by `venue:symbol` without leaving
+the table.
 
 **Detail view** (after `Enter` on a screener row):
 
@@ -232,6 +234,7 @@ invert. Valid keys are market-specific: `volume`, `quote-volume`, `oi`,
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` / `j` / `k` | Move screener cursor |
+| `/` | Filter screener rows |
 | `Enter` | Drill into selected row (screener) / toggle expanded focused pane (detail) |
 | `Esc` | Back out of detail to the screener |
 | `tab` / `shift+tab` | Cycle focused pane (detail) |
