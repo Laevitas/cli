@@ -330,7 +330,7 @@ func executeREPLCommand(line string, client *api.Client) {
 	if args[0] == "help" {
 		if len(args) == 1 {
 			rootCmd.SetArgs([]string{"--help"})
-			rootCmd.Execute()
+			_ = executeRootCommand()
 			return
 		}
 		// "help futures" → "futures --help"
@@ -355,7 +355,7 @@ func executeREPLCommand(line string, client *api.Client) {
 		cmdutil.SpinnerInstance = nil
 	}()
 
-	if err := rootCmd.Execute(); err != nil {
+	if err := executeRootCommand(); err != nil {
 		output.Errorf("%s", err)
 	}
 

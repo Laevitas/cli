@@ -69,6 +69,11 @@ type Printer struct {
 	// applies --depth via output.ApplyBookFilter on the JSON
 	// payload before the printer runs.
 	StatsTier int
+
+	// EmptyContext describes the request that produced an empty
+	// table result. JSON/CSV ignore this so machine-readable output
+	// stays stable.
+	EmptyContext *EmptyContext
 }
 
 // NewPrinter creates a printer for the given format string.
@@ -77,6 +82,13 @@ func NewPrinter(format string) *Printer {
 		Format: Resolve(format),
 		Writer: os.Stdout,
 	}
+}
+
+// WithEmptyContext attaches request context used to render a more
+// useful table-mode empty result. It does not affect JSON or CSV.
+func (p *Printer) WithEmptyContext(ctx EmptyContext) *Printer {
+	p.EmptyContext = &ctx
+	return p
 }
 
 // Print renders data according to the configured format.
@@ -169,6 +181,10 @@ func (p *Printer) printTable(data interface{}) error {
 	rows := toRows(data)
 	rows = p.compactOrderbookRows(rows)
 	if len(rows) == 0 {
+		if p.EmptyContext != nil {
+			fmt.Fprintln(p.Writer, RenderEmptyContext(*p.EmptyContext))
+			return nil
+		}
 		fmt.Fprintln(p.Writer, "No data.")
 		return nil
 	}

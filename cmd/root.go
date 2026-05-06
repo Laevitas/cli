@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -93,8 +95,9 @@ WebSocket protocol:  https://apiv2.laevitas.ch/websocket/`,
 			output.WidthOverride = widthOverride
 		}
 	},
-	SilenceUsage:  true,
-	SilenceErrors: true,
+	SuggestionsMinimumDistance: 2,
+	SilenceUsage:               true,
+	SilenceErrors:              true,
 }
 
 var versionCmd = &cobra.Command{
@@ -192,9 +195,88 @@ Twitter:    https://twitter.com/laevitas1` + reset + `
 }
 
 func Execute() error {
-	err := rootCmd.Execute()
+	err := executeRootCommand()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "✗ %s\n", err)
 	}
 	return err
+}
+
+func executeRootCommand() error {
+	err := rootCmd.Execute()
+	if err != nil {
+		return augmentUnknownCommandError(err)
+	}
+	return nil
+}
+
+func augmentUnknownCommandError(err error) error {
+	msg := err.Error()
+	if !strings.HasPrefix(msg, "unknown command ") {
+		return err
+	}
+	parts := strings.Split(msg, "\"")
+	if len(parts) < 2 {
+		return err
+	}
+	token := parts[1]
+	suggestions := nestedCommandSuggestions(rootCmd, token, rootCmd.SuggestionsMinimumDistance)
+	if len(suggestions) == 0 {
+		return err
+	}
+	return fmt.Errorf("%s\n\nDid you mean this?\n\t%s", msg, strings.Join(suggestions, "\n\t"))
+}
+
+func nestedCommandSuggestions(cmd *cobra.Command, token string, maxDistance int) []string {
+	if maxDistance <= 0 {
+		maxDistance = 2
+	}
+	seen := map[string]bool{}
+	var out []string
+	var walk func(*cobra.Command)
+	walk = func(parent *cobra.Command) {
+		for _, child := range parent.Commands() {
+			if child.Hidden {
+				continue
+			}
+			name := child.Name()
+			if name != "" && editDistance(strings.ToLower(token), strings.ToLower(name)) <= maxDistance && !seen[name] {
+				seen[name] = true
+				out = append(out, name)
+			}
+			for _, alias := range child.Aliases {
+				if editDistance(strings.ToLower(token), strings.ToLower(alias)) <= maxDistance && !seen[name] {
+					seen[name] = true
+					out = append(out, name)
+				}
+			}
+			walk(child)
+		}
+	}
+	walk(cmd)
+	sort.Strings(out)
+	return out
+}
+
+func editDistance(a, b string) int {
+	if a == b {
+		return 0
+	}
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 0
+			if a[i-1] != b[j-1] {
+				cost = 1
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
 }

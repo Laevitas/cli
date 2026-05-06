@@ -169,7 +169,7 @@ var showCmd = &cobra.Command{
 var setCmd = &cobra.Command{
 	Use:   "set <key> <value>",
 	Short: "Set a config value (api_key, exchange, output, base_url, wallet_key, auth)",
-	Args:  cobra.ExactArgs(2),
+	Args:  cmdutil.NamedArgs("key", "value"),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := internalConfig.Load()
 		if err != nil {
