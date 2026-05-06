@@ -86,6 +86,9 @@ func TestFlowTapeSelectionChangedClearsRing(t *testing.T) {
 	if len(p.ring) != 0 {
 		t.Errorf("ring survived selection change: %d trades", len(p.ring))
 	}
+	if got := p.stats.window(time.Date(2026, 5, 4, 14, 24, 0, 0, time.UTC), 5*60); got.count != 0 {
+		t.Errorf("stats survived selection change: %+v", got)
+	}
 }
 
 func TestFlowTapeStaleEventDropped(t *testing.T) {
@@ -96,6 +99,22 @@ func TestFlowTapeStaleEventDropped(t *testing.T) {
 	p.Update(makeTradeEvent("trades.perpetuals.deribit.BTC-PERPETUAL", 78500, 0.5, "buy"))
 	if len(p.ring) != 0 {
 		t.Errorf("stale event added to ring: %d trades", len(p.ring))
+	}
+}
+
+func TestFlowLargePrintsFiltersSmallTrades(t *testing.T) {
+	p := NewFlowLargePrintsPanel(dashboard.Selection{
+		Market: "spot", Venue: "binance", Symbol: "BTCUSDT",
+	}, 10_000)
+
+	p.Update(makeTradeEvent("trades.spot.binance.BTCUSDT", 100, 50, "buy"))  // $5k
+	p.Update(makeTradeEvent("trades.spot.binance.BTCUSDT", 100, 150, "buy")) // $15k
+
+	if len(p.ring) != 1 {
+		t.Fatalf("ring = %d, want only the large print", len(p.ring))
+	}
+	if p.ring[0].size != 150 {
+		t.Errorf("kept trade size = %v, want 150", p.ring[0].size)
 	}
 }
 
@@ -138,6 +157,67 @@ func TestFlowTapeCapacityEvictsOldest(t *testing.T) {
 	oldestKept := p.ring[flowTapeCapacity-1].price
 	if oldestKept != 5 {
 		t.Errorf("oldest kept price = %v, want 5 (capacity eviction)", oldestKept)
+	}
+}
+
+func TestTapeStatsRingUsesFiveMinuteWallClockWindow(t *testing.T) {
+	now := time.Date(2026, 5, 4, 14, 25, 0, 0, time.UTC)
+	var stats tapeStatsRing
+	stats.add(now.Add(-30*time.Second), 100, "buy")
+	stats.add(now.Add(-90*time.Second), 200, "sell")
+	stats.add(now.Add(-180*time.Second), 300, "buy")
+
+	five := stats.window(now, 5*60)
+	if five.count != 3 || five.buyUSD != 400 || five.sellUSD != 200 {
+		t.Fatalf("5m window = %+v, want all three trades", five)
+	}
+}
+
+func TestTapeStatsRingEvictsOutsideFiveMinutes(t *testing.T) {
+	now := time.Date(2026, 5, 4, 14, 25, 0, 0, time.UTC)
+	var stats tapeStatsRing
+	stats.add(now.Add(-301*time.Second), 1000, "buy")
+	stats.add(now.Add(-299*time.Second), 100, "sell")
+
+	five := stats.window(now, 5*60)
+	if five.count != 1 || five.buyUSD != 0 || five.sellUSD != 100 {
+		t.Fatalf("5m window = %+v, want only t-299s sell $100", five)
+	}
+}
+
+func TestBuildTapeStatsCompactFiveMinuteNet(t *testing.T) {
+	now := time.Date(2026, 5, 4, 14, 25, 0, 0, time.UTC)
+	var stats tapeStatsRing
+	stats.add(now.Add(-90*time.Second), 420_000, "buy")
+	stats.add(now.Add(-30*time.Second), 20_000, "sell")
+
+	lines := buildTapeStats(&stats, now, 24)
+	if len(lines) != 1 {
+		t.Fatalf("compact stats lines = %d, want 1", len(lines))
+	}
+	if strings.Contains(lines[0], "1m") || strings.Contains(lines[0], "idle") {
+		t.Fatalf("compact stats should only render 5m net:\n%s", lines[0])
+	}
+	if !strings.Contains(lines[0], "5m") || !strings.Contains(lines[0], "NET") || !strings.Contains(lines[0], "$400K") {
+		t.Fatalf("compact stats missing 5m net:\n%s", lines[0])
+	}
+	if got := output.VisibleWidth(lines[0]); got != 24 {
+		t.Fatalf("compact stats width = %d, want 24", got)
+	}
+}
+
+func TestBuildTapeStatsUsesSideBreakdownWhenWidthAllows(t *testing.T) {
+	now := time.Date(2026, 5, 4, 14, 25, 0, 0, time.UTC)
+	var stats tapeStatsRing
+	stats.add(now.Add(-30*time.Second), 100_000, "buy")
+	stats.add(now.Add(-90*time.Second), 25_000, "sell")
+
+	lines := buildTapeStats(&stats, now, 80)
+	if len(lines) != 1 {
+		t.Fatalf("stats lines = %d, want 1", len(lines))
+	}
+	if !strings.Contains(lines[0], "5m") || !strings.Contains(lines[0], "BUY") || !strings.Contains(lines[0], "SELL") {
+		t.Fatalf("expanded line missing 5m side breakdown:\n%s", lines[0])
 	}
 }
 

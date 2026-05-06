@@ -35,6 +35,8 @@ import (
 // purely future-proofing — keeping it small to bound memory.
 const flowTapeCapacity = 64
 
+const flowTapeStatsBuckets = 5 * 60
+
 // flowTapeMinWidth is the smallest width that fits the narrow
 // row format (TIME / DIR / SIZE / PRICE) — USD column is dropped
 // when the pane is below flowTapeUSDThreshold cells wide.
@@ -73,6 +75,67 @@ type tapeTrade struct {
 	direction string
 }
 
+type tapeStatsBucket struct {
+	unix    int64
+	buyUSD  float64
+	sellUSD float64
+	count   int
+}
+
+type tapeStatsWindow struct {
+	buyUSD  float64
+	sellUSD float64
+	count   int
+}
+
+type tapeStatsRing struct {
+	buckets [flowTapeStatsBuckets]tapeStatsBucket
+}
+
+func (s *tapeStatsRing) add(ts time.Time, usd float64, direction string) {
+	if ts.IsZero() || usd <= 0 {
+		return
+	}
+	sec := ts.Unix()
+	idx := int(sec % flowTapeStatsBuckets)
+	if idx < 0 {
+		idx += flowTapeStatsBuckets
+	}
+	b := &s.buckets[idx]
+	if b.unix != sec {
+		*b = tapeStatsBucket{unix: sec}
+	}
+	if direction == "buy" {
+		b.buyUSD += usd
+	} else {
+		b.sellUSD += usd
+	}
+	b.count++
+}
+
+func (s *tapeStatsRing) window(now time.Time, seconds int) tapeStatsWindow {
+	if seconds <= 0 {
+		return tapeStatsWindow{}
+	}
+	nowSec := now.Unix()
+	cutoff := nowSec - int64(seconds)
+	var out tapeStatsWindow
+	for i := range s.buckets {
+		b := s.buckets[i]
+		if b.count == 0 || b.unix <= cutoff || b.unix > nowSec {
+			continue
+		}
+		out.buyUSD += b.buyUSD
+		out.sellUSD += b.sellUSD
+		out.count += b.count
+	}
+	return out
+}
+
+func (w tapeStatsWindow) net() float64 {
+	return w.buyUSD - w.sellUSD
+}
+
 // FlowTapePanel implements dashboard.Panel.
 type FlowTapePanel struct {
 	// selection is the latest selection the panel knows about,
@@ -84,6 +147,13 @@ type FlowTapePanel struct {
 	// newest at the front (index 0). Cleared on selection change.
 	// Bounded by flowTapeCapacity.
 	ring []tapeTrade
+
+	stats tapeStatsRing
+
+	// minUSD filters incoming trades by notional when this panel is
+	// used as the spot "large prints" pane. Zero means unfiltered
+	// tape.
+	minUSD float64
 }
 
 // NewFlowTapePanel constructs the panel with an initial selection.
@@ -91,6 +161,13 @@ type FlowTapePanel struct {
 // the selection-vs-channel reasoning.
 func NewFlowTapePanel(initial dashboard.Selection) *FlowTapePanel {
 	return &FlowTapePanel{selection: initial}
+}
+
+// NewFlowLargePrintsPanel constructs a tape-style panel that keeps
+// only trades at or above minUSD notional. Used for spot detail
+// dashboards where liquidations do not exist.
+func NewFlowLargePrintsPanel(initial dashboard.Selection, minUSD float64) *FlowTapePanel {
+	return &FlowTapePanel{selection: initial, minUSD: minUSD}
 }
 
 // currentChannel returns the WS channel the panel should be
@@ -119,6 +196,7 @@ func (p *FlowTapePanel) Update(msg tea.Msg) (Panel, tea.Cmd) {
 	case dashboard.SelectionChangedMsg:
 		p.selection = m.New
 		p.ring = nil
+		p.stats = tapeStatsRing{}
 	case dashboard.FeedTickMsg:
 		want := p.currentChannel()
 		if want == "" || m.Event.Channel != want {
@@ -160,6 +238,9 @@ func (p *FlowTapePanel) Update(msg tea.Msg) (Panel, tea.Cmd) {
 		if direction != "buy" && direction != "sell" {
 			return p, nil
 		}
+		if p.minUSD > 0 && t.Price*size < p.minUSD {
+			return p, nil
+		}
 		ts := parseTradeTime(t.Date, t.Timestamp)
 		p.appendTrade(tapeTrade{
 			timestamp: ts,
@@ -167,6 +248,7 @@ func (p *FlowTapePanel) Update(msg tea.Msg) (Panel, tea.Cmd) {
 			size:      size,
 			direction: direction,
 		})
+		p.stats.add(ts, t.Price*size, direction)
 	}
 	return p, nil
 }
@@ -191,6 +273,7 @@ func (p *FlowTapePanel) Subscriptions(sel dashboard.Selection) dashboard.FeedSpe
 	if ch != p.currentChannel() {
 		p.selection = sel
 		p.ring = nil
+		p.stats = tapeStatsRing{}
 	}
 	if ch == "" {
 		return dashboard.FeedSpec{}
@@ -213,6 +296,9 @@ func (p *FlowTapePanel) View(width, height int, ctx dashboard.PanelContext) stri
 	}
 	if len(p.ring) == 0 {
 		label := "waiting for trades…"
+		if p.minUSD > 0 {
+			label = "waiting for large prints…"
+		}
 		if p.currentChannel() == "" {
 			label = ""
 		}
@@ -234,8 +320,8 @@ func (p *FlowTapePanel) View(width, height int, ctx dashboard.PanelContext) stri
 	// wall clock (not the newest trade's timestamp) so the
 	// window genuinely ages out in quiet markets — otherwise a
 	// 5-minute-old print would still count as "current."
-	statsLine := buildTapeStats(p.ring, time.Now(), width)
-	rows = append(rows, statsLine)
+	statsLines := buildTapeStats(&p.stats, time.Now(), width)
+	rows = append(rows, statsLines...)
 
 	// Header row. Two layouts based on width:
 	//   wide   (≥ flowTapeUSDThreshold): TIME / DIR / SIZE / PRICE / USD
@@ -257,8 +343,8 @@ func (p *FlowTapePanel) View(width, height int, ctx dashboard.PanelContext) stri
 	}
 	rows = append(rows, header)
 
-	// Trade rows. height-2 to leave room for stats + column header.
-	maxTrades := height - 2
+	// Trade rows. Leave room for stats + column header.
+	maxTrades := height - len(rows)
 	if maxTrades > len(p.ring) {
 		maxTrades = len(p.ring)
 	}
@@ -373,105 +459,67 @@ func parseTradeTime(date string, ts int64) time.Time {
 	return time.Now().UTC()
 }
 
-// buildTapeStats emits a single-line aggregate over the most
-// recent 60 seconds of trades in the ring.
-//
-// Format (full):
-//
-//	60s · BUY $1.2M / SELL $890K · NET +$340K
-//
-// No "tape speed" / count column today: the ring is capacity-
-// bound at 64 trades, so any count derived from it saturates on
-// busy markets and reads as a constant. A real rate measure
-// (inter-arrival EWMA, decoupled from the ring) is a v0.10.1
-// item. For now the buy/sell/net trio carries the live signal.
-//
-// Width-adaptive: at narrow widths drops the per-side breakdown,
-// leaving just the net delta.
-//
-// `ring` is the panel's trade ring (newest-first). We walk it
-// forward summing per-side USD until we hit a trade older than
-// 60s, then stop. Single pass; no allocation beyond the result.
-//
-// `now` is the wall-clock anchor for the rolling window. The
-// production path passes `time.Now()`; the panel calls
-// buildTapeStats(p.ring, time.Now(), width). Anchoring on the
-// wall clock rather than the newest retained trade is critical:
-// in quiet markets a 5-minute-old print would otherwise count as
-// "current" forever because we anchored on its own timestamp.
-//
-// Net is colour-coded: green when buys outweigh sells (positive
-// flow), red when sells outweigh buys. Tells the user "was the
-// last minute mostly buying or selling?" without reading numbers.
-func buildTapeStats(ring []tapeTrade, now time.Time, width int) string {
-	if len(ring) == 0 || width <= 0 {
-		return strings.Repeat(" ", width)
+func buildTapeStats(stats *tapeStatsRing, now time.Time, width int) []string {
+	if width <= 0 {
+		return nil
 	}
-
-	const window = 60 * time.Second
-	cutoff := now.Add(-window)
-
-	var buyUSD, sellUSD float64
-	count := 0
-	for _, t := range ring {
-		if t.timestamp.Before(cutoff) {
-			break
-		}
-		count++
-		usd := t.price * t.size
-		if t.direction == "buy" {
-			buyUSD += usd
-		} else {
-			sellUSD += usd
-		}
+	if stats == nil {
+		return []string{strings.Repeat(" ", width)}
 	}
+	five := stats.window(now, 5*60)
+	full := formatTapeStatsFull(five)
+	if output.VisibleWidth(full) <= width {
+		return []string{padTapeStatLine(full, width)}
+	}
+	return []string{padTapeStatLine(formatTapeStatsCompact(five), width)}
+}
 
-	// Net delta colour-coded:
-	//   net > 0 → green  (buyers dominated)
-	//   net < 0 → red    (sellers dominated)
-	//   net = 0 or empty → grey (neutral)
-	// Sign + colour carry the signal; no jargon label.
+func formatTapeStatsCompact(five tapeStatsWindow) string {
+	grey := output.BrandGreyMid
+	reset := output.Reset
+	return grey + "5m " + reset + formatTapeWindowNet(five)
+}
+
+func formatTapeStatsFull(w tapeStatsWindow) string {
 	grey := output.BrandGreyMid
 	green := output.BrandGreen
 	red := output.Red
 	reset := output.Reset
-
-	net := buyUSD - sellUSD
-	netColor := green
-	netSign := "+"
-	switch {
-	case count == 0 || net == 0:
-		netColor = grey
-		netSign = ""
-	case net < 0:
-		netColor = red
-		netSign = "-"
+	if w.count == 0 {
+		return grey + "5m -" + reset
 	}
-	netAbs := net
-	if netAbs < 0 {
-		netAbs = -netAbs
-	}
+	return fmt.Sprintf("%s5m %sBUY %s%s / %sSELL %s%s · NET %s%s",
+		grey, green, formatUSDStat(w.buyUSD), grey,
+		red, formatUSDStat(w.sellUSD), grey,
+		formatTapeNet(w.net()), reset)
+}
 
-	// Stats line: buy / sell / net trio. No count or rate (would
-	// saturate against the capacity-bound ring); no jargon label.
-	full := fmt.Sprintf("%s60s · %sBUY %s%s / %sSELL %s%s · NET %s%s%s%s%s",
-		grey,
-		green, formatUSDStat(buyUSD), grey,
-		red, formatUSDStat(sellUSD), grey,
-		netColor, netSign, formatUSDStat(netAbs), grey, reset)
-	minimal := fmt.Sprintf("%s60s · NET %s%s%s%s",
-		grey, netColor, netSign, formatUSDStat(netAbs), reset)
-
-	for _, candidate := range []string{full, minimal} {
-		if output.VisibleWidth(candidate) <= width {
-			pad := width - output.VisibleWidth(candidate)
-			if pad > 0 {
-				candidate += strings.Repeat(" ", pad)
-			}
-			return candidate
-		}
+func formatTapeWindowNet(w tapeStatsWindow) string {
+	if w.count == 0 {
+		return output.BrandGreyMid + "-" + output.Reset
 	}
-	return output.TruncateAnsi(minimal, width)
+	return "NET " + formatTapeNet(w.net())
+}
+
+func formatTapeNet(net float64) string {
+	color := output.BrandGreen
+	sign := "+"
+	if net < 0 {
+		color = output.Red
+		sign = "-"
+		net = -net
+	} else if net == 0 {
+		color = output.BrandGreyMid
+		sign = ""
+	}
+	return color + sign + formatUSDStat(net) + output.Reset
+}
+
+func padTapeStatLine(line string, width int) string {
+	if output.VisibleWidth(line) > width {
+		return output.TruncateAnsi(line, width)
+	}
+	return output.PadRightAnsi(line, width)
 }
 
 // Compile-time interface satisfaction.

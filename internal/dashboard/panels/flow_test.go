@@ -14,6 +14,7 @@ package panels
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -25,7 +26,7 @@ import (
 // snapshot install step.
 func newFlowFixture(t *testing.T, rows int) (*FlowPanel, *FlowScreenerPanel) {
 	t.Helper()
-	screener := NewFlowScreenerPanel(fakeClient(), "BTC", "perpetuals")
+	screener := newTestFlowScreenerPanel(fakeClient(), "BTC", "perpetuals")
 	screener.Update(snapMsg(makeRows(rows)))
 	return NewFlowPanel(screener), screener
 }
@@ -334,6 +335,37 @@ func TestFlowPanelCapabilitiesDetailMode(t *testing.T) {
 	if !caps.MultiPane {
 		t.Errorf("detail-mode caps.MultiPane = false; want true for focus/expand keys")
 	}
+	if !caps.ChartTimeframe {
+		t.Errorf("detail-mode caps.ChartTimeframe = false; want t advertised even when chart is not focused")
+	}
+}
+
+func TestFlowPanelTimeframeKeyRoutesToChartWithoutChartFocus(t *testing.T) {
+	p, screener := newFlowFixture(t, 5)
+	p.Update(FlowDrillMsg{Selection: screener.currentSelection()})
+	if p.detailFocus != flowPaneBook {
+		t.Fatalf("setup: detail focus = %d, want book", p.detailFocus)
+	}
+
+	_, cmd := p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	if cmd == nil {
+		t.Fatal("timeframe key returned nil cmd; want chart reseed command")
+	}
+
+	card, ok := p.chart.(*CardPanel)
+	if !ok {
+		t.Fatalf("chart panel = %T, want *CardPanel", p.chart)
+	}
+	chart, ok := card.inner.(*FlowChartPanel)
+	if !ok {
+		t.Fatalf("chart card inner = %T, want *FlowChartPanel", card.inner)
+	}
+	if got := chart.chartTimeframe(); got != 5*time.Minute {
+		t.Fatalf("chart timeframe = %s, want 5m", got)
+	}
+	if p.detailFocus != flowPaneBook {
+		t.Fatalf("timeframe key changed focus to %d; want book unchanged", p.detailFocus)
+	}
 }
 
 // ─── View ────────────────────────────────────────────────────────────────
@@ -513,7 +545,7 @@ func TestFlowPanelDetailModeSuppressesScreenerSelectionCmd(t *testing.T) {
 func TestFlowPanelEnterOnEmptyScreenerStaysInScreener(t *testing.T) {
 	// Construct a screener with NO rows installed (the loading
 	// state). Wrap it in a FlowPanel.
-	screener := NewFlowScreenerPanel(fakeClient(), "BTC", "perpetuals")
+	screener := newTestFlowScreenerPanel(fakeClient(), "BTC", "perpetuals")
 	p := NewFlowPanel(screener)
 
 	_, cmd := p.Update(tea.KeyMsg{Type: tea.KeyEnter})

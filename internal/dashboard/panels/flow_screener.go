@@ -84,6 +84,17 @@ type flowScreenerSnapshotMsg struct {
 // Internal.
 type flowScreenerRefreshMsg struct{}
 
+// FlowScreenerScope describes the REST snapshot scope and row
+// ordering for the flow screener. Currency and Exchange are both
+// optional individually, but callers should provide at least one.
+type FlowScreenerScope struct {
+	Currency string
+	Exchange string
+	Market   string
+	Sort     string
+	SortDesc bool
+}
+
 // FlowScreenerPanel implements dashboard.Panel.
 type FlowScreenerPanel struct {
 	// client fetches the REST snapshot. nil-safe — the panel
@@ -97,11 +108,19 @@ type FlowScreenerPanel struct {
 	// destroys+rebuilds the screener.
 	currency string
 
+	// exchange is the optional venue filter (e.g. "binance").
+	// When set, the screener fetches that venue directly. It can
+	// be combined with currency for a narrow venue+currency scope.
+	exchange string
+
 	// market is the canonical product family — "perpetuals" for
 	// v0.10.0. Stored so the panel doesn't have to know it's a
 	// perps-only screener; future market screeners can reuse the
 	// same panel type with different columns + market.
 	market string
+
+	sortKey  string
+	sortDesc bool
 
 	// rows is the latest fetched snapshot. Empty before the first
 	// fetch completes (renders "loading…"). Stable order — we
@@ -157,11 +176,18 @@ type liveTick struct {
 // are required — empty values produce a panel that can't fetch and
 // will render "no currency selected" indefinitely. client may be
 // nil for tests; the panel renders "no API client" in that case.
-func NewFlowScreenerPanel(client *api.Client, currency, market string) *FlowScreenerPanel {
+func NewFlowScreenerPanel(client *api.Client, scope FlowScreenerScope) *FlowScreenerPanel {
+	if scope.Sort == "" {
+		scope.Sort = "volume"
+		scope.SortDesc = true
+	}
 	return &FlowScreenerPanel{
 		client:   client,
-		currency: strings.ToUpper(currency),
-		market:   market,
+		currency: strings.ToUpper(scope.Currency),
+		exchange: strings.ToLower(scope.Exchange),
+		market:   scope.Market,
+		sortKey:  scope.Sort,
+		sortDesc: scope.SortDesc,
 		loading:  true,
 	}
 }
@@ -251,8 +277,25 @@ func (p *FlowScreenerPanel) rowWithOverlay(r columns.PerpRow) columns.PerpRow {
 	if !ok {
 		return r
 	}
-	r.MarkPrice = tick.price
+	if p.market == "spot" {
+		r.LastPriceClose = tick.price
+	} else {
+		r.MarkPrice = tick.price
+	}
 	return r
+}
+
+func (p *FlowScreenerPanel) scopeLabel() string {
+	switch {
+	case p.currency != "" && p.exchange != "":
+		return p.currency + "@" + p.exchange
+	case p.currency != "":
+		return p.currency
+	case p.exchange != "":
+		return p.exchange
+	default:
+		return "all"
+	}
 }
 
 // applyTradeTick decodes a WS trade payload and updates the
@@ -479,13 +522,13 @@ func (p *FlowScreenerPanel) View(width, height int, ctx dashboard.PanelContext) 
 		// glance. The shared waitingView helper centres a single
 		// line; for v0.10.0 that's fine — the snapshot fetch is a
 		// fast REST call and the loading state is brief.
-		return waitingView(width, height, "loading "+p.currency+" perps…", ctx.SpinnerFrame)
+		return waitingView(width, height, "loading "+p.scopeLabel()+" "+p.market+"…", ctx.SpinnerFrame)
 	}
 	if len(p.rows) == 0 && p.lastErr != "" {
 		return placeholder(width, height, "✗ "+p.lastErr)
 	}
 	if len(p.rows) == 0 {
-		return placeholder(width, height, "no instruments for "+p.currency)
+		return placeholder(width, height, "no instruments for "+p.scopeLabel())
 	}
 
 	grey := output.BrandGreyMid
@@ -613,7 +656,7 @@ func (p *FlowScreenerPanel) viewInstrumentOnly(width, height int) string {
 func (p *FlowScreenerPanel) columnsFitting(width int) []columns.Column[columns.PerpRow] {
 	const leadingGutter = 3
 	total := leadingGutter
-	cols := columns.PerpColumns
+	cols := p.columnSet()
 	for i, c := range cols {
 		next := total + c.Width
 		if i > 0 {
@@ -625,6 +668,17 @@ func (p *FlowScreenerPanel) columnsFitting(width int) []columns.Column[columns.P
 		total = next
 	}
 	return cols
+}
+
+func (p *FlowScreenerPanel) columnSet() []columns.Column[columns.PerpRow] {
+	switch p.market {
+	case "futures":
+		return columns.FuturesColumns
+	case "spot":
+		return columns.SpotColumns
+	default:
+		return columns.PerpColumns
+	}
 }
 
 // viewportWindow returns the [low, high] inclusive row indices to
@@ -757,6 +811,14 @@ func (p *FlowScreenerPanel) fetchCmd() tea.Cmd {
 		if p.client == nil {
 			return flowScreenerSnapshotMsg{err: fmt.Errorf("no API client")}
 		}
+		if p.exchange != "" {
+			rows, err := p.fetchOneVenueSnapshot(p.exchange)
+			if err != nil {
+				return flowScreenerSnapshotMsg{err: err}
+			}
+			p.sortRows(rows)
+			return flowScreenerSnapshotMsg{rows: rows}
+		}
 		exchanges, err := p.fetchVenueList()
 		if err != nil {
 			return flowScreenerSnapshotMsg{err: err}
@@ -777,6 +839,7 @@ func (p *FlowScreenerPanel) fetchCmd() tea.Cmd {
 			// HTTP/network reason.
 			return flowScreenerSnapshotMsg{err: errs[0]}
 		}
+		p.sortRows(rows)
 		return flowScreenerSnapshotMsg{rows: rows}
 	}
 }
@@ -798,7 +861,7 @@ func (p *FlowScreenerPanel) fetchVenueList() ([]string, error) {
 		} `json:"error"`
 	}
 	params := &api.RequestParams{Currency: p.currency}
-	body, err := p.client.Get(api.PerpsCatalog, params)
+	body, err := p.client.Get(p.catalogEndpoint(), params)
 	if err != nil {
 		return nil, err
 	}
@@ -898,7 +961,7 @@ func (p *FlowScreenerPanel) fetchOneVenueSnapshot(exchange string) ([]columns.Pe
 		Currency: p.currency,
 		Exchange: exchange,
 	}
-	body, err := p.client.Get(api.PerpsSnapshot, params)
+	body, err := p.client.Get(p.snapshotEndpoint(), params)
 	if err != nil {
 		return nil, err
 	}
@@ -918,6 +981,84 @@ func (p *FlowScreenerPanel) fetchOneVenueSnapshot(exchange string) ([]columns.Pe
 		}
 	}
 	return env.Data, nil
+}
+
+func (p *FlowScreenerPanel) catalogEndpoint() string {
+	switch p.market {
+	case "futures":
+		return api.FuturesCatalog
+	case "spot":
+		return api.SpotCatalog
+	default:
+		return api.PerpsCatalog
+	}
+}
+
+func (p *FlowScreenerPanel) snapshotEndpoint() string {
+	switch p.market {
+	case "futures":
+		return api.FuturesSnapshot
+	case "spot":
+		return api.SpotSnapshot
+	default:
+		return api.PerpsSnapshot
+	}
+}
+
+func (p *FlowScreenerPanel) sortRows(rows []columns.PerpRow) {
+	if len(rows) < 2 {
+		return
+	}
+	key := p.sortKey
+	desc := p.sortDesc
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if key == "instrument" {
+			left := rowIdentity(a)
+			right := rowIdentity(b)
+			if desc {
+				return left > right
+			}
+			return left < right
+		}
+		av := p.sortValue(a, key)
+		bv := p.sortValue(b, key)
+		if av == bv {
+			return rowIdentity(a) < rowIdentity(b)
+		}
+		if desc {
+			return av > bv
+		}
+		return av < bv
+	})
+}
+
+func (p *FlowScreenerPanel) sortValue(r columns.PerpRow, key string) float64 {
+	switch key {
+	case "last":
+		return r.Last(p.market)
+	case "spread":
+		return r.Spread()
+	case "volume":
+		if p.market == "spot" {
+			return r.Volume24h
+		}
+		return r.Volume24hUSD
+	case "quote-volume":
+		return r.QuoteVolume24h
+	case "liquidity":
+		return r.TotalLiquidityClose
+	case "oi":
+		return r.OI * r.Last(p.market)
+	case "funding":
+		return r.FundingRate
+	case "basis":
+		return r.Basis()
+	case "dte":
+		return r.DaysToExpiry
+	default:
+		return 0
+	}
 }
 
 // tickCmd returns a tea.Cmd that waits flowScreenerRefreshInterval
