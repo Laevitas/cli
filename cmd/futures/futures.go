@@ -356,16 +356,18 @@ var liquidationsFlags struct {
 }
 
 var liquidationsCmd = &cobra.Command{
-	Use:   "liquidations",
+	Use:   "liquidations <instrument>",
 	Short: "Forced liquidation events for dated futures",
 	Long: `Returns individual forced liquidation events.
-Filter by --currency (e.g. BTC) or instrument via --currency + specific flags.`,
-	Example: `  laevitas futures liquidations --currency BTC -p 24h
-  laevitas futures liquidations --currency BTC --position-side long --min-amount-usd 10000
-  laevitas futures liquidations --currency ETH --direction sell -n 50`,
+Filter by instrument plus optional direction/position filters.`,
+	Example: `  laevitas futures liquidations BTC-26JUN26 --exchange deribit -p 24h
+  laevitas futures liquidations BTC-26JUN26 --exchange deribit --position-side long --min-amount-usd 10000
+  laevitas futures liquidations ETH-26JUN26 --exchange deribit --direction sell -n 50`,
+	Args: cmdutil.NamedArgs("instrument"),
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
 		params := liquidationsFlags.CommonFlags.ToParams()
+		params.InstrumentName = args[0]
 		params.Direction = liquidationsFlags.Direction
 		params.PositionSide = liquidationsFlags.PositionSide
 		params.MinAmountUsd = liquidationsFlags.MinAmountUsd
@@ -481,7 +483,7 @@ func init() {
 	cmdutil.AddCommonFlags(tickerCmd, &tickerFlags)
 	cmdutil.AddCommonFlags(refPriceCmd, &refPriceFlags)
 
-	cmdutil.AddCommonFlags(liquidationsCmd, &liquidationsFlags.CommonFlags)
+	cmdutil.AddCommonFlagsNoCurrency(liquidationsCmd, &liquidationsFlags.CommonFlags)
 	liquidationsCmd.Flags().StringVar(&liquidationsFlags.Direction, "direction", "", "Filter: buy or sell")
 	liquidationsCmd.Flags().StringVar(&liquidationsFlags.PositionSide, "position-side", "", "Filter: long or short")
 	liquidationsCmd.Flags().Float64Var(&liquidationsFlags.MinAmountUsd, "min-amount-usd", 0, "Min liquidation value in USD")

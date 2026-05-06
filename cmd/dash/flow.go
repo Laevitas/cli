@@ -57,7 +57,7 @@ var flowCmd = &cobra.Command{
 	Example: "  laevitas dash flow perpetuals BTC\n" +
 		"  laevitas dash flow perpetuals ETH\n" +
 		"  laevitas dash flow perp SOL",
-	Args: cobra.ExactArgs(2),
+	Args: cmdutil.NamedArgs("market", "currency"),
 	RunE: runFlow,
 }
 

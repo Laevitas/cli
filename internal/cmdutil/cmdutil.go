@@ -73,6 +73,19 @@ func AddCommonFlags(cmd *cobra.Command, f *CommonFlags) {
 	cmd.Flags().StringVar(&f.SortDir, "sort-dir", "", "Sort direction: ASC or DESC (default DESC — newest first)")
 }
 
+// AddCommonFlagsNoCurrency registers shared time/pagination flags
+// without --currency. Use it for endpoints that require an
+// instrument_name and reject currency-only requests.
+func AddCommonFlagsNoCurrency(cmd *cobra.Command, f *CommonFlags) {
+	cmd.Flags().StringVarP(&f.Period, "period", "p", "", "Lookback period: 1h, 6h, 24h, 3d, 7d, 30d (default 7d)")
+	cmd.Flags().StringVar(&f.Start, "start", "", "Start datetime (ISO 8601)")
+	cmd.Flags().StringVar(&f.End, "end", "", "End datetime (ISO 8601)")
+	cmd.Flags().StringVarP(&f.Resolution, "resolution", "r", "", "Candle resolution: 1m, 5m, 15m, 1h, 4h, 1d")
+	cmd.Flags().IntVarP(&f.Limit, "limit", "n", 0, "Number of records (1-1000)")
+	cmd.Flags().StringVar(&f.Cursor, "cursor", "", "Pagination cursor from previous response")
+	cmd.Flags().StringVar(&f.SortDir, "sort-dir", "", "Sort direction: ASC or DESC (default DESC — newest first)")
+}
+
 // SingleInstrumentArg validates commands that take exactly one instrument and
 // turns the common "exchange instrument" mistake into an actionable hint.
 func SingleInstrumentArg(cmd *cobra.Command, args []string) error {
@@ -89,6 +102,48 @@ func SingleInstrumentArg(cmd *cobra.Command, args []string) error {
 		)
 	}
 	return cobra.ExactArgs(1)(cmd, args)
+}
+
+// NamedArgs validates fixed positional arguments while naming the
+// placeholders the user omitted or exceeded. It is intended for
+// multi-positional commands where Cobra's stock "accepts N arg(s)"
+// error is technically correct but not actionable.
+func NamedArgs(names ...string) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) == len(names) {
+			return nil
+		}
+		expected := namedArgList(names)
+		if len(args) > len(names) {
+			return fmt.Errorf("%s: too many arguments (got %d, expected %d: %s)", cmd.CommandPath(), len(args), len(names), expected)
+		}
+		missing := "<argument>"
+		if len(args) < len(names) {
+			missing = "<" + names[len(args)] + ">"
+		}
+		msg := fmt.Sprintf("%s: missing argument %s\n\n  Usage:    %s", cmd.CommandPath(), missing, cmd.UseLine())
+		if ex := firstExampleLine(cmd.Example); ex != "" {
+			msg += "\n  Example:  " + ex
+		}
+		return fmt.Errorf("%s", msg)
+	}
+}
+
+func namedArgList(names []string) string {
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		out = append(out, "<"+name+">")
+	}
+	return strings.Join(out, " ")
+}
+
+func firstExampleLine(example string) string {
+	for _, line := range strings.Split(example, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func looksLikeExchange(s string) bool {
@@ -499,6 +554,9 @@ func runAndPrintWith(client *api.Client, endpoint string, params *api.RequestPar
 
 	p := MustPrinter()
 	p.StatsTier = filters.Depth
+	if p.Format == output.FormatTable {
+		p.WithEmptyContext(emptyContext(endpoint, params))
+	}
 
 	// Start spinner in interactive mode
 	if InteractiveMode && SpinnerInstance != nil {
@@ -616,6 +674,19 @@ func runAndPrintWith(client *api.Client, endpoint string, params *api.RequestPar
 
 	// Show request metadata footer
 	printRequestMeta(client, endpoint, params, recordCount, totalCount)
+}
+
+func emptyContext(endpoint string, params *api.RequestParams) output.EmptyContext {
+	ctx := output.EmptyContext{Endpoint: endpoint}
+	if params == nil {
+		return ctx
+	}
+	ctx.Instrument = params.InstrumentName
+	ctx.Exchange = params.Exchange
+	ctx.Start = params.Start
+	ctx.End = params.End
+	ctx.Resolution = params.Resolution
+	return ctx
 }
 
 // printRequestMeta shows a compact metadata line on stderr after each request.

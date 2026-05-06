@@ -77,7 +77,7 @@ var bookCmd = &cobra.Command{
 		"  laevitas dash book perpetuals ETH --margin linear --quote USDC\n" +
 		"  laevitas dash book spot BTC\n" +
 		"  laevitas dash book perpetuals BTCUSDT          # literal mode (legacy)",
-	Args: cobra.ExactArgs(2),
+	Args: cmdutil.NamedArgs("market", "symbol-or-currency"),
 	RunE: runBook,
 }
 

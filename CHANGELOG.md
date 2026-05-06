@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.10.1] — 2026-05-06
+
+### Changed
+
+- CLI positional-argument errors now name the missing argument and
+  show command usage plus the first example where available. This
+  replaces opaque Cobra messages such as `accepts 2 arg(s),
+  received 0` on multi-positional commands like `dash book`.
+- Empty table results now include the queried endpoint, instrument,
+  exchange, time window, and resolution when request context is
+  available. JSON/CSV output is unchanged for parser compatibility.
+
+### Fixed
+
+- `perps liquidations` and `futures liquidations` now require a
+  positional `<instrument>` and pass it as `instrument_name` to the
+  API. The misleading `--currency` flag was removed from these two
+  commands because the endpoint rejects currency-only liquidation
+  queries.
+- Unknown root commands now include a did-you-mean suggestion for
+  nested command names such as `ohlcvt`, fixing the common
+  `laevitas ohlcv BTCUSDT` typo path.
+- Empty table results now emit local hints for common exchange
+  instrument-name mismatches, including Deribit `BTC-PERPETUAL`
+  versus Binance/Bybit-style `BTCUSDT` symbols.
+- Empty `/liquidations` table results with an exchange that doesn't
+  publish liquidation events to the gateway (currently Deribit,
+  Hyperliquid, Bullish) now emit a hint pointing at known-coverage
+  venues instead of looking like a quiet window. Wording is
+  non-enumerative ("may not publish") so the hint self-corrects if
+  coverage is added later. Structural symbol-shape hints still take
+  precedence — `BTCUSDT --exchange deribit` on `/liquidations` still
+  surfaces the Deribit naming hint, not the coverage hint.
+
 ## [0.10.0] — 2026-05-05
 
 `dash flow` ships. New top-level dashboard surfacing perpetuals
