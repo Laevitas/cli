@@ -49,10 +49,19 @@ func snapMsg(rows []columns.PerpRow) flowScreenerSnapshotMsg {
 	return flowScreenerSnapshotMsg{rows: rows}
 }
 
+func newTestFlowScreenerPanel(client *api.Client, currency, market string) *FlowScreenerPanel {
+	return NewFlowScreenerPanel(client, FlowScreenerScope{
+		Currency: currency,
+		Market:   market,
+		Sort:     "volume",
+		SortDesc: true,
+	})
+}
+
 // ─── Construction + initial state ─────────────────────────────────────────
 
 func TestFlowScreenerNewLoadingTrue(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	if !p.loading {
 		t.Errorf("new screener should start in loading state")
 	}
@@ -67,7 +76,7 @@ func TestFlowScreenerNewLoadingTrue(t *testing.T) {
 // TestFlowScreenerCurrencyUppercased: lowercase input is stored
 // uppercased so the REST query matches the API's convention.
 func TestFlowScreenerCurrencyUppercased(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "btc", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "btc", "perpetuals")
 	if p.currency != "BTC" {
 		t.Errorf("currency = %q, want BTC", p.currency)
 	}
@@ -76,7 +85,7 @@ func TestFlowScreenerCurrencyUppercased(t *testing.T) {
 // ─── Snapshot ingestion ────────────────────────────────────────────────────
 
 func TestFlowScreenerSnapshotInstallsRows(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	rows := makeRows(5)
 	p.Update(snapMsg(rows))
 
@@ -92,7 +101,7 @@ func TestFlowScreenerSnapshotInstallsRows(t *testing.T) {
 }
 
 func TestFlowScreenerSnapshotErrorPreservesPreviousRows(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	first := makeRows(3)
 	p.Update(snapMsg(first))
 	if len(p.rows) != 3 {
@@ -120,7 +129,7 @@ func (e errMsg) Error() string { return string(e) }
 // stays on it; if it vanished, cursor clamps to its index (or
 // to len-1 if past the end).
 func TestFlowScreenerCursorIdentityPreserved(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	rows := makeRows(5)
 	p.Update(snapMsg(rows))
 	// Move cursor to row 2 (deribit:BTCUSDT).
@@ -143,7 +152,7 @@ func TestFlowScreenerCursorIdentityPreserved(t *testing.T) {
 // disappears from the new snapshot (delisting), cursor clamps to
 // the same numerical index in the new (smaller) slice.
 func TestFlowScreenerCursorClampsOnVanishedRow(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	rows := makeRows(5)
 	p.Update(snapMsg(rows))
 	p.cursor = 4 // last row
@@ -164,7 +173,7 @@ func TestFlowScreenerCursorClampsOnVanishedRow(t *testing.T) {
 // ─── Cursor navigation + SelectionChangedMsg emission ─────────────────────
 
 func TestFlowScreenerCursorMoveEmitsSelectionChangedMsg(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	rows := makeRows(5)
 	p.Update(snapMsg(rows))
 	// Initial cursor at 0; lastEmittedSelection might already match
@@ -196,7 +205,7 @@ func TestFlowScreenerCursorMoveEmitsSelectionChangedMsg(t *testing.T) {
 }
 
 func TestFlowScreenerCursorMoveDedupesEmits(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	rows := makeRows(5)
 	p.Update(snapMsg(rows))
 	// First down move emits.
@@ -239,7 +248,7 @@ func TestFlowScreenerCursorMoveDedupesEmits(t *testing.T) {
 // time, which would drill the row the cursor was on at that
 // moment, not when the user pressed Enter.
 func TestFlowScreenerCmdCapturesByValue(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	rows := makeRows(5)
 	p.Update(snapMsg(rows))
 	p.lastEmittedSelection = dashboard.Selection{} // force a clean baseline
@@ -285,7 +294,7 @@ func TestFlowScreenerCmdCapturesByValue(t *testing.T) {
 // Update returning the cmd and the cmd executing must not change
 // which row gets drilled.
 func TestFlowScreenerEnterDrillCapturesByValue(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	rows := makeRows(5)
 	p.Update(snapMsg(rows))
 	p.cursor = 2
@@ -314,7 +323,7 @@ func TestFlowScreenerEnterDrillCapturesByValue(t *testing.T) {
 // TestFlowScreenerEnterEmitsDrillMsg: pressing Enter on a row
 // emits FlowDrillMsg with the row's selection.
 func TestFlowScreenerEnterEmitsDrillMsg(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	rows := makeRows(3)
 	p.Update(snapMsg(rows))
 	p.cursor = 1
@@ -336,7 +345,7 @@ func TestFlowScreenerEnterEmitsDrillMsg(t *testing.T) {
 // TestFlowScreenerCursorNoOpOnEmptyRows: arrow keys with no rows
 // don't crash and don't emit.
 func TestFlowScreenerCursorNoOpOnEmptyRows(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	_, cmd := p.Update(tea.KeyMsg{Type: tea.KeyDown})
 	if cmd != nil {
 		t.Errorf("down with no rows produced cmd: %v", cmd)
@@ -349,7 +358,7 @@ func TestFlowScreenerCursorNoOpOnEmptyRows(t *testing.T) {
 // TestFlowScreenerCursorBoundsClamped: cursor doesn't go past row
 // 0 going up or past len-1 going down.
 func TestFlowScreenerCursorBoundsClamped(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	rows := makeRows(3)
 	p.Update(snapMsg(rows))
 
@@ -370,7 +379,7 @@ func TestFlowScreenerCursorBoundsClamped(t *testing.T) {
 // ─── Subscriptions / overscan window ──────────────────────────────────────
 
 func TestFlowScreenerSubscriptionsBoundedByOverscan(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	rows := makeRows(50)
 	p.Update(snapMsg(rows))
 	p.cursor = 25
@@ -386,7 +395,7 @@ func TestFlowScreenerSubscriptionsBoundedByOverscan(t *testing.T) {
 }
 
 func TestFlowScreenerSubscriptionsClampedAtBoundaries(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	rows := makeRows(3)
 	p.Update(snapMsg(rows))
 	p.cursor = 0
@@ -399,7 +408,7 @@ func TestFlowScreenerSubscriptionsClampedAtBoundaries(t *testing.T) {
 }
 
 func TestFlowScreenerSubscriptionsEmptyBeforeRows(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	got := p.Subscriptions(dashboard.Selection{})
 	if len(got.Channels) != 0 {
 		t.Errorf("pre-rows subscriptions = %v, want empty", got.Channels)
@@ -407,7 +416,7 @@ func TestFlowScreenerSubscriptionsEmptyBeforeRows(t *testing.T) {
 }
 
 func TestFlowScreenerSubscriptionsBuildCorrectChannelStrings(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	rows := []columns.PerpRow{
 		{Exchange: "binance", InstrumentName: "BTCUSDT"},
 	}
@@ -422,7 +431,7 @@ func TestFlowScreenerSubscriptionsBuildCorrectChannelStrings(t *testing.T) {
 // ─── Capabilities ────────────────────────────────────────────────────────
 
 func TestFlowScreenerCapabilitiesListNavAndDrill(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	caps := p.Capabilities()
 	if !caps.ListNav {
 		t.Errorf("expected ListNav capability")
@@ -443,7 +452,7 @@ func fakeClient() *api.Client {
 }
 
 func TestFlowScreenerViewLoadingState(t *testing.T) {
-	p := NewFlowScreenerPanel(fakeClient(), "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(fakeClient(), "BTC", "perpetuals")
 	view := p.View(80, 12, dashboard.PanelContext{})
 	if !strings.Contains(view, "waiting") && !strings.Contains(view, "loading") {
 		t.Errorf("expected loading/waiting placeholder, got:\n%s", view)
@@ -451,7 +460,7 @@ func TestFlowScreenerViewLoadingState(t *testing.T) {
 }
 
 func TestFlowScreenerViewNoClient(t *testing.T) {
-	p := NewFlowScreenerPanel(nil, "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(nil, "BTC", "perpetuals")
 	view := p.View(80, 12, dashboard.PanelContext{})
 	if !strings.Contains(view, "no API client") {
 		t.Errorf("expected no-client placeholder, got:\n%s", view)
@@ -459,7 +468,7 @@ func TestFlowScreenerViewNoClient(t *testing.T) {
 }
 
 func TestFlowScreenerViewNarrowRendersInstrumentOnly(t *testing.T) {
-	p := NewFlowScreenerPanel(fakeClient(), "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(fakeClient(), "BTC", "perpetuals")
 	p.Update(snapMsg(makeRows(5)))
 	view := p.View(40, 4, dashboard.PanelContext{}) // below 60-wide minimum
 	if strings.Contains(view, "too small") {
@@ -471,7 +480,7 @@ func TestFlowScreenerViewNarrowRendersInstrumentOnly(t *testing.T) {
 }
 
 func TestFlowScreenerViewRendersTable(t *testing.T) {
-	p := NewFlowScreenerPanel(fakeClient(), "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(fakeClient(), "BTC", "perpetuals")
 	p.Update(snapMsg(makeRows(5)))
 	view := p.View(120, 12, dashboard.PanelContext{})
 
@@ -486,12 +495,85 @@ func TestFlowScreenerViewRendersTable(t *testing.T) {
 	}
 }
 
+func TestFlowScreenerViewRendersFuturesColumns(t *testing.T) {
+	p := NewFlowScreenerPanel(fakeClient(), FlowScreenerScope{
+		Currency: "BTC",
+		Market:   "futures",
+		Sort:     "basis",
+		SortDesc: true,
+	})
+	p.Update(snapMsg([]columns.PerpRow{
+		{
+			Exchange:       "deribit",
+			InstrumentName: "BTC-26JUN26",
+			MarkPrice:      82000,
+			IndexPrice:     81500,
+			BidAskSpread:   0.5,
+			Volume24hUSD:   1_000_000,
+			OI:             10,
+			DaysToExpiry:   51,
+		},
+	}))
+
+	view := p.View(130, 6, dashboard.PanelContext{})
+	for _, want := range []string{"BASIS", "DTE", "+500.00", "51"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("expected %q in futures screener, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestFlowScreenerViewRendersSpotColumns(t *testing.T) {
+	p := NewFlowScreenerPanel(fakeClient(), FlowScreenerScope{
+		Currency: "BTC",
+		Exchange: "binance",
+		Market:   "spot",
+		Sort:     "quote-volume",
+		SortDesc: true,
+	})
+	p.Update(snapMsg([]columns.PerpRow{
+		{
+			Exchange:            "binance",
+			InstrumentName:      "BTCUSDT",
+			LastPriceClose:      81000,
+			BidAskSpreadClose:   0.1,
+			Volume24h:           1200,
+			QuoteVolume24h:      98_000_000,
+			TotalLiquidityClose: 42,
+		},
+	}))
+
+	view := p.View(130, 6, dashboard.PanelContext{})
+	for _, want := range []string{"QUOTE VOL", "LIQUIDITY", "BTCUSDT", "$98.0M"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("expected %q in spot screener, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestFlowScreenerSortRows(t *testing.T) {
+	p := NewFlowScreenerPanel(fakeClient(), FlowScreenerScope{
+		Currency: "BTC",
+		Market:   "futures",
+		Sort:     "basis",
+		SortDesc: true,
+	})
+	rows := []columns.PerpRow{
+		{Exchange: "a", InstrumentName: "LOW", MarkPrice: 101, IndexPrice: 100},
+		{Exchange: "a", InstrumentName: "HIGH", MarkPrice: 105, IndexPrice: 100},
+	}
+	p.sortRows(rows)
+	if rows[0].InstrumentName != "HIGH" {
+		t.Fatalf("basis sort first row = %s, want HIGH", rows[0].InstrumentName)
+	}
+}
+
 // TestFlowScreenerViewLongErrorTruncated: the footer must not bleed
 // past the panel edge when the API returns a long error message
 // (e.g. a wrapped network error carrying a full URL + stack hint).
 // Each rendered line should be exactly `width` cells wide.
 func TestFlowScreenerViewLongErrorTruncated(t *testing.T) {
-	p := NewFlowScreenerPanel(fakeClient(), "BTC", "perpetuals")
+	p := newTestFlowScreenerPanel(fakeClient(), "BTC", "perpetuals")
 	p.Update(snapMsg(makeRows(3)))
 
 	long := "fetch perpetuals snapshot: Get \"https://apiv2.laevitas.ch/api/v1/perpetuals/snapshot?currency=BTC\": dial tcp: lookup apiv2.laevitas.ch on 8.8.8.8:53: read udp 192.168.1.42:54321->8.8.8.8:53: i/o timeout"

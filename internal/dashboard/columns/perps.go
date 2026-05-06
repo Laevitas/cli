@@ -18,24 +18,60 @@ import (
 // the wire decoder in screener.go picks it up via the same JSON
 // tag.
 type PerpRow struct {
-	Exchange       string  `json:"exchange"`
-	InstrumentName string  `json:"instrument_name"`
-	MarkPrice      float64 `json:"mark_price"`
-	BidPrice       float64 `json:"bid_price"`
-	AskPrice       float64 `json:"ask_price"`
-	Volume24hUSD   float64 `json:"volume_usd_24h"`
-	OI             float64 `json:"oi"`
-	FundingRate    float64 `json:"funding_rate"`
+	Exchange            string  `json:"exchange"`
+	InstrumentName      string  `json:"instrument_name"`
+	MarkPrice           float64 `json:"mark_price"`
+	IndexPrice          float64 `json:"index_price"`
+	LastPriceClose      float64 `json:"last_price_close"`
+	BidPrice            float64 `json:"bid_price"`
+	AskPrice            float64 `json:"ask_price"`
+	BidAskSpread        float64 `json:"bid_ask_spread"`
+	BidAskSpreadClose   float64 `json:"bid_ask_spread_close"`
+	Volume24hUSD        float64 `json:"volume_usd_24h"`
+	Volume24h           float64 `json:"volume_24h"`
+	QuoteVolume24h      float64 `json:"quote_volume_24h"`
+	TotalLiquidityClose float64 `json:"total_liquidity_close"`
+	OI                  float64 `json:"oi"`
+	FundingRate         float64 `json:"funding_rate"`
+	DaysToExpiry        float64 `json:"days_to_expiry"`
 }
 
 // Spread returns the bid-ask spread in price units. Computed on
 // demand rather than stored on the row because it's a derived
 // value and the snapshot envelope doesn't carry it.
 func (r PerpRow) Spread() float64 {
+	if r.BidAskSpread != 0 {
+		return r.BidAskSpread
+	}
+	if r.BidAskSpreadClose != 0 {
+		return r.BidAskSpreadClose
+	}
 	if r.AskPrice <= 0 || r.BidPrice <= 0 {
 		return 0
 	}
 	return r.AskPrice - r.BidPrice
+}
+
+// Last returns the row's best available last/mark price for the
+// given market. Perps and futures use mark_price; spot snapshots
+// carry last_price_close.
+func (r PerpRow) Last(market string) float64 {
+	if market == "spot" && r.LastPriceClose > 0 {
+		return r.LastPriceClose
+	}
+	if r.MarkPrice > 0 {
+		return r.MarkPrice
+	}
+	return r.LastPriceClose
+}
+
+// Basis returns mark - index for futures rows. Missing inputs
+// return zero so the column stays blank.
+func (r PerpRow) Basis() float64 {
+	if r.MarkPrice == 0 || r.IndexPrice == 0 {
+		return 0
+	}
+	return r.MarkPrice - r.IndexPrice
 }
 
 // PerpColumns is the screener column set for perpetuals. Order is
@@ -114,6 +150,114 @@ var PerpColumns = []Column[PerpRow]{
 	},
 }
 
+// FuturesColumns is the flow screener column set for expiring
+// futures. The API carries mark/index/DTE directly, so basis and
+// OI USD are local render-time calculations.
+var FuturesColumns = []Column[PerpRow]{
+	instrumentColumn(),
+	{
+		Header: "LAST",
+		Width:  12,
+		Extract: func(r PerpRow) string {
+			return output.FormatBookPrice(r.MarkPrice)
+		},
+	},
+	{
+		Header: "SPREAD",
+		Width:  10,
+		Extract: func(r PerpRow) string {
+			return output.FormatSpread(r.Spread())
+		},
+	},
+	{
+		Header: "24H VOL",
+		Width:  12,
+		Extract: func(r PerpRow) string {
+			return formatUSDCompact(r.Volume24hUSD)
+		},
+	},
+	{
+		Header: "OI",
+		Width:  12,
+		Extract: func(r PerpRow) string {
+			return formatUSDCompact(r.OI * r.MarkPrice)
+		},
+	},
+	{
+		Header: "BASIS",
+		Width:  10,
+		Extract: func(r PerpRow) string {
+			if r.Basis() == 0 {
+				return ""
+			}
+			return fmt.Sprintf("%+.2f", r.Basis())
+		},
+	},
+	{
+		Header: "DTE",
+		Width:  6,
+		Extract: func(r PerpRow) string {
+			if r.DaysToExpiry == 0 {
+				return ""
+			}
+			return fmt.Sprintf("%.0f", r.DaysToExpiry)
+		},
+	},
+}
+
+// SpotColumns is the flow screener column set for spot markets.
+// It keeps both native/base volume and quote/USD-equivalent volume:
+// the former shows market activity in coin units, the latter lets
+// users compare depth across instruments.
+var SpotColumns = []Column[PerpRow]{
+	instrumentColumn(),
+	{
+		Header: "LAST",
+		Width:  12,
+		Extract: func(r PerpRow) string {
+			return output.FormatBookPrice(r.Last("spot"))
+		},
+	},
+	{
+		Header: "SPREAD",
+		Width:  10,
+		Extract: func(r PerpRow) string {
+			return output.FormatSpread(r.Spread())
+		},
+	},
+	{
+		Header: "24H VOL",
+		Width:  12,
+		Extract: func(r PerpRow) string {
+			return formatNumberCompact(r.Volume24h)
+		},
+	},
+	{
+		Header: "QUOTE VOL",
+		Width:  12,
+		Extract: func(r PerpRow) string {
+			return formatUSDCompact(r.QuoteVolume24h)
+		},
+	},
+	{
+		Header: "LIQUIDITY",
+		Width:  12,
+		Extract: func(r PerpRow) string {
+			return formatNumberCompact(r.TotalLiquidityClose)
+		},
+	},
+}
+
+func instrumentColumn() Column[PerpRow] {
+	return Column[PerpRow]{
+		Header: "INSTRUMENT",
+		Width:  28,
+		Extract: func(r PerpRow) string {
+			return truncOrPad(r.Exchange+":"+r.InstrumentName, 28)
+		},
+	}
+}
+
 // truncOrPad returns s truncated or right-padded to exactly width
 // visible cells. ASCII-only — instrument names contain no ANSI
 // escapes.
@@ -162,5 +306,22 @@ func formatUSDCompact(v float64) string {
 		return fmt.Sprintf("$%.1fM", v/1_000_000)
 	default:
 		return fmt.Sprintf("$%.1fB", v/1_000_000_000)
+	}
+}
+
+func formatNumberCompact(v float64) string {
+	switch {
+	case v <= 0:
+		return ""
+	case v < 1_000:
+		return fmt.Sprintf("%.2f", v)
+	case v < 10_000:
+		return fmt.Sprintf("%.1fK", v/1_000)
+	case v < 1_000_000:
+		return fmt.Sprintf("%.0fK", v/1_000)
+	case v < 1_000_000_000:
+		return fmt.Sprintf("%.1fM", v/1_000_000)
+	default:
+		return fmt.Sprintf("%.1fB", v/1_000_000_000)
 	}
 }

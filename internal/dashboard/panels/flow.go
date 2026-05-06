@@ -79,6 +79,8 @@ const (
 	flowModeDetail
 )
 
+const flowLargePrintMinUSD = 10_000
+
 type flowDetailPane int
 
 const (
@@ -135,7 +137,12 @@ func NewFlowPanel(screener *FlowScreenerPanel) *FlowPanel {
 	chart := NewCardPanel(NewFlowChartPanel(dashboard.Selection{}, screener.client), "CHART")
 	book := NewCardPanel(NewFlowBookPanel(dashboard.Selection{}), "BOOK")
 	tape := NewCardPanel(NewFlowTapePanel(dashboard.Selection{}), "TAPE")
-	liq := NewCardPanel(NewFlowLiquidationsPanel(dashboard.Selection{}), "LIQUIDATIONS")
+	var liq Panel
+	if screener.market == "spot" {
+		liq = NewCardPanel(NewFlowLargePrintsPanel(dashboard.Selection{}, flowLargePrintMinUSD), "LARGE PRINTS")
+	} else {
+		liq = NewCardPanel(NewFlowLiquidationsPanel(dashboard.Selection{}), "LIQUIDATIONS")
+	}
 
 	// Layout: BOOK takes the full right half so the canonical
 	// seven-column ladder gets enough width to render without the
@@ -301,7 +308,7 @@ func (p *FlowPanel) Update(msg tea.Msg) (Panel, tea.Cmd) {
 			if p.handleDetailFocusKey(key) {
 				return p, nil
 			}
-			if key == keymap.ActTimeframeCycle && p.detailFocus == flowPaneChart {
+			if key == keymap.ActTimeframeCycle {
 				updated, cmd := p.chart.Update(msg)
 				p.chart = updated
 				return p, cmd

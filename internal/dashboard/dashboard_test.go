@@ -12,7 +12,22 @@ package dashboard
 
 import (
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/laevitas/cli/internal/keymap"
 )
+
+type capsPanel struct {
+	caps keymap.Capabilities
+}
+
+func (p capsPanel) Init() tea.Cmd                      { return nil }
+func (p capsPanel) Update(tea.Msg) (Panel, tea.Cmd)    { return p, nil }
+func (p capsPanel) View(int, int, PanelContext) string { return "" }
+func (p capsPanel) Subscriptions(Selection) FeedSpec   { return FeedSpec{} }
+func (p capsPanel) Title() string                      { return "" }
+func (p capsPanel) Capabilities() keymap.Capabilities  { return p.caps }
 
 // TestSubscribePreDialReplacesPending verifies that subscribe()
 // before dial completes replaces (not accumulates) f.pending. This
@@ -72,6 +87,30 @@ func TestChannelSetsEqual(t *testing.T) {
 				t.Errorf("channelSetsEqual(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRootActiveCapabilitiesUnionsPanelCapabilities(t *testing.T) {
+	r := NewRoot(Config{
+		Layout: LayoutSingle,
+		Panels: map[PaneSlot]Panel{
+			PaneMain: capsPanel{caps: keymap.Capabilities{
+				ChartTimeframe: true,
+				DepthTier:      true,
+				MultiPane:      true,
+			}},
+		},
+	})
+
+	caps := r.activeCapabilities()
+	if !caps.ChartTimeframe {
+		t.Fatal("ChartTimeframe capability was dropped before footer/help rendering")
+	}
+	if !caps.DepthTier {
+		t.Fatal("DepthTier capability was dropped before footer/help rendering")
+	}
+	if !caps.MultiPane {
+		t.Fatal("MultiPane capability was dropped before footer/help rendering")
 	}
 }
 

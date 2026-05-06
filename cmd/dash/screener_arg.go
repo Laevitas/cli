@@ -4,109 +4,107 @@ package dash
 // so the parser is unit-testable without spinning up cobra or the
 // dashboard. The cobra command in flow.go is a thin wrapper that
 // calls into ParseFlowArgs and converts errors to fmt.Errorf.
-//
-// Argument order: `dash flow <market> <currency>`. Market first
-// matches `dash book <market> <symbol>` and the rest of the CLI's
-// market-leading grammar (`ws perpetuals book ...`,
-// `instruments list <market> ...`); a future
-// `dash flow futures BTC` lands without a breaking-change tag.
-//
-// Invariants the parser enforces:
-//
-//   - Currency is uppercased and non-empty. We accept any 1–6
-//     character ASCII letter token; v0.10.0 doesn't pre-validate
-//     against the catalog because the screener's REST snapshot
-//     is the ground truth — if the currency has no perps the
-//     snapshot returns zero rows and the user sees a clear
-//     "no rows for {currency}" placeholder, which is more
-//     useful than a shell error from a stale CLI whitelist.
-//
-//   - Market is normalised to canonical form via
-//     api.NormalizeMarket and constrained to perpetuals for
-//     v0.10.0 (the only market the FlowPanel detail composite is
-//     wired for; futures/options come in v0.11+). A market token
-//     that normalises to anything else is rejected with a clear
-//     "unsupported in flow" message.
-//
-// Invariants the parser does NOT enforce:
-//
-//   - Live availability (rate-limit-friendly: that costs a REST
-//     round trip per command invocation, every time).
-//   - Venue presence (no --venue flag yet — drill-down picks the
-//     venue interactively from the screener list).
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/laevitas/cli/internal/api"
 )
 
-// flowSupportedMarkets is the set of canonical markets the flow
-// dashboard ships with in v0.10.0. Adding a market means: (a)
-// confirming the detail composite's panes work for that market
-// (book.<market> / trades.<market> / liquidations.<market> all
-// available on the gateway), and (b) updating
-// FlowLiquidationsPanel.liquidationsChannelForSelection's allow
-// list. If you add to one without the other, the dashboard will
-// open but the liquidations pane will silently render empty.
-//
-// For now: perpetuals only.
 var flowSupportedMarkets = map[string]struct{}{
 	"perpetuals": {},
+	"futures":    {},
+	"spot":       {},
 }
 
-// FlowArgs is the parsed result of `dash flow <currency> [market]`.
-// All fields are canonical (uppercase currency, canonical-plural
-// market token).
+var flowSortKeys = map[string]map[string]struct{}{
+	"perpetuals": {
+		"instrument": {}, "last": {}, "spread": {}, "volume": {}, "oi": {}, "funding": {},
+	},
+	"futures": {
+		"instrument": {}, "last": {}, "spread": {}, "volume": {}, "oi": {}, "basis": {}, "dte": {},
+	},
+	"spot": {
+		"instrument": {}, "last": {}, "spread": {}, "volume": {}, "quote-volume": {}, "liquidity": {},
+	},
+}
+
+// FlowArgs is the parsed result of `dash flow <market> [currency]`.
+// All fields are canonical.
 type FlowArgs struct {
 	Currency string
+	Exchange string
 	Market   string
+	Sort     string
+	SortDesc bool
 }
 
-// ParseFlowArgs validates the positional args for `dash flow`.
-// args[0] is the market token; args[1] is the currency. Returns
-// a typed error on validation failure so the cobra layer can
-// format it without re-parsing the message.
-//
-// Caller is responsible for calling cobra.ExactArgs(2) to
-// guarantee the right number of positional arguments — the
-// parser itself trusts the slice length.
-//
-// Argument order matches the rest of the CLI: market first
-// (`dash book <market> <symbol>`, `ws <market> book <pair>`,
-// `instruments list <market>`). A user who types
-// `dash flow BTC perpetuals` would therefore get a clear
-// "unknown market BTC" error rather than silently succeeding —
-// which is the right failure shape since "BTC" isn't a market.
-func ParseFlowArgs(args []string) (FlowArgs, error) {
-	if len(args) < 2 {
-		return FlowArgs{}, fmt.Errorf("market and currency are both required (e.g. perpetuals BTC)")
+// ParseFlowArgs validates the positional args plus scope/sort flags
+// for `dash flow`. args[0] is the market token; args[1], when
+// present, is the currency filter. exchange is the optional venue
+// filter from --exchange. Currency and exchange can be combined to
+// produce a narrow one-venue, one-currency screener.
+func ParseFlowArgs(args []string, exchange, sortKey string, sortAsc bool) (FlowArgs, error) {
+	if len(args) < 1 {
+		return FlowArgs{}, fmt.Errorf("market is required (e.g. perpetuals BTC or spot --exchange binance)")
 	}
 
 	rawMarket := strings.TrimSpace(args[0])
 	market, ok := api.NormalizeMarket(rawMarket)
 	if !ok {
 		return FlowArgs{}, fmt.Errorf(
-			"unknown market %q. Use perpetuals (aliases: perp, swap, perpetual all accepted)",
+			"unknown market %q. Use perpetuals, futures, or spot",
 			args[0],
 		)
 	}
 	if _, supported := flowSupportedMarkets[market]; !supported {
 		return FlowArgs{}, fmt.Errorf(
-			"flow dashboard supports perpetuals only in v0.10.0; got %q. Futures/options/spot land in a later release",
+			"flow dashboard supports perpetuals, futures, and spot; got %q",
 			market,
 		)
 	}
 
-	rawCurrency := strings.TrimSpace(args[1])
-	if !looksLikeCurrency(rawCurrency) {
-		return FlowArgs{}, fmt.Errorf(
-			"invalid currency %q. Use a short ASCII code like BTC, ETH, SOL",
-			args[1],
-		)
+	var currency string
+	if len(args) >= 2 {
+		rawCurrency := strings.TrimSpace(args[1])
+		if !looksLikeCurrency(rawCurrency) {
+			return FlowArgs{}, fmt.Errorf(
+				"invalid currency %q. Use a short ASCII code like BTC, ETH, SOL",
+				args[1],
+			)
+		}
+		currency = strings.ToUpper(rawCurrency)
 	}
-	currency := strings.ToUpper(rawCurrency)
 
-	return FlowArgs{Currency: currency, Market: market}, nil
+	exchange = strings.ToLower(strings.TrimSpace(exchange))
+	if currency == "" && exchange == "" {
+		return FlowArgs{}, fmt.Errorf("currency or --exchange is required (e.g. %s BTC or %s --exchange binance)", market, market)
+	}
+
+	sortKey = strings.ToLower(strings.TrimSpace(sortKey))
+	if sortKey == "" {
+		sortKey = "volume"
+	}
+	if _, ok := flowSortKeys[market][sortKey]; !ok {
+		return FlowArgs{}, fmt.Errorf("invalid sort %q for %s. Use one of: %s", sortKey, market, flowSortKeyList(market))
+	}
+
+	return FlowArgs{
+		Currency: currency,
+		Exchange: exchange,
+		Market:   market,
+		Sort:     sortKey,
+		SortDesc: !sortAsc,
+	}, nil
+}
+
+func flowSortKeyList(market string) string {
+	keys := make([]string, 0, len(flowSortKeys[market]))
+	for key := range flowSortKeys[market] {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ", ")
 }

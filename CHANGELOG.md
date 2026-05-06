@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.11.0] — 2026-05-06
+
+### Added
+
+- `dash flow` now supports `futures` and `spot` in addition to
+  `perpetuals`. The screener can be scoped by currency, by
+  `--exchange`, or by both together for a narrow venue+currency
+  view.
+- `dash flow` gained `--sort` and `--asc`. Supported sort keys
+  include `volume`, `quote-volume`, `oi`, `funding`, `basis`,
+  `dte`, `spread`, `last`, and `instrument`, with invalid keys
+  rejected per market.
+- Futures flow rows render `INSTRUMENT`, `LAST`, `SPREAD`,
+  `24H VOL`, `OI`, `BASIS`, and `DTE`; basis is computed as
+  `mark_price - index_price`, and OI is rendered in USD using
+  `oi × mark_price`.
+- Spot flow rows render `INSTRUMENT`, `LAST`, `SPREAD`, `24H VOL`,
+  `QUOTE VOL`, and `LIQUIDITY`, using the snapshot's base volume,
+  quote/USD-equivalent volume, and top-of-book liquidity fields.
+- Spot detail view keeps the same four-pane flow grid but replaces
+  the liquidation pane with a filtered `LARGE PRINTS` tape for
+  high-notional spot trades.
+
+### Fixed
+
+- Command typo suggestions now avoid duplicating Cobra's own
+  `Did you mean this?` block on top-level unknown commands.
+- Nested command typos followed by flags now get the intended
+  command suggestion instead of falling through to an `unknown flag`
+  error, e.g. `perps snapshto --currency BTC` suggests `snapshot`.
+- `dash flow` tape stats now use a dedicated 5-minute per-second
+  rolling buffer instead of the visible trade ring. Collapsed tape
+  panes render the BUY/SELL/NET breakdown whenever width allows,
+  and fall back to compact `5m NET` flow on narrow panes.
+- `dash flow` chart timeframe key (`t`) now routes to the chart
+  pane regardless of which detail pane is focused. Previously the
+  key was gated to chart-focus only, so users who hadn't pressed
+  `1` saw nothing happen. Footer + help overlay also surface the
+  `t timeframe` hint correctly now — the kernel was dropping the
+  `ChartTimeframe` capability flag in its manual capability copy
+  before unifying through `Capabilities.Union`.
+
 ## [0.10.1] — 2026-05-06
 
 ### Changed

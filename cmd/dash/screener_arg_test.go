@@ -11,11 +11,17 @@ import (
 
 func TestParseFlowArgs(t *testing.T) {
 	cases := []struct {
-		name        string
-		args        []string
-		wantCcy     string
-		wantMarket  string
-		wantErrFrag string
+		name         string
+		args         []string
+		exchange     string
+		sortKey      string
+		sortAsc      bool
+		wantCcy      string
+		wantExchange string
+		wantMarket   string
+		wantSort     string
+		wantDesc     bool
+		wantErrFrag  string
 	}{
 		// ─── happy paths ────────────────────────────────────────────────
 		{
@@ -23,48 +29,91 @@ func TestParseFlowArgs(t *testing.T) {
 			args:       []string{"perpetuals", "BTC"},
 			wantCcy:    "BTC",
 			wantMarket: "perpetuals",
+			wantSort:   "volume",
+			wantDesc:   true,
 		},
 		{
 			name:       "lowercase currency uppercased",
 			args:       []string{"perpetuals", "btc"},
 			wantCcy:    "BTC",
 			wantMarket: "perpetuals",
+			wantSort:   "volume",
+			wantDesc:   true,
 		},
 		{
 			name:       "perp alias normalises to canonical",
 			args:       []string{"perp", "ETH"},
 			wantCcy:    "ETH",
 			wantMarket: "perpetuals",
+			wantSort:   "volume",
+			wantDesc:   true,
 		},
 		{
 			name:       "swap alias normalises to canonical",
 			args:       []string{"swap", "SOL"},
 			wantCcy:    "SOL",
 			wantMarket: "perpetuals",
+			wantSort:   "volume",
+			wantDesc:   true,
 		},
 		{
 			name:       "currency surrounded by whitespace is trimmed",
 			args:       []string{"perpetuals", "  BTC  "},
 			wantCcy:    "BTC",
 			wantMarket: "perpetuals",
+			wantSort:   "volume",
+			wantDesc:   true,
 		},
 		{
 			name:       "market surrounded by whitespace is trimmed",
 			args:       []string{"  perp  ", "BTC"},
 			wantCcy:    "BTC",
 			wantMarket: "perpetuals",
+			wantSort:   "volume",
+			wantDesc:   true,
+		},
+		{
+			name:       "futures supported",
+			args:       []string{"futures", "BTC"},
+			sortKey:    "basis",
+			wantCcy:    "BTC",
+			wantMarket: "futures",
+			wantSort:   "basis",
+			wantDesc:   true,
+		},
+		{
+			name:         "spot exchange-only supported",
+			args:         []string{"spot"},
+			exchange:     "Binance",
+			sortKey:      "quote-volume",
+			sortAsc:      true,
+			wantExchange: "binance",
+			wantMarket:   "spot",
+			wantSort:     "quote-volume",
+			wantDesc:     false,
+		},
+		{
+			name:         "spot currency and exchange narrow scope",
+			args:         []string{"spot", "btc"},
+			exchange:     "binance",
+			sortKey:      "liquidity",
+			wantCcy:      "BTC",
+			wantExchange: "binance",
+			wantMarket:   "spot",
+			wantSort:     "liquidity",
+			wantDesc:     true,
 		},
 
 		// ─── error paths ────────────────────────────────────────────────
 		{
 			name:        "no args at all",
 			args:        []string{},
-			wantErrFrag: "market and currency",
+			wantErrFrag: "market is required",
 		},
 		{
 			name:        "only one arg",
 			args:        []string{"perpetuals"},
-			wantErrFrag: "market and currency",
+			wantErrFrag: "currency or --exchange",
 		},
 		{
 			name:        "swapped order: currency-first rejected",
@@ -97,25 +146,21 @@ func TestParseFlowArgs(t *testing.T) {
 			wantErrFrag: "unknown market",
 		},
 		{
-			name:        "futures market rejected for v0.10.0",
-			args:        []string{"futures", "BTC"},
-			wantErrFrag: "perpetuals only",
-		},
-		{
 			name:        "options market rejected",
 			args:        []string{"options", "BTC"},
-			wantErrFrag: "perpetuals only",
+			wantErrFrag: "supports perpetuals, futures, and spot",
 		},
 		{
-			name:        "spot market rejected",
+			name:        "invalid sort for spot",
 			args:        []string{"spot", "BTC"},
-			wantErrFrag: "perpetuals only",
+			sortKey:     "funding",
+			wantErrFrag: "invalid sort",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ParseFlowArgs(tc.args)
+			got, err := ParseFlowArgs(tc.args, tc.exchange, tc.sortKey, tc.sortAsc)
 			if tc.wantErrFrag != "" {
 				if err == nil {
 					t.Fatalf("expected error containing %q; got success %+v", tc.wantErrFrag, got)
@@ -131,8 +176,17 @@ func TestParseFlowArgs(t *testing.T) {
 			if got.Currency != tc.wantCcy {
 				t.Errorf("Currency = %q, want %q", got.Currency, tc.wantCcy)
 			}
+			if got.Exchange != tc.wantExchange {
+				t.Errorf("Exchange = %q, want %q", got.Exchange, tc.wantExchange)
+			}
 			if got.Market != tc.wantMarket {
 				t.Errorf("Market = %q, want %q", got.Market, tc.wantMarket)
+			}
+			if got.Sort != tc.wantSort {
+				t.Errorf("Sort = %q, want %q", got.Sort, tc.wantSort)
+			}
+			if got.SortDesc != tc.wantDesc {
+				t.Errorf("SortDesc = %v, want %v", got.SortDesc, tc.wantDesc)
 			}
 		})
 	}

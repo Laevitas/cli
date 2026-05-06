@@ -195,23 +195,29 @@ Twitter:    https://twitter.com/laevitas1` + reset + `
 }
 
 func Execute() error {
-	err := executeRootCommand()
+	err := executeRootCommand(os.Args[1:])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "✗ %s\n", err)
 	}
 	return err
 }
 
-func executeRootCommand() error {
+func executeRootCommand(args []string) error {
 	err := rootCmd.Execute()
 	if err != nil {
-		return augmentUnknownCommandError(err)
+		return augmentUnknownCommandError(err, args)
 	}
 	return nil
 }
 
-func augmentUnknownCommandError(err error) error {
+func augmentUnknownCommandError(err error, args []string) error {
 	msg := err.Error()
+	if strings.Contains(msg, "Did you mean") {
+		return err
+	}
+	if strings.HasPrefix(msg, "unknown flag: ") {
+		return augmentUnknownFlagAfterCommandTypo(err, args)
+	}
 	if !strings.HasPrefix(msg, "unknown command ") {
 		return err
 	}
@@ -225,6 +231,83 @@ func augmentUnknownCommandError(err error) error {
 		return err
 	}
 	return fmt.Errorf("%s\n\nDid you mean this?\n\t%s", msg, strings.Join(suggestions, "\n\t"))
+}
+
+func augmentUnknownFlagAfterCommandTypo(err error, args []string) error {
+	token, parent := firstUnknownCommandToken(rootCmd, args)
+	if token == "" || parent == nil {
+		return err
+	}
+	suggestions := siblingCommandSuggestions(parent, token, rootCmd.SuggestionsMinimumDistance)
+	if len(suggestions) == 0 {
+		return err
+	}
+	return fmt.Errorf("%s\n\nDid you mean this?\n\t%s", err.Error(), strings.Join(suggestions, "\n\t"))
+}
+
+func firstUnknownCommandToken(parent *cobra.Command, args []string) (string, *cobra.Command) {
+	current := parent
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "" {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			if !strings.Contains(arg, "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+			}
+			continue
+		}
+		child := findChildCommand(current, arg)
+		if child == nil {
+			return arg, current
+		}
+		current = child
+	}
+	return "", nil
+}
+
+func findChildCommand(parent *cobra.Command, token string) *cobra.Command {
+	for _, child := range parent.Commands() {
+		if child.Hidden {
+			continue
+		}
+		if child.Name() == token {
+			return child
+		}
+		for _, alias := range child.Aliases {
+			if alias == token {
+				return child
+			}
+		}
+	}
+	return nil
+}
+
+func siblingCommandSuggestions(parent *cobra.Command, token string, maxDistance int) []string {
+	if maxDistance <= 0 {
+		maxDistance = 2
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, child := range parent.Commands() {
+		if child.Hidden {
+			continue
+		}
+		name := child.Name()
+		if name != "" && editDistance(strings.ToLower(token), strings.ToLower(name)) <= maxDistance && !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+		for _, alias := range child.Aliases {
+			if editDistance(strings.ToLower(token), strings.ToLower(alias)) <= maxDistance && !seen[name] {
+				seen[name] = true
+				out = append(out, name)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func nestedCommandSuggestions(cmd *cobra.Command, token string, maxDistance int) []string {

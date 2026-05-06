@@ -82,7 +82,7 @@ laevitas ws perpetuals book "*:BTCUSDT"
 | `instruments` | Cross-product instrument registry — `list` + `detail` across all exchanges |
 | `analytics` | Computed cross-asset analytics — realized volatility |
 | `ws` | Live WebSocket streams — trades, OHLC ticker, OHLC vt, liquidations, **L2 book**, with `*` wildcards |
-| `dash` | Multi-pane TUI dashboards — **`dash book`** multi-venue order book, **`dash flow`** perp screener + chart/book/tape/liquidations drill-down |
+| `dash` | Multi-pane TUI dashboards — **`dash book`** multi-venue order book, **`dash flow`** perps/futures/spot screener + chart/book/tape/liquidations or large-prints drill-down |
 | `wallet` | x402 wallet — show, init, set-key, address, credits |
 | `config` | Configuration — init, show, set |
 | `watch` | Re-run REST commands at an interval with live-updating table output |
@@ -175,31 +175,39 @@ The ladder shares its layout primitives (`internal/ladder` and
 `internal/output/layout.go`) with `laevitas ws book` — both surfaces emit
 the same top-line header and stats line, so muscle memory carries.
 
-### `dash flow` — Perp screener + chart/book/tape/liquidations drill-down
+### `dash flow` — Flow screener + chart/book/tape drill-down
 
-A two-mode TUI for perpetual flow analysis. Opens a screener listing every
-venue's perp for the given currency; press `Enter` on a row to drill into a
-four-pane detail view for that instrument.
+A two-mode TUI for market flow analysis across perpetuals, futures, and spot.
+Open a screener narrowed by currency, by exchange, or by both; press `Enter`
+on a row to drill into a four-pane detail view for that instrument.
 
 ```bash
-# Currency mode — screener of every venue's BTC perp.
+# Currency mode — screener of every venue carrying the currency.
 laevitas dash flow perpetuals BTC
-laevitas dash flow perpetuals ETH
+laevitas dash flow futures BTC --sort basis
+
+# Exchange mode — every instrument on one venue.
+laevitas dash flow spot --exchange binance --sort quote-volume
+
+# Narrow mode — one venue plus one currency.
+laevitas dash flow spot BTC --exchange binance --sort liquidity
 ```
 
-Markets supported in v0.10.0: `perpetuals`. Futures / options / spot land in
-a later release — argument validation rejects them up front.
+Markets supported: `perpetuals`, `futures`, `spot`. Options are rejected
+because the detail panes require book/trade streams that are not wired for
+options flow.
 
 **Screener columns** (drops right-to-left at narrow widths):
 
-| Column | Source |
-|--------|--------|
-| INSTRUMENT | `<venue>:<instrument_name>` |
-| LAST | `mark_price` |
-| SPREAD | `ask_price − bid_price` |
-| 24H VOL | `volume_usd_24h` |
-| OI | `oi × mark_price` (USD-denominated) |
-| FUNDING | `funding_rate × 100` (signed %) |
+| Market | Columns |
+|--------|---------|
+| Perpetuals | `INSTRUMENT / LAST / SPREAD / 24H VOL / OI / FUNDING` |
+| Futures | `INSTRUMENT / LAST / SPREAD / 24H VOL / OI / BASIS / DTE` |
+| Spot | `INSTRUMENT / LAST / SPREAD / 24H VOL / QUOTE VOL / LIQUIDITY` |
+
+Sort with `--sort <key>`; default is descending `volume`. Use `--asc` to
+invert. Valid keys are market-specific: `volume`, `quote-volume`, `oi`,
+`funding`, `basis`, `dte`, `spread`, `last`, `instrument`.
 
 **Detail view** (after `Enter` on a screener row):
 
@@ -210,13 +218,14 @@ a later release — argument validation rejects them up front.
   downsampling). Coloured bodies (green/red), volume strip, latest-close
   flag in the price gutter, right-anchored time axis with density-adaptive
   HH:MM labels.
-- **Book** (right half) — single-venue stacked ladder. Same renderer as
-  `laevitas ws perpetuals book` so the ladder, stats line, and key bindings
-  carry over. Honours a viewport (`j/k` / `PgUp/PgDn` / `g/G`) so depth-100
-  is reachable when `d` cycles up.
+- **Book** (right half) — single-venue stacked ladder. Same renderer family
+  as `laevitas ws <market> book`, so the ladder, stats line, and key
+  bindings carry over. Honours a viewport (`j/k` / `PgUp/PgDn` / `g/G`) so
+  depth-100 is reachable when `d` cycles up.
 - **Tape** (bottom-left) — rolling trade tape, colour-coded by direction.
-- **Liquidations** (bottom-right) — forced-close events, colour-coded by
-  side.
+- **Liquidations / Large prints** (bottom-right) — derivatives show
+  forced-close events; spot replaces this pane with high-notional trade
+  prints.
 
 #### Keys
 
@@ -226,7 +235,7 @@ a later release — argument validation rejects them up front.
 | `Enter` | Drill into selected row (screener) / toggle expanded focused pane (detail) |
 | `Esc` | Back out of detail to the screener |
 | `tab` / `shift+tab` | Cycle focused pane (detail) |
-| `1` / `2` / `3` / `4` | Jump to chart / book / tape / liquidations and expand |
+| `1` / `2` / `3` / `4` | Jump to chart / book / tape / liquidations or large prints and expand |
 | `t` | Cycle chart timeframe `1m → 5m → 15m → 1h` (chart pane only) |
 | `+` / `-` | Cycle book price grouping |
 | `d` | Cycle book stats depth tier (10 → 20 → 50 → 100) |

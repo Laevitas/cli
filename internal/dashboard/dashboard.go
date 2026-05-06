@@ -942,20 +942,12 @@ func (r *Root) activeCapabilities() keymap.Capabilities {
 	}
 	if p, ok := r.panels[r.focused]; ok {
 		pc := p.Capabilities()
-		caps.ListNav = caps.ListNav || pc.ListNav
-		caps.Drill = caps.Drill || pc.Drill
-		caps.Back = caps.Back || pc.Back
-		caps.Group = caps.Group || pc.Group
-		caps.DepthCycle = caps.DepthCycle || pc.DepthCycle
-		caps.Recenter = caps.Recenter || pc.Recenter
-		caps.LadderMode = caps.LadderMode || pc.LadderMode
-		caps.VenueToggle = caps.VenueToggle || pc.VenueToggle
+		caps = caps.Union(pc)
 		// MultiPane: kernel sets it when more than one slot is
 		// populated, but composite panels (FlowPanel) own internal
 		// multi-pane state the kernel can't see — only one slot is
 		// registered. Honour the panel's declaration too so detail
 		// mode's tab/jump/expand hints surface in the footer.
-		caps.MultiPane = caps.MultiPane || pc.MultiPane
 		// Pause/Help stay kernel-controlled — panels can't suppress
 		// them. (A panel that doesn't support pause just no-ops the
 		// action.)
