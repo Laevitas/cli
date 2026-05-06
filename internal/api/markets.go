@@ -93,16 +93,16 @@ var canonicalMargins = map[string]struct{}{
 // marginAliases maps user input to canonical margin form. Same
 // case-insensitive convention as marketAliases.
 var marginAliases = map[string]string{
-	"linear":   "linear",
-	"lin":      "linear",
-	"usdt":     "linear", // colloquial: "USDT-margined" = linear
-	"usdc":     "linear",
-	"stable":   "linear",
-	"inverse":  "inverse",
-	"inv":      "inverse",
-	"coin":     "inverse", // "coin-margined" = inverse
-	"coins":    "inverse",
-	"crypto":   "inverse",
+	"linear":  "linear",
+	"lin":     "linear",
+	"usdt":    "linear", // colloquial: "USDT-margined" = linear
+	"usdc":    "linear",
+	"stable":  "linear",
+	"inverse": "inverse",
+	"inv":     "inverse",
+	"coin":    "inverse", // "coin-margined" = inverse
+	"coins":   "inverse",
+	"crypto":  "inverse",
 }
 
 // NormalizeMarket converts any user input to the canonical market
@@ -135,6 +135,40 @@ func NormalizeMarket(s string) (string, bool) {
 func NormalizeMargin(s string) (string, bool) {
 	canonical, ok := marginAliases[strings.ToLower(strings.TrimSpace(s))]
 	return canonical, ok
+}
+
+// NormalizeInstrument normalizes a user-supplied instrument name for
+// the product family that owns it. Crypto venues use uppercase
+// instrument names across perps, futures, options, and spot; prediction
+// markets can carry case-sensitive slugs / IDs, so those pass through.
+func NormalizeInstrument(market, raw string) string {
+	instrument := strings.TrimSpace(raw)
+	switch market {
+	case "perpetuals", "futures", "options", "spot":
+		return strings.ToUpper(instrument)
+	default:
+		return instrument
+	}
+}
+
+// MarketFromEndpoint returns the canonical market implied by a REST
+// endpoint path. Cross-product endpoints return empty string because
+// their market is request-param dependent rather than path dependent.
+func MarketFromEndpoint(path string) string {
+	switch {
+	case strings.HasPrefix(path, "/api/v1/perpetuals/"):
+		return "perpetuals"
+	case strings.HasPrefix(path, "/api/v1/futures/"):
+		return "futures"
+	case strings.HasPrefix(path, "/api/v1/options/"):
+		return "options"
+	case strings.HasPrefix(path, "/api/v1/spot/"):
+		return "spot"
+	case strings.HasPrefix(path, "/api/v1/predictions/"):
+		return "predictions"
+	default:
+		return ""
+	}
 }
 
 // IsCanonicalMarket is true when s is already the canonical form.

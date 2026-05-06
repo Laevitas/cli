@@ -161,6 +161,11 @@ type PanelContext struct {
 	// kernel surfaces it in the footer — but it's available for
 	// panels that want to inline it.
 	LastError string
+
+	// Paused is true when the kernel is intentionally freezing data
+	// updates. Panels can use it to suppress transient flash effects
+	// while the visible snapshot is static.
+	Paused bool
 }
 
 // Panel is the interface every dashboard view implements. A panel
@@ -262,6 +267,7 @@ type Root struct {
 	feed      *FeedRouter
 	feedState FeedState
 	lastErr   string
+	paused    bool
 
 	// tickCount counts every FeedTickMsg the kernel has handled
 	// since healthy state was reached. Used by renderFeedPill to
@@ -415,6 +421,13 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case keymap.ActHelp:
 			r.helpOpen = !r.helpOpen
 			return r, nil
+		case keymap.ActPause:
+			r.paused = !r.paused
+			if !r.paused && r.feedState == FeedHealthy {
+				r.healthySince = time.Now()
+				r.tickCount = 0
+			}
+			return r, nil
 		case keymap.ActEsc:
 			if r.helpOpen {
 				r.helpOpen = false
@@ -531,6 +544,10 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			r.healthySince = time.Now()
 			r.tickCount = 0
 		}
+		if r.paused {
+			r.feedState = FeedHealthy
+			return r, r.feed.next()
+		}
 		r.tickCount++
 		r.feedState = FeedHealthy
 		return r, tea.Batch(r.broadcast(msg), r.feed.next())
@@ -633,6 +650,7 @@ func (r *Root) panelContext(slot PaneSlot) PanelContext {
 		FeedState:    r.feedState,
 		Focused:      slot == r.focused,
 		LastError:    r.lastErr,
+		Paused:       r.paused,
 	}
 }
 
@@ -885,6 +903,10 @@ func (r *Root) renderFeedPill() string {
 	red := output.Red
 	reset := output.Reset
 	frame := r.spinner.View()
+
+	if r.paused {
+		return "   " + yellow + "● " + reset + grey + "paused" + reset
+	}
 
 	switch r.feedState {
 	case FeedHealthy:

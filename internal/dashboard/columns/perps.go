@@ -144,8 +144,16 @@ var PerpColumns = []Column[PerpRow]{
 			// percentage with 4 decimals — covers the typical 8h
 			// funding range (-0.05% to +0.05%) without truncating.
 			// Sign included so positive vs negative funding is
-			// visually obvious without colour.
-			return fmt.Sprintf("%+.4f%%", r.FundingRate*100)
+			// visible even if colour is unavailable.
+			value := fmt.Sprintf("%+.4f%%", r.FundingRate*100)
+			switch {
+			case r.FundingRate > 0:
+				return output.BrandGreen + value + output.Reset
+			case r.FundingRate < 0:
+				return output.Red + value + output.Reset
+			default:
+				return value
+			}
 		},
 	},
 }

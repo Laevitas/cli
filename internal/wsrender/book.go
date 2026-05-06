@@ -2,10 +2,10 @@
 // books are replacing snapshots, not append-only events. Two views:
 //
 //   - scan:   one summary row per subscribed (exchange, instrument). The
-//             trader's "watchlist" view. Default for multi-pair.
+//     trader's "watchlist" view. Default for multi-pair.
 //   - ladder: centre-price depth ladder for a single pair, Bloomberg DEPT
-//             style. Default for single-pair, drilled-into from scan via
-//             Enter.
+//     style. Default for single-pair, drilled-into from scan via
+//     Enter.
 //
 // Navigation is k9s-style: list → Enter → detail → Esc. The active view is
 // the only thing that consumes input; everything else routes through the
@@ -369,7 +369,7 @@ type bookModel struct {
 
 	// groupTickSize buckets adjacent ladder levels into wider price
 	// bins. 0 = native venue tick. Cycled by `+/-` via
-	// internal/ladder.NextGroupTick / PrevGroupTick.
+	// internal/ladder.NextAdaptiveGroupTick / PrevAdaptiveGroupTick.
 	groupTickSize float64
 
 	// viewport tracks scroll position when the rendered ladder is
@@ -445,6 +445,8 @@ func (m bookModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// snapshot…", which is confusing.
 			if m.mode == viewScan && len(m.bt.orderedKeys()) > 0 {
 				m.mode = viewLadder
+				m.groupTickSize = 0
+				m.viewport.Recenter()
 			}
 			return m, nil
 		case actUp:
@@ -531,12 +533,12 @@ func (m bookModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// tier cycle on `+/-`; in v0.8.3 the keymap unified so
 			// `+/-` is grouping everywhere, `d` is depth tier.
 			if m.mode == viewLadder {
-				m.groupTickSize = ladder.NextGroupTick(m.groupTickSize)
+				m.groupTickSize = ladder.NextAdaptiveGroupTick(m.groupTickSize, m.referencePrice())
 			}
 			return m, nil
 		case actDepthDown:
 			if m.mode == viewLadder {
-				m.groupTickSize = ladder.PrevGroupTick(m.groupTickSize)
+				m.groupTickSize = ladder.PrevAdaptiveGroupTick(m.groupTickSize, m.referencePrice())
 			}
 			return m, nil
 		case keymap.ActDepthCycle:
@@ -646,6 +648,41 @@ func clipBodyLines(s string, max int) string {
 		}
 	}
 	return s
+}
+
+func (m bookModel) referencePrice() float64 {
+	var books map[pairKey]*BookSnapshot
+	if m.paused && m.pausedSnap != nil {
+		books = m.pausedSnap
+	} else {
+		books, _, _, _ = m.bt.snapshot()
+	}
+	keys := m.bt.orderedKeys()
+	if len(keys) == 0 {
+		return 0
+	}
+	cursor := m.cursor
+	if cursor >= len(keys) {
+		cursor = len(keys) - 1
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+	snap := books[keys[cursor]]
+	if snap == nil {
+		return 0
+	}
+	if snap.Microprice > 0 {
+		return snap.Microprice
+	}
+	bid, ask := snap.BestLevels()
+	if bid.Price > 0 && ask.Price > 0 {
+		return (bid.Price + ask.Price) / 2
+	}
+	if bid.Price > 0 {
+		return bid.Price
+	}
+	return ask.Price
 }
 
 // ─── scan view ──────────────────────────────────────────────────────────────

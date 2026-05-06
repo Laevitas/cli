@@ -328,6 +328,22 @@ func TestFlowChartViewColorsCandlesAndRendersVolume(t *testing.T) {
 	}
 }
 
+func TestFlowChartVolumeRowsUseFractionalBlocks(t *testing.T) {
+	base := mustPanelTime("2026-05-04T13:00:00Z")
+	cs := []candles.Candle{
+		{BucketStart: base, Open: 100, High: 101, Low: 99, Close: 101, Volume: 1},
+		{BucketStart: base.Add(time.Minute), Open: 101, High: 102, Low: 100, Close: 102, Volume: 4},
+		{BucketStart: base.Add(2 * time.Minute), Open: 102, High: 103, Low: 101, Close: 103, Volume: 8},
+	}
+	rows := buildVolumeRows(cs, 40, 1, flowChartDefaultTimeframe, flowChartCandleStride)
+	if len(rows) != 1 {
+		t.Fatalf("volume rows = %d, want 1", len(rows))
+	}
+	if !strings.Contains(rows[0], "▁") || !strings.Contains(rows[0], "▄") || !strings.Contains(rows[0], "█") {
+		t.Fatalf("expected fractional volume blocks in one-row strip, got:\n%s", rows[0])
+	}
+}
+
 func TestFlowChartTimeAxisFollowsRightAlignedCandles(t *testing.T) {
 	cs := []candles.Candle{
 		{BucketStart: mustPanelTime("2026-05-04T13:02:00Z"), Open: 100, High: 101, Low: 99, Close: 100, Volume: 1},

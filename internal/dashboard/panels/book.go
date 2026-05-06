@@ -148,8 +148,8 @@ type BookPanel struct {
 
 	// groupTickSize is the price-bucket width used to bucket
 	// adjacent ladder levels. 0 means "use the venue's native tick
-	// (no aggregation)." Doubled by `+`/halved by `-` via
-	// keymap.ActGroupUp/Down.
+	// (no aggregation)." Cycled by `+/-` on an adaptive scale based
+	// on the current consolidated mid price.
 	groupTickSize float64
 
 	// viewport tracks where in the (potentially long) ladder we're
@@ -271,13 +271,13 @@ func (p *BookPanel) Title() string {
 //
 // Set:
 //   - ListNav:     ↑↓/jk/PgUp/PgDn/g/G + wheel scroll the viewport
-//                  through the ladder (panel implements scroll
-//                  itself in its Update).
+//     through the ladder (panel implements scroll
+//     itself in its Update).
 //   - Group:       +/- widen / narrow price grouping (bucket
-//                  adjacent ticks).
+//     adjacent ticks).
 //   - DepthCycle:  d cycles stats depth (10 → 20 → 50 → 100). Affects
-//                  strip / CONSOLIDATED math; doesn't change
-//                  rendered row count.
+//     strip / CONSOLIDATED math; doesn't change
+//     rendered row count.
 //   - VenueToggle: v opens an inline picker to hide / show venues.
 //   - Pause:       p freezes book replacement.
 //   - Help:        ? brings up the overlay.
@@ -370,9 +370,9 @@ func (p *BookPanel) Update(msg tea.Msg) (dashboard.Panel, tea.Cmd) {
 			// of reference for.
 			p.viewport.Recenter()
 		case keymap.ActGroupUp:
-			p.groupTickSize = ladder.NextGroupTick(p.groupTickSize)
+			p.groupTickSize = ladder.NextAdaptiveGroupTick(p.groupTickSize, p.referencePrice())
 		case keymap.ActGroupDown:
-			p.groupTickSize = ladder.PrevGroupTick(p.groupTickSize)
+			p.groupTickSize = ladder.PrevAdaptiveGroupTick(p.groupTickSize, p.referencePrice())
 		case keymap.ActDepthCycle:
 			p.depthTier = ladder.NextDepthTier(p.depthTier)
 		case keymap.ActVenueToggle:
@@ -503,6 +503,32 @@ func (p *BookPanel) snapshot() map[string]*api.BookSnapshot {
 		out[k] = v
 	}
 	return out
+}
+
+func (p *BookPanel) referencePrice() float64 {
+	books := p.snapshot()
+	bestBid := 0.0
+	bestAsk := 0.0
+	for _, snap := range books {
+		if snap == nil {
+			continue
+		}
+		bid, ask := snap.BestLevels()
+		if bid.Price > bestBid {
+			bestBid = bid.Price
+		}
+		if ask.Price > 0 && (bestAsk == 0 || ask.Price < bestAsk) {
+			bestAsk = ask.Price
+		}
+	}
+	switch {
+	case bestBid > 0 && bestAsk > 0:
+		return (bestBid + bestAsk) / 2
+	case bestBid > 0:
+		return bestBid
+	default:
+		return bestAsk
+	}
 }
 
 // orderedVenues returns the discovered venues in stable display
@@ -801,26 +827,27 @@ func (p *BookPanel) renderNarrow(w, h int, books map[string]*api.BookSnapshot, v
 // renderLadder draws the centre-price ladder with segmented bars
 // coloured by venue contribution. Bloomberg DEPT layout:
 //
-//   ▲ aggregated ladder    MID 76,082.05  SPREAD 0.10 (0.13 bps)  DEPTH 10
-//   bar | size | PRICE                       (asks, worst→best top→down)
-//   ───── spread 0.10 ─────                  (separator)
-//                              PRICE | size | bar       (bids, best→worst)
+//	▲ aggregated ladder    MID 76,082.05  SPREAD 0.10 (0.13 bps)  DEPTH 10
+//	bar | size | PRICE                       (asks, worst→best top→down)
+//	───── spread 0.10 ─────                  (separator)
+//	                           PRICE | size | bar       (bids, best→worst)
 //
 // Important contract:
-//   * p.depthTier is the STATS depth (10 / 20 / 50 / 100). It tells the strip
+//
+//   - p.depthTier is the STATS depth (10 / 20 / 50 / 100). It tells the strip
 //     and consolidated block which pre-computed liquidity sums to
 //     read off the wire. It does NOT control how many rows render —
 //     that's derived from terminal height so the ladder always fits
 //     the viewport. Cycling tier via +/- changes the math that
 //     drives imbalance/liquidity numbers, not the rendered count.
 //
-//   * rowCap = (h - chrome) / 2 per side. Chrome is the header row,
+//   - rowCap = (h - chrome) / 2 per side. Chrome is the header row,
 //     spread separator, and one row of breathing space (3 lines
 //     total). Each side gets half the remaining height; uneven
 //     remainder goes to the asks side so best-ask sits closest to
 //     the spread separator regardless of parity.
 //
-//   * Header SPREAD is computed via agg.CrossVenueSpread so it
+//   - Header SPREAD is computed via agg.CrossVenueSpread so it
 //     swaps to "ARB +X" when the consolidated book is crossed
 //     instead of lying with a negative number.
 func (p *BookPanel) renderLadder(w, h int, books map[string]*api.BookSnapshot, venues []string, ctx dashboard.PanelContext) string {

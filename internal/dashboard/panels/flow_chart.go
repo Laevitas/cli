@@ -390,6 +390,7 @@ func (p *FlowChartPanel) View(width, height int, ctx dashboard.PanelContext) str
 		DownColor:    output.Red,
 		FlatColor:    output.BrandGreyMid,
 		Reset:        output.Reset,
+		SolidBodies:  true,
 	})
 	rows = overlayLatestPriceFlag(rows, cs, width, tf, flowChartCandleStride)
 	if statsRows > 0 {
@@ -706,10 +707,7 @@ func buildVolumeRows(cs []candles.Candle, width, height int, timeframe time.Dura
 		if c == nil {
 			continue
 		}
-		barH := int(math.Ceil((c.Volume / maxVol) * float64(height)))
-		if barH < 1 && c.Volume > 0 {
-			barH = 1
-		}
+		barH, fracGlyph := volumeBarShape(c.Volume, maxVol, height)
 		color := output.BrandGreen
 		if c.Close < c.Open {
 			color = output.Red
@@ -718,7 +716,11 @@ func buildVolumeRows(cs []candles.Candle, width, height int, timeframe time.Dura
 			if r < 0 {
 				break
 			}
-			grid[r][col] = color + "█" + output.Reset
+			glyph := "█"
+			if r == height-barH {
+				glyph = fracGlyph
+			}
+			grid[r][col] = color + glyph + output.Reset
 		}
 	}
 
@@ -744,6 +746,50 @@ func buildVolumeRows(cs []candles.Candle, width, height int, timeframe time.Dura
 		rows[r] = output.PadRightAnsi(b.String(), width)
 	}
 	return rows
+}
+
+func volumeBarShape(volume, maxVol float64, height int) (int, string) {
+	if volume <= 0 || maxVol <= 0 || height <= 0 {
+		return 0, " "
+	}
+	units := int(math.Ceil((volume / maxVol) * float64(height) * 8))
+	if units < 1 {
+		units = 1
+	}
+	maxUnits := height * 8
+	if units > maxUnits {
+		units = maxUnits
+	}
+	fullRows := units / 8
+	remainder := units % 8
+	if remainder == 0 {
+		if fullRows < 1 {
+			fullRows = 1
+		}
+		return fullRows, "█"
+	}
+	return fullRows + 1, volumeBlockGlyph(remainder)
+}
+
+func volumeBlockGlyph(level int) string {
+	switch {
+	case level <= 1:
+		return "▁"
+	case level == 2:
+		return "▂"
+	case level == 3:
+		return "▃"
+	case level == 4:
+		return "▄"
+	case level == 5:
+		return "▅"
+	case level == 6:
+		return "▆"
+	case level == 7:
+		return "▇"
+	default:
+		return "█"
+	}
 }
 
 func overlayLatestPriceFlag(rows []string, cs []candles.Candle, width int, timeframe time.Duration, candleStride int) []string {

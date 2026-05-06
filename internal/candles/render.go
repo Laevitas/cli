@@ -95,10 +95,11 @@ type RenderOptions struct {
 	// each coloured cell; if Reset is empty but any colour is set,
 	// the standard SGR reset is used. Zero values preserve the
 	// historical plain-text output.
-	UpColor   string
-	DownColor string
-	FlatColor string
-	Reset     string
+	UpColor     string
+	DownColor   string
+	FlatColor   string
+	Reset       string
+	SolidBodies bool // use solid bodies for down candles too; intended for coloured renderers
 }
 
 // Render returns the chart as a slice of strings, one per row,
@@ -374,6 +375,8 @@ func drawCandle(grid [][]rune, colors [][]string, col int, c Candle, lo, hi floa
 	}
 	bodyGlyph := glyphBodyDown
 	if c.Close >= c.Open {
+		bodyGlyph = glyphBodyUp
+	} else if opts.SolidBodies {
 		bodyGlyph = glyphBodyUp
 	}
 	for r := bodyTop; r <= bodyBot; r++ {

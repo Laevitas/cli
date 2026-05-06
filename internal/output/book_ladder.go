@@ -72,7 +72,7 @@ type LadderRenderOpts struct {
 
 	// GroupTickSize buckets adjacent levels into wider price
 	// bins. 0 = no grouping (raw levels). Cycled by the caller's
-	// `+/-` keybinding via ladder.NextGroupTick / PrevGroupTick.
+	// `+/-` keybinding.
 	GroupTickSize float64
 
 	// Viewport tracks scroll position when the rendered ladder

@@ -19,12 +19,10 @@ package panels
 //     consumes to switch its mode to detail.
 //
 // Subscriptions: a "stable overscanned window" of trades channels
-// for the visible rows, plus the cursor row. v0.10.0 keeps this
-// simple — no live last-price flash from those subscriptions yet
-// (deferred to v0.10.1 once the basic drill is dogfooded). The
-// subscriptions exist to *warm* the detail-pane caches so the
-// drill is instant; FlowPanel reads selection identity, not WS
-// data, here.
+// for the visible rows, plus the cursor row. Those subscriptions
+// warm the detail-pane caches and feed the screener's live LAST
+// overlay so rows can show small up/down ticks between REST
+// refreshes.
 //
 // Capabilities: ListNav + Drill — the screener IS the interactive
 // panel in flow mode. FlowPanel composes screener mode and detail
@@ -121,6 +119,9 @@ type FlowScreenerPanel struct {
 
 	sortKey  string
 	sortDesc bool
+
+	searchActive bool
+	searchQuery  string
 
 	// rows is the latest fetched snapshot. Empty before the first
 	// fetch completes (renders "loading…"). Stable order — we
@@ -225,6 +226,7 @@ func (p *FlowScreenerPanel) Update(msg tea.Msg) (Panel, tea.Cmd) {
 		p.lastErr = ""
 		p.loading = false
 		p.cursor = findRowByIdentity(p.rows, prevID, p.cursor)
+		p.ensureCursorVisible()
 		// Cursor identity changed → emit SelectionChangedMsg so the
 		// detail composite (or future caches) re-aligns. If the
 		// previous cursor row vanished from the snapshot, we
@@ -361,19 +363,28 @@ func (p *FlowScreenerPanel) applyTradeTick(channel string, data []byte) {
 
 // handleKey processes cursor navigation and drill-into.
 func (p *FlowScreenerPanel) handleKey(m tea.KeyMsg) (Panel, tea.Cmd) {
-	if len(p.rows) == 0 {
+	if p.searchActive {
+		return p.handleSearchKey(m)
+	}
+	if keymap.ClassifyKey(m.String()) == keymap.ActSearch {
+		p.searchActive = true
+		p.ensureCursorVisible()
+		return p, nil
+	}
+	visible := p.filteredRowIndices()
+	if len(visible) == 0 {
 		// No rows yet — keys are no-ops. Nothing to navigate.
 		return p, nil
 	}
 	switch m.String() {
 	case "up", "k":
-		if p.cursor > 0 {
-			p.cursor--
+		if pos := p.filteredCursorPosition(visible); pos > 0 {
+			p.cursor = visible[pos-1]
 			return p, p.afterCursorMove()
 		}
 	case "down", "j":
-		if p.cursor < len(p.rows)-1 {
-			p.cursor++
+		if pos := p.filteredCursorPosition(visible); pos < len(visible)-1 {
+			p.cursor = visible[pos+1]
 			return p, p.afterCursorMove()
 		}
 	case "enter":
@@ -386,6 +397,40 @@ func (p *FlowScreenerPanel) handleKey(m tea.KeyMsg) (Panel, tea.Cmd) {
 		return p, makeDrillCmd(p.currentSelection())
 	}
 	return p, nil
+}
+
+func (p *FlowScreenerPanel) handleSearchKey(m tea.KeyMsg) (Panel, tea.Cmd) {
+	switch m.String() {
+	case "enter", "esc":
+		p.searchActive = false
+		p.ensureCursorVisible()
+		return p, nil
+	case "backspace", "ctrl+h":
+		if p.searchQuery != "" {
+			p.searchQuery = p.searchQuery[:len(p.searchQuery)-1]
+			p.ensureCursorVisible()
+			return p, p.afterCursorMove()
+		}
+		return p, nil
+	case "ctrl+u":
+		if p.searchQuery != "" {
+			p.searchQuery = ""
+			p.ensureCursorVisible()
+			return p, p.afterCursorMove()
+		}
+		return p, nil
+	default:
+		if len(m.Runes) == 0 {
+			return p, nil
+		}
+		for _, r := range m.Runes {
+			if r >= 32 && r != 127 {
+				p.searchQuery += string(r)
+			}
+		}
+		p.ensureCursorVisible()
+		return p, p.afterCursorMove()
+	}
 }
 
 // afterCursorMove emits SelectionChangedMsg if the cursor's row
@@ -415,7 +460,7 @@ func (p *FlowScreenerPanel) afterCursorMove() tea.Cmd {
 // cursor row. Empty/zero when rows is empty or cursor is out of
 // range.
 func (p *FlowScreenerPanel) currentSelection() dashboard.Selection {
-	if p.cursor < 0 || p.cursor >= len(p.rows) {
+	if p.cursor < 0 || p.cursor >= len(p.rows) || !p.rowMatchesSearch(p.rows[p.cursor]) {
 		return dashboard.Selection{Currency: p.currency, Market: p.market}
 	}
 	r := p.rows[p.cursor]
@@ -465,9 +510,12 @@ func (p *FlowScreenerPanel) Subscriptions(sel dashboard.Selection) dashboard.Fee
 	if len(p.rows) == 0 {
 		return dashboard.FeedSpec{}
 	}
-	low, high := p.overscanWindow()
-	channels := make([]string, 0, high-low+1)
-	for i := low; i <= high; i++ {
+	indices := p.overscanIndices()
+	channels := make([]string, 0, len(indices))
+	for _, i := range indices {
+		if i < 0 || i >= len(p.rows) {
+			continue
+		}
 		r := p.rows[i]
 		if r.Exchange == "" || r.InstrumentName == "" {
 			continue
@@ -478,20 +526,21 @@ func (p *FlowScreenerPanel) Subscriptions(sel dashboard.Selection) dashboard.Fee
 	return dashboard.FeedSpec{Channels: channels}
 }
 
-// overscanWindow returns the [low, high] inclusive index range of
-// rows the screener wants subscribed. Anchored on the cursor with
-// flowScreenerOverscanRows above and below; clamped to valid
-// indices.
-func (p *FlowScreenerPanel) overscanWindow() (int, int) {
-	low := p.cursor - flowScreenerOverscanRows
-	high := p.cursor + flowScreenerOverscanRows
+func (p *FlowScreenerPanel) overscanIndices() []int {
+	visible := p.filteredRowIndices()
+	if len(visible) == 0 {
+		return nil
+	}
+	pos := p.filteredCursorPosition(visible)
+	low := pos - flowScreenerOverscanRows
+	high := pos + flowScreenerOverscanRows
 	if low < 0 {
 		low = 0
 	}
-	if high >= len(p.rows) {
-		high = len(p.rows) - 1
+	if high >= len(visible) {
+		high = len(visible) - 1
 	}
-	return low, high
+	return visible[low : high+1]
 }
 
 // Title is empty — the screener composite doesn't carry chrome.
@@ -503,6 +552,7 @@ func (p *FlowScreenerPanel) Capabilities() keymap.Capabilities {
 	return keymap.Capabilities{
 		ListNav: true,
 		Drill:   true,
+		Search:  true,
 	}
 }
 
@@ -554,10 +604,11 @@ func (p *FlowScreenerPanel) View(width, height int, ctx dashboard.PanelContext) 
 	rows := make([]string, 0, height)
 	rows = append(rows, header)
 
-	// Row budget: height - 1 header - 1 footer (for error/status).
-	// If lastErr is empty we use height - 1.
+	// Row budget: height - 1 header - 1 footer (for error/status/filter).
+	// If no footer is needed we use height - 1.
+	filterFooter := p.searchFooter(width)
 	maxRows := height - 1
-	if p.lastErr != "" {
+	if p.lastErr != "" || filterFooter != "" {
 		maxRows -= 1
 	}
 	if maxRows < 1 {
@@ -565,8 +616,8 @@ func (p *FlowScreenerPanel) View(width, height int, ctx dashboard.PanelContext) 
 	}
 
 	// Render rows, oldest at top, cursor row highlighted.
-	displayLow, displayHigh := p.viewportWindow(maxRows)
-	for i := displayLow; i <= displayHigh; i++ {
+	displayIndices := p.viewportIndices(maxRows)
+	for _, i := range displayIndices {
 		// Apply the WS overlay: if a live tick has arrived for this
 		// row's identity, stamp the live price onto a copy of the
 		// row before passing to the column extractors. The
@@ -577,7 +628,7 @@ func (p *FlowScreenerPanel) View(width, height int, ctx dashboard.PanelContext) 
 		// faster than mark and are less useful to the screener
 		// scan), so SPREAD remains REST-fresh.
 		row := p.rowWithOverlay(p.rows[i])
-		line := buildRowFromCols(visibleCols, row)
+		line := p.buildRowFromCols(visibleCols, row, i == p.cursor)
 		// Pad to width.
 		visible := output.VisibleWidth(line)
 		if visible < width {
@@ -603,6 +654,8 @@ func (p *FlowScreenerPanel) View(width, height int, ctx dashboard.PanelContext) 
 	footer := ""
 	if p.lastErr != "" {
 		footer = output.Red + "✗ " + p.lastErr + reset
+	} else if filterFooter != "" {
+		footer = filterFooter
 	}
 	if footer != "" {
 		footerVisible := output.VisibleWidth(footer)
@@ -633,8 +686,10 @@ func (p *FlowScreenerPanel) viewInstrumentOnly(width, height int) string {
 	if maxRows < 0 {
 		maxRows = 0
 	}
-	displayLow, displayHigh := p.viewportWindow(maxRows)
-	for i := displayLow; i <= displayHigh && len(rows) < height; i++ {
+	for _, i := range p.viewportIndices(maxRows) {
+		if len(rows) >= height {
+			break
+		}
 		row := p.rowWithOverlay(p.rows[i])
 		label := row.Exchange + ":" + row.InstrumentName
 		line := output.PadRightAnsi(label, width)
@@ -647,6 +702,25 @@ func (p *FlowScreenerPanel) viewInstrumentOnly(width, height int) string {
 		rows = append(rows, strings.Repeat(" ", width))
 	}
 	return strings.Join(rows, "\n")
+}
+
+func (p *FlowScreenerPanel) searchFooter(width int) string {
+	if p.searchQuery == "" && !p.searchActive {
+		return ""
+	}
+	matches := len(p.filteredRowIndices())
+	label := "filter: " + p.searchQuery
+	if p.searchActive {
+		label = "/" + p.searchQuery
+	}
+	if p.searchQuery != "" {
+		label += fmt.Sprintf("  (%d/%d)", matches, len(p.rows))
+	}
+	line := output.BrandGreyMid + label + output.Reset
+	if output.VisibleWidth(line) > width {
+		return output.TruncateAnsi(line, width)
+	}
+	return output.PadRightAnsi(line, width)
 }
 
 // columnsFitting returns the prefix of PerpColumns that fits in
@@ -684,24 +758,81 @@ func (p *FlowScreenerPanel) columnSet() []columns.Column[columns.PerpRow] {
 // viewportWindow returns the [low, high] inclusive row indices to
 // render given the visible row budget and cursor position. Tries
 // to keep the cursor centred; clamps to valid indices.
-func (p *FlowScreenerPanel) viewportWindow(maxRows int) (int, int) {
-	if maxRows >= len(p.rows) {
-		return 0, len(p.rows) - 1
+func (p *FlowScreenerPanel) viewportIndices(maxRows int) []int {
+	visible := p.filteredRowIndices()
+	if maxRows <= 0 || len(visible) == 0 {
+		return nil
+	}
+	if maxRows >= len(visible) {
+		return visible
 	}
 	half := maxRows / 2
-	low := p.cursor - half
+	pos := p.filteredCursorPosition(visible)
+	low := pos - half
 	if low < 0 {
 		low = 0
 	}
 	high := low + maxRows - 1
-	if high >= len(p.rows) {
-		high = len(p.rows) - 1
+	if high >= len(visible) {
+		high = len(visible) - 1
 		low = high - maxRows + 1
 		if low < 0 {
 			low = 0
 		}
 	}
-	return low, high
+	return visible[low : high+1]
+}
+
+func (p *FlowScreenerPanel) filteredRowIndices() []int {
+	if p.searchQuery == "" {
+		out := make([]int, len(p.rows))
+		for i := range p.rows {
+			out[i] = i
+		}
+		return out
+	}
+	out := make([]int, 0, len(p.rows))
+	for i, r := range p.rows {
+		if p.rowMatchesSearch(r) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+func (p *FlowScreenerPanel) rowMatchesSearch(r columns.PerpRow) bool {
+	q := strings.TrimSpace(strings.ToLower(p.searchQuery))
+	if q == "" {
+		return true
+	}
+	hay := strings.ToLower(r.Exchange + ":" + r.InstrumentName)
+	return strings.Contains(hay, q)
+}
+
+func (p *FlowScreenerPanel) filteredCursorPosition(indices []int) int {
+	if len(indices) == 0 {
+		return 0
+	}
+	for i, idx := range indices {
+		if idx == p.cursor {
+			return i
+		}
+	}
+	return 0
+}
+
+func (p *FlowScreenerPanel) ensureCursorVisible() {
+	visible := p.filteredRowIndices()
+	if len(visible) == 0 {
+		p.cursor = 0
+		return
+	}
+	for _, idx := range visible {
+		if idx == p.cursor {
+			return
+		}
+	}
+	p.cursor = visible[0]
 }
 
 // buildRow joins the headers/cells of `cols` with single-space
@@ -715,11 +846,11 @@ func buildRow[T any](cols []columns.Column[T], extract func(columns.Column[T]) s
 			b.WriteByte(' ')
 		}
 		s := extract(c)
-		if len(s) > c.Width {
-			s = s[:c.Width]
+		if output.VisibleWidth(s) > c.Width {
+			s = output.TruncateAnsi(s, c.Width)
 		}
 		b.WriteString(s)
-		if pad := c.Width - len(s); pad > 0 {
+		if pad := c.Width - output.VisibleWidth(s); pad > 0 {
 			b.WriteString(strings.Repeat(" ", pad))
 		}
 	}
@@ -728,10 +859,55 @@ func buildRow[T any](cols []columns.Column[T], extract func(columns.Column[T]) s
 
 // buildRowFromCols builds a data row by calling each column's
 // Extract on the row.
-func buildRowFromCols(cols []columns.Column[columns.PerpRow], row columns.PerpRow) string {
+func (p *FlowScreenerPanel) buildRowFromCols(cols []columns.Column[columns.PerpRow], row columns.PerpRow, highlighted bool) string {
 	return buildRow(cols, func(c columns.Column[columns.PerpRow]) string {
-		return c.Extract(row)
+		cell := c.Extract(row)
+		if highlighted {
+			return stripANSI(cell)
+		}
+		if c.Header == "LAST" {
+			return p.decorateLastCell(row, cell)
+		}
+		return cell
 	})
+}
+
+func (p *FlowScreenerPanel) decorateLastCell(row columns.PerpRow, cell string) string {
+	if p.liveTicks == nil {
+		return cell
+	}
+	tick, ok := p.liveTicks[rowIdentity(row)]
+	if !ok {
+		return cell
+	}
+	switch tick.direction {
+	case "up":
+		return output.BrandGreen + "▲ " + cell + output.Reset
+	case "down":
+		return output.Red + "▼ " + cell + output.Reset
+	default:
+		return cell
+	}
+}
+
+func stripANSI(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			i += 2
+			for i < len(s) {
+				ch := s[i]
+				i++
+				if ch >= '@' && ch <= '~' {
+					break
+				}
+			}
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
 }
 
 // rowIdentity returns the identity string for a row — venue +

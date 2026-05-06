@@ -129,6 +129,23 @@ func TestRenderAppliesOptionalDirectionColors(t *testing.T) {
 	}
 }
 
+func TestRenderSolidBodiesUsesFilledDownCandles(t *testing.T) {
+	cs := []Candle{
+		candle("2026-05-04T14:00:00Z", 108, 112, 100, 102), // down
+	}
+	rows := Render(cs, 40, 12, RenderOptions{
+		Timeframe:   time.Minute,
+		SolidBodies: true,
+	})
+	combined := strings.Join(rows, "\n")
+	if strings.ContainsRune(combined, glyphBodyDown) {
+		t.Errorf("solid body render used shaded down glyph: %s", combined)
+	}
+	if !strings.ContainsRune(combined, glyphBodyUp) {
+		t.Errorf("solid body render missing filled body glyph: %s", combined)
+	}
+}
+
 // TestRenderFlatPriceRange: every candle has the same Open/High/Low/
 // Close — degenerate case rendered as a single horizontal line at
 // mid row, not a divide-by-zero panic or empty chart.

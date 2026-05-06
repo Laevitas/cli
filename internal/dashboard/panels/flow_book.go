@@ -94,9 +94,9 @@ type FlowBookPanel struct {
 	// groupSize buckets adjacent price levels by `+/-`. Zero means
 	// no grouping (raw levels as the API delivers them). When set,
 	// adjacent levels whose prices fall in the same bucket are
-	// summed into one displayed level. Cycle: 0 → 0.1 → 1 → 10 →
-	// 100 → 0; rotating through cycles bigger groupings until the
-	// scan loops back to raw.
+	// summed into one displayed level. The cycle is adaptive to the
+	// current book price so high-price and micro-price instruments
+	// don't share one hard-coded absolute bucket scale.
 	groupSize float64
 
 	// viewport tracks scroll position through deeper depth tiers.
@@ -178,6 +178,7 @@ func (p *FlowBookPanel) Update(msg tea.Msg) (Panel, tea.Cmd) {
 		// previous instrument's book until the new feed warms up.
 		// The next matching FeedTickMsg will populate it.
 		p.snapshot = nil
+		p.groupSize = 0
 		p.viewport.Recenter()
 	case dashboard.FeedTickMsg:
 		want := p.currentChannel()
@@ -257,14 +258,6 @@ func (p *FlowBookPanel) Capabilities() keymap.Capabilities {
 	}
 }
 
-// flowBookGroupCycle is the ordered list of grouping bucket sizes
-// the panel rotates through on `+/-`. Zero means "no grouping"
-// (raw API levels). The list is intentionally short — five steps
-// covers the typical perp tick-size range from $0.10 to $100,
-// which is plenty for visual density tuning. Rotating past the
-// last entry wraps back to 0.
-var flowBookGroupCycle = []float64{0, 0.1, 1, 10, 100}
-
 // flowBookDepthCycle is the ordered list of depth tier caps the
 // `d` key cycles through. Matches the canonical 10/20/50/100
 // tiers used elsewhere in the codebase.
@@ -321,29 +314,11 @@ func (p *FlowBookPanel) applyKey(action keymap.Action) bool {
 		p.viewport.Recenter()
 		return true
 	case keymap.ActGroupUp:
-		// Step UP through the group cycle (wider buckets).
-		idx := 0
-		for i, v := range flowBookGroupCycle {
-			if v == p.groupSize {
-				idx = i
-				break
-			}
-		}
-		idx = (idx + 1) % len(flowBookGroupCycle)
-		p.groupSize = flowBookGroupCycle[idx]
+		p.groupSize = ladder.NextAdaptiveGroupTick(p.groupSize, p.referencePrice())
 		p.viewport.Recenter()
 		return true
 	case keymap.ActGroupDown:
-		// Step DOWN through the group cycle (narrower buckets).
-		idx := 0
-		for i, v := range flowBookGroupCycle {
-			if v == p.groupSize {
-				idx = i
-				break
-			}
-		}
-		idx = (idx - 1 + len(flowBookGroupCycle)) % len(flowBookGroupCycle)
-		p.groupSize = flowBookGroupCycle[idx]
+		p.groupSize = ladder.PrevAdaptiveGroupTick(p.groupSize, p.referencePrice())
 		p.viewport.Recenter()
 		return true
 	case keymap.ActRecenter:
@@ -351,6 +326,23 @@ func (p *FlowBookPanel) applyKey(action keymap.Action) bool {
 		return true
 	}
 	return false
+}
+
+func (p *FlowBookPanel) referencePrice() float64 {
+	if p == nil || p.snapshot == nil {
+		return 0
+	}
+	if p.snapshot.Microprice > 0 {
+		return p.snapshot.Microprice
+	}
+	bid, ask := p.snapshot.BestLevels()
+	if bid.Price > 0 && ask.Price > 0 {
+		return (bid.Price + ask.Price) / 2
+	}
+	if bid.Price > 0 {
+		return bid.Price
+	}
+	return ask.Price
 }
 
 // View renders the canonical single-venue ladder via the shared
@@ -393,7 +385,7 @@ func (p *FlowBookPanel) View(width, height int, ctx dashboard.PanelContext) stri
 		BarWidth: 12, // narrower than legacy 18 — card is ~50 cells
 		Width:    width,
 		Height:   height,
-		Paused:   false,
+		Paused:   ctx.Paused,
 	})
 
 	// Pad / truncate to exactly `height` rows so the lipgloss

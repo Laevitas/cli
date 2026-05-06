@@ -138,9 +138,10 @@ func buildCommandManifest(root *cobra.Command, filter string) commandManifest {
 
 	var walk func(c *cobra.Command, prefix []string)
 	walk = func(c *cobra.Command, prefix []string) {
-		// Skip cobra's auto-generated help command — not user-typeable
-		// in any meaningful way and would clutter the manifest.
-		if c.Name() == "help" {
+		// Skip cobra's auto-generated help command and hidden
+		// internal/deprecated commands. Hidden commands are not
+		// user-facing and should not leak into the agent manifest.
+		if c.Name() == "help" || c.Hidden {
 			return
 		}
 		path := append(prefix, c.Name())

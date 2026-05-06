@@ -26,6 +26,10 @@
 package ladder
 
 import (
+	"math"
+	"strconv"
+	"strings"
+
 	"github.com/laevitas/cli/internal/agg"
 )
 
@@ -84,6 +88,68 @@ func PrevGroupTick(g float64) float64 {
 	return 0
 }
 
+// AdaptiveGroupTicks returns a price-relative group cycle for an
+// order-book centred near refPrice. Grouping is an absolute bucket
+// width, but the useful widths are not universal: a BTC book around
+// 80,000 and a micro-cap book around 0.00003 need very different
+// first steps. The cycle uses nice 1/2/5-style numbers derived from
+// the reference price so `+/-` feels like zooming the ladder rather
+// than applying one hard-coded dollar scale everywhere.
+func AdaptiveGroupTicks(refPrice float64) []float64 {
+	if refPrice <= 0 || math.IsNaN(refPrice) || math.IsInf(refPrice, 0) {
+		return []float64{0, 0.01, 0.05, 0.10, 0.50, 1.00, 5.00, 10.00, 50.00}
+	}
+	// Fractions are relative to price. For an 80k instrument these
+	// become approximately 0.10, 0.50, 1, 5, 10, 50, 100. For a
+	// 0.00003 instrument they stay in the 1e-10..1e-8 range instead
+	// of jumping to impossible 0.10 buckets.
+	fractions := []float64{1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3}
+	out := []float64{0}
+	seen := map[string]struct{}{"0": {}}
+	for _, frac := range fractions {
+		tick := normalizeGroupTick(niceCeil(refPrice * frac))
+		if tick <= 0 {
+			continue
+		}
+		key := strconv.FormatFloat(tick, 'g', 16, 64)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, tick)
+	}
+	return out
+}
+
+// NextAdaptiveGroupTick widens the active price bucket using the
+// adaptive cycle for refPrice. If the current bucket came from an
+// older reference price, it advances to the first adaptive bucket
+// wider than the current value.
+func NextAdaptiveGroupTick(current, refPrice float64) float64 {
+	ticks := AdaptiveGroupTicks(refPrice)
+	for _, tick := range ticks {
+		if tick > current+groupTickEpsilon(current) {
+			return tick
+		}
+	}
+	return ticks[len(ticks)-1]
+}
+
+// PrevAdaptiveGroupTick narrows the active price bucket using the
+// adaptive cycle for refPrice. It bottoms out at 0, the native venue
+// tick mode.
+func PrevAdaptiveGroupTick(current, refPrice float64) float64 {
+	ticks := AdaptiveGroupTicks(refPrice)
+	prev := 0.0
+	for _, tick := range ticks {
+		if tick >= current-groupTickEpsilon(current) {
+			return prev
+		}
+		prev = tick
+	}
+	return prev
+}
+
 // GroupLabel renders the active grouping bucket size for a header
 // label. `0` reads as "tick" — i.e., the venue's native tick size,
 // no extra bucketing applied. That reads better than "native" or
@@ -100,7 +166,51 @@ func GroupLabel(g float64) string {
 	if g >= 1 {
 		return floatString(g, 2)
 	}
+	if g < 0.0001 {
+		label := strings.TrimRight(strings.TrimRight(strconv.FormatFloat(g, 'f', 18, 64), "0"), ".")
+		if label == "0" {
+			return strconv.FormatFloat(g, 'g', 4, 64)
+		}
+		return label
+	}
 	return floatString(g, 4)
+}
+
+func niceCeil(v float64) float64 {
+	if v <= 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	exp := math.Floor(math.Log10(v))
+	base := math.Pow(10, exp)
+	frac := v / base
+	switch {
+	case frac <= 1:
+		return base
+	case frac <= 2:
+		return 2 * base
+	case frac <= 5:
+		return 5 * base
+	default:
+		return 10 * base
+	}
+}
+
+func normalizeGroupTick(v float64) float64 {
+	out, err := strconv.ParseFloat(strconv.FormatFloat(v, 'g', 12, 64), 64)
+	if err != nil {
+		return v
+	}
+	return out
+}
+
+func groupTickEpsilon(v float64) float64 {
+	if v < 0 {
+		v = -v
+	}
+	if v == 0 {
+		return 1e-18
+	}
+	return v * 1e-9
 }
 
 // ─── depth-tier cycle ──────────────────────────────────────────────────────

@@ -29,6 +29,23 @@ func (p capsPanel) Subscriptions(Selection) FeedSpec   { return FeedSpec{} }
 func (p capsPanel) Title() string                      { return "" }
 func (p capsPanel) Capabilities() keymap.Capabilities  { return p.caps }
 
+type countingPanel struct {
+	caps  keymap.Capabilities
+	ticks int
+}
+
+func (p *countingPanel) Init() tea.Cmd { return nil }
+func (p *countingPanel) Update(msg tea.Msg) (Panel, tea.Cmd) {
+	if _, ok := msg.(FeedTickMsg); ok {
+		p.ticks++
+	}
+	return p, nil
+}
+func (p *countingPanel) View(int, int, PanelContext) string { return "" }
+func (p *countingPanel) Subscriptions(Selection) FeedSpec   { return FeedSpec{} }
+func (p *countingPanel) Title() string                      { return "" }
+func (p *countingPanel) Capabilities() keymap.Capabilities  { return p.caps }
+
 // TestSubscribePreDialReplacesPending verifies that subscribe()
 // before dial completes replaces (not accumulates) f.pending. This
 // catches the original "additive drift" bug that motivated the
@@ -111,6 +128,32 @@ func TestRootActiveCapabilitiesUnionsPanelCapabilities(t *testing.T) {
 	}
 	if !caps.MultiPane {
 		t.Fatal("MultiPane capability was dropped before footer/help rendering")
+	}
+}
+
+func TestRootPauseFreezesFeedTicks(t *testing.T) {
+	panel := &countingPanel{}
+	r := NewRoot(Config{
+		Layout: LayoutSingle,
+		Panels: map[PaneSlot]Panel{PaneMain: panel},
+	})
+
+	r.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if !r.paused {
+		t.Fatal("p key did not toggle root pause on")
+	}
+	r.Update(FeedTickMsg{})
+	if panel.ticks != 0 {
+		t.Fatalf("paused root broadcast FeedTickMsg; ticks=%d, want 0", panel.ticks)
+	}
+
+	r.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if r.paused {
+		t.Fatal("second p key did not toggle root pause off")
+	}
+	r.Update(FeedTickMsg{})
+	if panel.ticks != 1 {
+		t.Fatalf("unpaused root did not broadcast FeedTickMsg; ticks=%d, want 1", panel.ticks)
 	}
 }
 
