@@ -163,7 +163,7 @@ func TestWeightedMean_AllZeroWeightsReturnsZero(t *testing.T) {
 func TestCrossVenueDivergence_SpreadAndExtremes(t *testing.T) {
 	quotes := []VenueQuote{
 		{Venue: "a", Value: 0.01, Weight: 1},
-		{Venue: "b", Value: 0.05, Weight: 1}, // highest
+		{Venue: "b", Value: 0.05, Weight: 1},  // highest
 		{Venue: "c", Value: -0.02, Weight: 1}, // lowest
 	}
 	r := CrossVenueDivergence(quotes)

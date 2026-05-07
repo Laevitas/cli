@@ -49,9 +49,9 @@ type Instrument struct {
 	InstrumentName string `json:"instrument_name"`
 	BaseCurrency   string `json:"base_currency"`
 	QuoteCurrency  string `json:"quote_currency"`
-	MarketType     string `json:"market_type"` // singular: perpetual / future / option / spot
-	MarginType     string `json:"margin_type"` // linear / inverse / "" (spot)
-	SubExchange   string `json:"sub_exchange"` // empty = main venue; non-empty = sub-venue fork
+	MarketType     string `json:"market_type"`  // singular: perpetual / future / option / spot
+	MarginType     string `json:"margin_type"`  // linear / inverse / "" (spot)
+	SubExchange    string `json:"sub_exchange"` // empty = main venue; non-empty = sub-venue fork
 	Status         string `json:"status"`
 }
 

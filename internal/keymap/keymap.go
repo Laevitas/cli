@@ -87,6 +87,11 @@ const (
 	// used by flow screeners to filter instrument tables.
 	ActSearch
 
+	// Tape filter — `F` cycles the minimum notional shown in trade
+	// tape panes. Lowercase `f` is page-down in the shared list
+	// vocabulary, so the filter intentionally uses uppercase only.
+	ActTapeFilter
+
 	// Ladder-mode toggle — `m` cycles between aggregated and split
 	// presentations of the same multi-venue book. Aggregated merges
 	// every venue's depth into one centre-price ladder coloured by
@@ -151,6 +156,8 @@ func ClassifyKey(key string) Action {
 		return ActTimeframeCycle
 	case "/":
 		return ActSearch
+	case "F":
+		return ActTapeFilter
 	case "m":
 		return ActLadderMode
 	case "tab":
@@ -246,6 +253,10 @@ type Capabilities struct {
 	// Search — `/` opens a table/list filter prompt.
 	Search bool
 
+	// TapeFilter — `F` cycles the minimum visible trade notional
+	// in tape-style panes.
+	TapeFilter bool
+
 	// LadderMode — `m` toggles aggregated ↔ split presentation of
 	// a multi-venue book. Only the dashboard book panel sets this
 	// today; the legacy single-venue ladder has nothing to split.
@@ -263,7 +274,7 @@ func FullCapabilities() Capabilities {
 	return Capabilities{
 		ListNav: true, Drill: true, Back: true,
 		Group: true, DepthCycle: true, VenueToggle: true,
-		Recenter: true, ChartTimeframe: true, Search: true, LadderMode: true,
+		Recenter: true, ChartTimeframe: true, Search: true, TapeFilter: true, LadderMode: true,
 		MultiPane: true, Pause: true, Help: true,
 	}
 }
@@ -290,6 +301,7 @@ func (c Capabilities) Union(other Capabilities) Capabilities {
 		Recenter:       c.Recenter || other.Recenter,
 		ChartTimeframe: c.ChartTimeframe || other.ChartTimeframe,
 		Search:         c.Search || other.Search,
+		TapeFilter:     c.TapeFilter || other.TapeFilter,
 		LadderMode:     c.LadderMode || other.LadderMode,
 		MultiPane:      c.MultiPane || other.MultiPane,
 		Pause:          c.Pause || other.Pause,
@@ -347,6 +359,9 @@ func FooterHints(c Capabilities) string {
 	}
 	if c.Search {
 		parts = append(parts, "/ search")
+	}
+	if c.TapeFilter {
+		parts = append(parts, "F min size")
 	}
 	if c.LadderMode {
 		parts = append(parts, "m mode")
@@ -461,6 +476,10 @@ var searchBindings = []Binding{
 	{"enter / esc", "close filter prompt"},
 }
 
+var tapeFilterBindings = []Binding{
+	{"F", "cycle minimum visible trade size"},
+}
+
 var ladderModeBindings = []Binding{
 	{"m", "toggle aggregated ↔ split ladder"},
 }
@@ -496,6 +515,9 @@ func SectionsFor(c Capabilities) []Section {
 	}
 	if c.Search {
 		out = append(out, Section{Title: "Search", Bindings: searchBindings})
+	}
+	if c.TapeFilter {
+		out = append(out, Section{Title: "Tape", Bindings: tapeFilterBindings})
 	}
 	if c.LadderMode {
 		out = append(out, Section{Title: "Ladder mode", Bindings: ladderModeBindings})

@@ -27,18 +27,18 @@ import (
 type keyAction = keymap.Action
 
 const (
-	actNone         = keymap.ActNone
-	actQuit         = keymap.ActQuit
-	actPause        = keymap.ActPause
-	actHelp         = keymap.ActHelp
-	actEsc          = keymap.ActEsc
-	actUp           = keymap.ActUp
-	actDown         = keymap.ActDown
-	actPageUp       = keymap.ActPageUp
-	actPageDown     = keymap.ActPageDown
-	actTop          = keymap.ActTop
-	actBottom       = keymap.ActBottom
-	actEnter        = keymap.ActEnter
+	actNone     = keymap.ActNone
+	actQuit     = keymap.ActQuit
+	actPause    = keymap.ActPause
+	actHelp     = keymap.ActHelp
+	actEsc      = keymap.ActEsc
+	actUp       = keymap.ActUp
+	actDown     = keymap.ActDown
+	actPageUp   = keymap.ActPageUp
+	actPageDown = keymap.ActPageDown
+	actTop      = keymap.ActTop
+	actBottom   = keymap.ActBottom
+	actEnter    = keymap.ActEnter
 	// actDepthUp / actDepthDown are kept as aliases to ActGroupUp /
 	// ActGroupDown so the existing rolling-tape book ladder keeps
 	// its current `+/-` behaviour without renaming every call site.
@@ -50,6 +50,7 @@ const (
 	actDepthDown    = keymap.ActGroupDown
 	actWheelUp      = keymap.ActWheelUp
 	actWheelDown    = keymap.ActWheelDown
+	actTapeFilter   = keymap.ActTapeFilter
 	actCycleFocus   = keymap.ActCycleFocus
 	actReverseFocus = keymap.ActReverseFocus
 	actJumpPane1    = keymap.ActJumpPane1
@@ -57,8 +58,8 @@ const (
 	actJumpPane3    = keymap.ActJumpPane3
 )
 
-func classifyKey(s string) keyAction              { return keymap.ClassifyKey(s) }
-func classifyMouse(b tea.MouseButton) keyAction   { return keymap.ClassifyMouse(b) }
+func classifyKey(s string) keyAction            { return keymap.ClassifyKey(s) }
+func classifyMouse(b tea.MouseButton) keyAction { return keymap.ClassifyMouse(b) }
 
 // surfaceCapabilities maps the legacy surface-name strings used by
 // wsrender ("tape", "scan", "ladder", "ladder-back") to the
@@ -89,6 +90,10 @@ func surfaceCapabilities(surface string) keymap.Capabilities {
 			ListNav: true, Back: true, Pause: true, Help: true,
 		}
 	case "tape":
+		return keymap.Capabilities{
+			TapeFilter: true, Pause: true, Help: true,
+		}
+	case "stream":
 		return keymap.Capabilities{
 			Pause: true, Help: true,
 		}

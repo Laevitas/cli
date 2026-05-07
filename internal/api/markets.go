@@ -4,13 +4,13 @@
 //
 // ─── canonical forms (the only tokens internal code should see) ───
 //
-//   perpetuals       (NOT perpetual, NOT perp)
-//   futures          (NOT future, NOT fut)
-//   options          (NOT option, NOT opt)
-//   spot
-//   predictions      (NOT prediction, NOT predict, NOT polymarket)
-//   linear           (margin type — settle in stablecoin)
-//   inverse          (margin type — settle in base asset)
+//	perpetuals       (NOT perpetual, NOT perp)
+//	futures          (NOT future, NOT fut)
+//	options          (NOT option, NOT opt)
+//	spot
+//	predictions      (NOT prediction, NOT predict, NOT polymarket)
+//	linear           (margin type — settle in stablecoin)
+//	inverse          (margin type — settle in base asset)
 //
 // User input (CLI flag values, positional args) is normalised at the
 // entry point — every cobra Run func that accepts a market type or
@@ -28,9 +28,9 @@
 // to translate canonical → REST when you need it.
 //
 // Adding a new market type? Three places to touch:
-//   1. Add the canonical form to canonicalMarkets below.
-//   2. Add aliases the user might type to marketAliases.
-//   3. Add the REST translation if it's not identity (most are).
+//  1. Add the canonical form to canonicalMarkets below.
+//  2. Add aliases the user might type to marketAliases.
+//  3. Add the REST translation if it's not identity (most are).
 //
 // Adding a new margin type? Two places: canonicalMargins and
 // marginAliases. Margin canonical form already matches what the
@@ -145,6 +145,9 @@ func NormalizeInstrument(market, raw string) string {
 	instrument := strings.TrimSpace(raw)
 	switch market {
 	case "perpetuals", "futures", "options", "spot":
+		if prefix, suffix, ok := strings.Cut(instrument, ":"); ok {
+			return strings.ToLower(prefix) + ":" + strings.ToUpper(suffix)
+		}
 		return strings.ToUpper(instrument)
 	default:
 		return instrument

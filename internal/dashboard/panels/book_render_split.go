@@ -224,4 +224,3 @@ func splitSpreadRow(spread float64, w int, style lipgloss.Style) string {
 	right := dashes - left
 	return style.Render(strings.Repeat("─", left)) + " " + label + " " + style.Render(strings.Repeat("─", right))
 }
-

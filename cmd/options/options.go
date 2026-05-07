@@ -327,9 +327,9 @@ var refPriceCmd = &cobra.Command{
 }
 
 var metadataCmd = &cobra.Command{
-	Use:   "metadata <instrument>",
-	Short: "Data availability info",
-	Args:  cobra.ExactArgs(1),
+	Use:     "metadata <instrument>",
+	Short:   "Data availability info",
+	Args:    cobra.ExactArgs(1),
 	Example: `  laevitas options metadata {{OPT_C}}`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
@@ -411,8 +411,8 @@ var vsHistFlags struct {
 }
 
 var vsHistCmd = &cobra.Command{
-	Use:   "history",
-	Short: "Historical vol surface data for a specific maturity",
+	Use:     "history",
+	Short:   "Historical vol surface data for a specific maturity",
 	Example: `  laevitas options vol-surface history --currency BTC --maturity {{MAT}} -p 7d -r 1h`,
 	Run: func(cmd *cobra.Command, args []string) {
 		client, _ := cmdutil.MustClient()
