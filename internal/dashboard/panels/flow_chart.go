@@ -102,15 +102,6 @@ func (p *FlowChartPanel) fetchSeedCmd(sel dashboard.Selection, key string, timef
 	end := time.Now().UTC()
 	start := end.Add(-time.Duration(flowChartCapacity) * timeframe)
 	resolution := flowChartResolution(timeframe)
-	params := &api.RequestParams{
-		Exchange:       sel.Venue,
-		InstrumentName: sel.Symbol,
-		Start:          start.Format(time.RFC3339),
-		End:            end.Format(time.RFC3339),
-		Resolution:     resolution,
-		Limit:          flowChartCapacity,
-		SortDir:        "ASC",
-	}
 	endpoint, ok := flowChartOHLCVTEndpoint(sel.Market)
 	if !ok {
 		return func() tea.Msg {
@@ -119,6 +110,15 @@ func (p *FlowChartPanel) fetchSeedCmd(sel dashboard.Selection, key string, timef
 	}
 	client := p.client
 	return func() tea.Msg {
+		params := &api.RequestParams{
+			Exchange:       sel.Venue,
+			InstrumentName: sel.Symbol,
+			Start:          start.Format(time.RFC3339),
+			End:            end.Format(time.RFC3339),
+			Resolution:     resolution,
+			Limit:          flowChartCapacity,
+			SortDir:        "ASC",
+		}
 		body, err := client.Get(endpoint, params)
 		if err != nil {
 			return flowChartSeedMsg{key: key, err: err}

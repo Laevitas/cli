@@ -54,6 +54,7 @@ type BookFilterFlags struct {
 //   - WS book stream uses `ask_liquidity_10` / `imbalance_10`.
 //   - REST snapshot endpoints (`spot orderbook-raw`) use the same
 //     names without underscore variants.
+//
 // The list covers the canonical names; if a payload uses a
 // different naming, --compact is a no-op for those fields, which
 // is the safer failure mode.
@@ -110,6 +111,7 @@ func (f BookFilterFlags) Validate() error {
 //   - On orderbook (stats): --depth N selects the tier-N columns
 //     (bid_liq_<N>, ask_liq_<N>, imbalance_<N>) for the compact
 //     table view; non-tier values pass through unchanged in JSON.
+//
 // Other --depth values (e.g. 25) are accepted on the snapshot
 // shape but no-op on the stats shape — there's no tier-25 column
 // in the wire payload to surface.

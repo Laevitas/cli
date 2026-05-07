@@ -28,19 +28,19 @@ const (
 // these directly. Older terminals fall back to the nearest 256-colour entry —
 // still readable, just less brand-faithful.
 const (
-	BrandGreen     = "\033[38;2;70;190;82m"     // #46be52
-	BrandNavy      = "\033[38;2;26;33;39m"      // #1a2127
-	BrandGreyMid   = "\033[38;2;71;80;87m"      // #475057
-	BrandGreyLight = "\033[38;2;236;236;236m"   // #ececec
+	BrandGreen     = "\033[38;2;70;190;82m"   // #46be52
+	BrandNavy      = "\033[38;2;26;33;39m"    // #1a2127
+	BrandGreyMid   = "\033[38;2;71;80;87m"    // #475057
+	BrandGreyLight = "\033[38;2;236;236;236m" // #ececec
 
-	BrandGreenBg = "\033[48;2;70;190;82m"  // green background (rare; for badges)
-	BrandNavyBg  = "\033[48;2;26;33;39m"   // dark navy background (header rows)
+	BrandGreenBg = "\033[48;2;70;190;82m" // green background (rare; for badges)
+	BrandNavyBg  = "\033[48;2;26;33;39m"  // dark navy background (header rows)
 )
 
 // Semantic aliases — prefer these in new code so the palette can swap centrally.
 const (
 	ColorSuccess  = BrandGreen
-	ColorError    = Red          // No brand red exists; using terminal red.
+	ColorError    = Red // No brand red exists; using terminal red.
 	ColorWarn     = Yellow
 	ColorAccent   = BrandGreen   // Brand-coloured accents replace generic cyan.
 	ColorMuted    = BrandGreyMid // Dim text uses brand mid-grey, not generic dim.

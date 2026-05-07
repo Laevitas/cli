@@ -11,8 +11,9 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/laevitas/cli/internal/dashboard"
-	"github.com/laevitas/cli/internal/keymap"
 	"github.com/laevitas/cli/internal/output"
 	"github.com/laevitas/cli/internal/wsclient"
 )
@@ -102,19 +103,81 @@ func TestFlowTapeStaleEventDropped(t *testing.T) {
 	}
 }
 
-func TestFlowLargePrintsFiltersSmallTrades(t *testing.T) {
+func TestFlowLargePrintsFiltersVisibleTradesOnly(t *testing.T) {
 	p := NewFlowLargePrintsPanel(dashboard.Selection{
 		Market: "spot", Venue: "binance", Symbol: "BTCUSDT",
 	}, 10_000)
 
-	p.Update(makeTradeEvent("trades.spot.binance.BTCUSDT", 100, 50, "buy"))  // $5k
-	p.Update(makeTradeEvent("trades.spot.binance.BTCUSDT", 100, 150, "buy")) // $15k
+	p.Update(makeTradeEvent("trades.spot.binance.BTCUSDT", 100, 50, "buy"))  // $5k, hidden by default
+	p.Update(makeTradeEvent("trades.spot.binance.BTCUSDT", 100, 150, "buy")) // $15k, visible
 
-	if len(p.ring) != 1 {
-		t.Fatalf("ring = %d, want only the large print", len(p.ring))
+	if len(p.ring) != 2 {
+		t.Fatalf("ring = %d, want both trades retained", len(p.ring))
 	}
-	if p.ring[0].size != 150 {
-		t.Errorf("kept trade size = %v, want 150", p.ring[0].size)
+	visible := p.visibleTrades()
+	if len(visible) != 1 || visible[0].size != 150 {
+		t.Fatalf("visible trades = %+v, want only the $15k print", visible)
+	}
+	stats := p.stats.window(time.Date(2026, 5, 4, 14, 24, 0, 0, time.UTC), 5*60)
+	if stats.count != 2 {
+		t.Fatalf("stats count = %d, want both trades counted", stats.count)
+	}
+}
+
+func teaKey(key string) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+}
+
+func TestFlowTapeFilterCycle(t *testing.T) {
+	p := NewFlowTapePanel(dashboard.Selection{})
+
+	p.Update(teaKey("F"))
+	if p.minUSD != 1_000 {
+		t.Fatalf("first F minUSD = %v, want 1000", p.minUSD)
+	}
+	p.Update(teaKey("F"))
+	if p.minUSD != 10_000 {
+		t.Fatalf("second F minUSD = %v, want 10000", p.minUSD)
+	}
+}
+
+func TestFlowTapeFilterResetsToDefaultOnSelectionChange(t *testing.T) {
+	p := NewFlowTapePanel(dashboard.Selection{
+		Market: "perpetuals", Venue: "binance", Symbol: "BTCUSDT",
+	})
+	p.Update(teaKey("F"))
+	if p.minUSD != 1_000 {
+		t.Fatalf("setup minUSD = %v, want 1000", p.minUSD)
+	}
+	p.Update(dashboard.SelectionChangedMsg{
+		New: dashboard.Selection{Market: "perpetuals", Venue: "bybit", Symbol: "ETHUSDT"},
+	})
+	if p.minUSD != 0 {
+		t.Fatalf("selection reset minUSD = %v, want default 0", p.minUSD)
+	}
+}
+
+// TestFlowLargePrintsIgnoresFilterCycle: LARGE PRINTS pane is locked
+// at its constructor threshold and `F` is a no-op there. The pane is
+// opinionated by design and shouldn't have its threshold adjusted
+// from inside the dashboard. Users wanting a different filter shape
+// on spot use the regular TAPE pane (starts at "all", cycles via F)
+// or the WS NDJSON feed.
+func TestFlowLargePrintsIgnoresFilterCycle(t *testing.T) {
+	p := NewFlowLargePrintsPanel(dashboard.Selection{
+		Market: "spot", Venue: "binance", Symbol: "BTCUSDT",
+	}, 100_000)
+	if p.minUSD != 100_000 {
+		t.Fatalf("constructor minUSD = %v, want 100000", p.minUSD)
+	}
+	p.Update(teaKey("F"))
+	if p.minUSD != 100_000 {
+		t.Fatalf("F on locked pane changed minUSD: %v, want 100000", p.minUSD)
+	}
+	p.Update(teaKey("F"))
+	p.Update(teaKey("F"))
+	if p.minUSD != 100_000 {
+		t.Fatalf("repeated F on locked pane changed minUSD: %v, want 100000", p.minUSD)
 	}
 }
 
@@ -191,7 +254,7 @@ func TestBuildTapeStatsCompactFiveMinuteNet(t *testing.T) {
 	stats.add(now.Add(-90*time.Second), 420_000, "buy")
 	stats.add(now.Add(-30*time.Second), 20_000, "sell")
 
-	lines := buildTapeStats(&stats, now, 24)
+	lines := buildTapeStats(&stats, now, 24, 0)
 	if len(lines) != 1 {
 		t.Fatalf("compact stats lines = %d, want 1", len(lines))
 	}
@@ -212,7 +275,7 @@ func TestBuildTapeStatsUsesSideBreakdownWhenWidthAllows(t *testing.T) {
 	stats.add(now.Add(-30*time.Second), 100_000, "buy")
 	stats.add(now.Add(-90*time.Second), 25_000, "sell")
 
-	lines := buildTapeStats(&stats, now, 80)
+	lines := buildTapeStats(&stats, now, 80, 0)
 	if len(lines) != 1 {
 		t.Fatalf("stats lines = %d, want 1", len(lines))
 	}
@@ -221,10 +284,17 @@ func TestBuildTapeStatsUsesSideBreakdownWhenWidthAllows(t *testing.T) {
 	}
 }
 
-func TestFlowTapeCapabilitiesEmpty(t *testing.T) {
+func TestFlowTapeCapabilitiesAdvertiseFilter(t *testing.T) {
 	p := NewFlowTapePanel(dashboard.Selection{})
-	if got := p.Capabilities(); got != (keymap.Capabilities{}) {
-		t.Errorf("expected zero Capabilities, got %+v", got)
+	if got := p.Capabilities(); !got.TapeFilter {
+		t.Errorf("expected TapeFilter capability, got %+v", got)
+	}
+}
+
+func TestFlowLargePrintsCapabilitiesDoNotAdvertiseFilter(t *testing.T) {
+	p := NewFlowLargePrintsPanel(dashboard.Selection{}, 100_000)
+	if got := p.Capabilities(); got.TapeFilter {
+		t.Errorf("large prints advertised TapeFilter capability: %+v", got)
 	}
 }
 
@@ -250,6 +320,26 @@ func TestFlowTapeViewRendersTrades(t *testing.T) {
 	}
 	if !strings.Contains(view, "78,500") && !strings.Contains(view, "78500") {
 		t.Errorf("expected price 78500 in view:\n%s", view)
+	}
+}
+
+func TestFlowTapeViewAppliesDisplayFilter(t *testing.T) {
+	p := NewFlowTapePanel(dashboard.Selection{
+		Market: "perpetuals", Venue: "binance", Symbol: "BTCUSDT",
+	})
+	p.minUSD = 10_000
+	p.Update(makeTradeEvent("trades.perpetuals.binance.BTCUSDT", 111, 45, "buy"))   // <$10k
+	p.Update(makeTradeEvent("trades.perpetuals.binance.BTCUSDT", 222, 100, "sell")) // >$10k
+
+	view := p.View(80, 6, dashboard.PanelContext{})
+	if strings.Contains(view, "111.00") || strings.Contains(view, "$5.0K") {
+		t.Fatalf("small trade leaked through filter:\n%s", view)
+	}
+	if !strings.Contains(view, "222.00") {
+		t.Fatalf("large trade missing from filtered view:\n%s", view)
+	}
+	if !strings.Contains(view, "min") || !strings.Contains(view, "$10K") {
+		t.Fatalf("filter label missing from stats:\n%s", view)
 	}
 }
 

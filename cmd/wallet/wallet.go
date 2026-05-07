@@ -234,13 +234,13 @@ until the next data request.`,
 // Same shape backs both the pretty terminal output and the JSON envelope, so
 // agents and humans see identical fields.
 type walletState struct {
-	Configured       bool                `json:"configured"`
-	Address          string              `json:"address,omitempty"`
-	AuthMode         string              `json:"auth_mode"`
-	HasAPIKey        bool                `json:"has_api_key"`
-	APIKeyMasked     string              `json:"api_key_masked,omitempty"`
-	CreditToken      *creditTokenState   `json:"credit_token,omitempty"`
-	CreditsRemaining *string             `json:"credits_remaining,omitempty"`
+	Configured       bool              `json:"configured"`
+	Address          string            `json:"address,omitempty"`
+	AuthMode         string            `json:"auth_mode"`
+	HasAPIKey        bool              `json:"has_api_key"`
+	APIKeyMasked     string            `json:"api_key_masked,omitempty"`
+	CreditToken      *creditTokenState `json:"credit_token,omitempty"`
+	CreditsRemaining *string           `json:"credits_remaining,omitempty"`
 }
 
 type creditTokenState struct {

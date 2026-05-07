@@ -13,7 +13,8 @@ package panels
 //   - Subscriptions(sel) syncs p.selection and returns the channel.
 //   - Update(SelectionChangedMsg) installs new selection, clears ring.
 //   - Update(FeedTickMsg) drops events whose channel doesn't match.
-//   - Capabilities is zero (passive panel; FlowPanel owns keys).
+//   - Capabilities advertises display filtering; FlowPanel routes
+//     that key only when the tape pane is focused.
 
 import (
 	"encoding/json"
@@ -26,6 +27,7 @@ import (
 	"github.com/laevitas/cli/internal/dashboard"
 	"github.com/laevitas/cli/internal/keymap"
 	"github.com/laevitas/cli/internal/output"
+	"github.com/laevitas/cli/internal/tapefilter"
 )
 
 // flowTapeCapacity bounds the trade ring. The visible window is
@@ -150,10 +152,22 @@ type FlowTapePanel struct {
 
 	stats tapeStatsRing
 
-	// minUSD filters incoming trades by notional when this panel is
-	// used as the spot "large prints" pane. Zero means unfiltered
-	// tape.
+	// minUSD filters visible rows by notional. Trades still land in
+	// ring + stats so changing the filter never destroys context.
+	// Zero means unfiltered tape.
 	minUSD float64
+
+	// defaultMinUSD is restored on selection/subscription changes.
+	// Spot "large prints" starts above zero; normal tape starts at
+	// zero.
+	defaultMinUSD float64
+
+	// lockMinUSD freezes the threshold so `F min size` is a no-op.
+	// LARGE PRINTS opts in: the pane is opinionated and shouldn't
+	// have its threshold adjusted from inside the dashboard. Users
+	// who want a different filter use the regular TAPE pane (which
+	// starts at "all" and cycles via `F`) or the WS NDJSON feed.
+	lockMinUSD bool
 }
 
 // NewFlowTapePanel constructs the panel with an initial selection.
@@ -167,7 +181,12 @@ func NewFlowTapePanel(initial dashboard.Selection) *FlowTapePanel {
 // only trades at or above minUSD notional. Used for spot detail
 // dashboards where liquidations do not exist.
 func NewFlowLargePrintsPanel(initial dashboard.Selection, minUSD float64) *FlowTapePanel {
-	return &FlowTapePanel{selection: initial, minUSD: minUSD}
+	return &FlowTapePanel{
+		selection:     initial,
+		minUSD:        minUSD,
+		defaultMinUSD: minUSD,
+		lockMinUSD:    true,
+	}
 }
 
 // currentChannel returns the WS channel the panel should be
@@ -193,10 +212,15 @@ func (p *FlowTapePanel) Init() tea.Cmd { return nil }
 // FeedTickMsg (appends to the ring after channel match).
 func (p *FlowTapePanel) Update(msg tea.Msg) (Panel, tea.Cmd) {
 	switch m := msg.(type) {
+	case tea.KeyMsg:
+		if keymap.ClassifyKey(m.String()) == keymap.ActTapeFilter {
+			p.cycleMinUSD()
+		}
 	case dashboard.SelectionChangedMsg:
 		p.selection = m.New
 		p.ring = nil
 		p.stats = tapeStatsRing{}
+		p.minUSD = p.defaultMinUSD
 	case dashboard.FeedTickMsg:
 		want := p.currentChannel()
 		if want == "" || m.Event.Channel != want {
@@ -238,9 +262,6 @@ func (p *FlowTapePanel) Update(msg tea.Msg) (Panel, tea.Cmd) {
 		if direction != "buy" && direction != "sell" {
 			return p, nil
 		}
-		if p.minUSD > 0 && t.Price*size < p.minUSD {
-			return p, nil
-		}
 		ts := parseTradeTime(t.Date, t.Timestamp)
 		p.appendTrade(tapeTrade{
 			timestamp: ts,
@@ -251,6 +272,13 @@ func (p *FlowTapePanel) Update(msg tea.Msg) (Panel, tea.Cmd) {
 		p.stats.add(ts, t.Price*size, direction)
 	}
 	return p, nil
+}
+
+func (p *FlowTapePanel) cycleMinUSD() {
+	if p.lockMinUSD {
+		return
+	}
+	p.minUSD = tapefilter.Next(p.minUSD)
 }
 
 // appendTrade inserts at the front (newest first). When the ring
@@ -274,6 +302,7 @@ func (p *FlowTapePanel) Subscriptions(sel dashboard.Selection) dashboard.FeedSpe
 		p.selection = sel
 		p.ring = nil
 		p.stats = tapeStatsRing{}
+		p.minUSD = p.defaultMinUSD
 	}
 	if ch == "" {
 		return dashboard.FeedSpec{}
@@ -284,8 +313,14 @@ func (p *FlowTapePanel) Subscriptions(sel dashboard.Selection) dashboard.FeedSpe
 // Title — passive panel, parent composite owns chrome.
 func (p *FlowTapePanel) Title() string { return "" }
 
-// Capabilities — zero, panel is passive in v0.10.0.
-func (p *FlowTapePanel) Capabilities() keymap.Capabilities { return keymap.Capabilities{} }
+// Capabilities declares the tape's display filter. The parent flow
+// panel routes `F` only when the tape pane is focused.
+func (p *FlowTapePanel) Capabilities() keymap.Capabilities {
+	if p.lockMinUSD {
+		return keymap.Capabilities{}
+	}
+	return keymap.Capabilities{TapeFilter: true}
+}
 
 // View renders the trade tape. Top row is a header; rows below
 // list trades newest-first. Empty ring shows "waiting for trades…"
@@ -320,7 +355,7 @@ func (p *FlowTapePanel) View(width, height int, ctx dashboard.PanelContext) stri
 	// wall clock (not the newest trade's timestamp) so the
 	// window genuinely ages out in quiet markets — otherwise a
 	// 5-minute-old print would still count as "current."
-	statsLines := buildTapeStats(&p.stats, time.Now(), width)
+	statsLines := buildTapeStats(&p.stats, time.Now(), width, p.minUSD)
 	rows = append(rows, statsLines...)
 
 	// Header row. Two layouts based on width:
@@ -344,12 +379,13 @@ func (p *FlowTapePanel) View(width, height int, ctx dashboard.PanelContext) stri
 	rows = append(rows, header)
 
 	// Trade rows. Leave room for stats + column header.
+	trades := p.visibleTrades()
 	maxTrades := height - len(rows)
-	if maxTrades > len(p.ring) {
-		maxTrades = len(p.ring)
+	if maxTrades > len(trades) {
+		maxTrades = len(trades)
 	}
 	for i := 0; i < maxTrades; i++ {
-		t := p.ring[i]
+		t := trades[i]
 		dirColor := green
 		dirLabel := "BUY "
 		if t.direction != "buy" {
@@ -400,6 +436,10 @@ func (p *FlowTapePanel) View(width, height int, ctx dashboard.PanelContext) stri
 	// Pad blank rows below the trades so the panel always renders
 	// height rows.
 	for len(rows) < height {
+		if p.minUSD > 0 && len(trades) == 0 && len(rows) == len(statsLines)+1 {
+			rows = append(rows, output.PadRightAnsi(output.BrandGreyMid+"   no trades >= "+tapefilter.Label(p.minUSD)+output.Reset, width))
+			continue
+		}
 		rows = append(rows, strings.Repeat(" ", width))
 	}
 
@@ -411,12 +451,13 @@ func (p *FlowTapePanel) View(width, height int, ctx dashboard.PanelContext) stri
 // prints instead of a placeholder.
 func (p *FlowTapePanel) viewCompactTape(width, height int) string {
 	rows := make([]string, 0, height)
+	trades := p.visibleTrades()
 	maxRows := height
-	if maxRows > len(p.ring) {
-		maxRows = len(p.ring)
+	if maxRows > len(trades) {
+		maxRows = len(trades)
 	}
 	for i := 0; i < maxRows; i++ {
-		t := p.ring[i]
+		t := trades[i]
 		color := output.BrandGreen
 		side := "B"
 		if t.direction != "buy" {
@@ -430,6 +471,19 @@ func (p *FlowTapePanel) viewCompactTape(width, height int) string {
 		rows = append(rows, strings.Repeat(" ", width))
 	}
 	return strings.Join(rows, "\n")
+}
+
+func (p *FlowTapePanel) visibleTrades() []tapeTrade {
+	if p.minUSD <= 0 {
+		return p.ring
+	}
+	out := make([]tapeTrade, 0, len(p.ring))
+	for _, t := range p.ring {
+		if tapefilter.AllowsNotional(t.price*t.size, p.minUSD) {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // tradesChannelForSelection builds the "trades.<market>.<venue>.
@@ -459,7 +513,7 @@ func parseTradeTime(date string, ts int64) time.Time {
 	return time.Now().UTC()
 }
 
-func buildTapeStats(stats *tapeStatsRing, now time.Time, width int) []string {
+func buildTapeStats(stats *tapeStatsRing, now time.Time, width int, minUSD float64) []string {
 	if width <= 0 {
 		return nil
 	}
@@ -467,11 +521,22 @@ func buildTapeStats(stats *tapeStatsRing, now time.Time, width int) []string {
 		return []string{strings.Repeat(" ", width)}
 	}
 	five := stats.window(now, 5*60)
-	full := formatTapeStatsFull(five)
+	full := appendTapeFilterLabel(formatTapeStatsFull(five), minUSD)
 	if output.VisibleWidth(full) <= width {
 		return []string{padTapeStatLine(full, width)}
 	}
+	compact := appendTapeFilterLabel(formatTapeStatsCompact(five), minUSD)
+	if output.VisibleWidth(compact) <= width {
+		return []string{padTapeStatLine(compact, width)}
+	}
 	return []string{padTapeStatLine(formatTapeStatsCompact(five), width)}
+}
+
+func appendTapeFilterLabel(line string, minUSD float64) string {
+	if minUSD <= 0 {
+		return line
+	}
+	return line + output.BrandGreyMid + " · min " + output.Reset + tapefilter.Label(minUSD)
 }
 
 func formatTapeStatsCompact(five tapeStatsWindow) string {

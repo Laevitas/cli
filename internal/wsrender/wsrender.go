@@ -24,6 +24,7 @@ import (
 
 	"github.com/laevitas/cli/internal/keymap"
 	"github.com/laevitas/cli/internal/output"
+	"github.com/laevitas/cli/internal/tapefilter"
 	"github.com/laevitas/cli/internal/wsclient"
 )
 
@@ -104,7 +105,7 @@ func (lt *LiveTable) snapshot() (events []wsclient.Event, updates int64, elapsed
 func (lt *LiveTable) Run() error {
 	prog := tea.NewProgram(
 		newModel(lt),
-		tea.WithAltScreen(),    // dedicated alt-screen buffer; restored on exit
+		tea.WithAltScreen(), // dedicated alt-screen buffer; restored on exit
 		tea.WithMouseCellMotion(),
 	)
 	_, err := prog.Run()
@@ -123,8 +124,9 @@ type model struct {
 
 	// paused freezes the visible buffer in place (events keep arriving
 	// in lt.events but renderEvents is called with a frozen snapshot).
-	paused      bool
-	pausedSnap  []wsclient.Event
+	paused     bool
+	pausedSnap []wsclient.Event
+	minUSD     float64
 	// helpOpen toggles the keybinding overlay in the body.
 	helpOpen bool
 }
@@ -170,6 +172,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case actHelp:
 			m.helpOpen = !m.helpOpen
 			return m, nil
+		case actTapeFilter:
+			if m.hasTradeStreams() {
+				m.minUSD = tapefilter.Next(m.minUSD)
+			}
+			return m, nil
 		case actEsc:
 			// Esc closes help if open; otherwise no-op (rolling tape
 			// has no drill-down to back out of).
@@ -214,6 +221,10 @@ func (m model) View() string {
 	if m.paused && m.pausedSnap != nil {
 		events = m.pausedSnap
 	}
+	unfilteredEvents := len(events)
+	if m.hasTradeStreams() {
+		events = filterTradeTapeEvents(events, m.minUSD)
+	}
 
 	width := m.width
 	if width <= 0 {
@@ -236,9 +247,6 @@ func (m model) View() string {
 	if visibleRows < 1 {
 		visibleRows = 1
 	}
-	if visibleRows > len(events) {
-		visibleRows = len(events)
-	}
 
 	var b strings.Builder
 
@@ -254,7 +262,11 @@ func (m model) View() string {
 	// so we never overflow the terminal height.
 	if len(events) == 0 {
 		b.WriteString(output.BrandGreyMid)
-		b.WriteString("  waiting for events...")
+		if m.minUSD > 0 && unfilteredEvents > 0 {
+			b.WriteString("  no trades >= " + tapefilter.Label(m.minUSD))
+		} else {
+			b.WriteString("  waiting for events...")
+		}
 		b.WriteString(output.Reset)
 		b.WriteByte('\n')
 	} else {
@@ -278,10 +290,29 @@ func (m model) View() string {
 	if m.paused {
 		b.WriteString(output.Yellow + "PAUSED   " + output.BrandGreyMid)
 	}
-	b.WriteString(footerHints("tape"))
+	if m.minUSD > 0 && m.hasTradeStreams() {
+		b.WriteString("min " + tapefilter.Label(m.minUSD) + "   ")
+	}
+	b.WriteString(footerHints(m.footerSurface()))
 	b.WriteString(output.Reset)
 
 	return b.String()
+}
+
+func (m model) hasTradeStreams() bool {
+	for _, ch := range m.table.channels {
+		if strings.HasPrefix(ch, "trades.") {
+			return true
+		}
+	}
+	return false
+}
+
+func (m model) footerSurface() string {
+	if m.hasTradeStreams() {
+		return "tape"
+	}
+	return "stream"
 }
 
 // ─── help overlay ───────────────────────────────────────────────────────────
@@ -396,6 +427,54 @@ func renderEvents(events []wsclient.Event, width int, exchangeCol bool) string {
 	default:
 		return renderGeneric(events, width)
 	}
+}
+
+func filterTradeTapeEvents(events []wsclient.Event, minUSD float64) []wsclient.Event {
+	if minUSD <= 0 {
+		return events
+	}
+	out := make([]wsclient.Event, 0, len(events))
+	for _, ev := range events {
+		if !strings.HasPrefix(ev.Channel, "trades.") || tapefilter.AllowsNotional(tradeEventNotionalUSD(ev), minUSD) {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+func tradeEventNotionalUSD(ev wsclient.Event) float64 {
+	var d struct {
+		Price       float64 `json:"price"`
+		Amount      float64 `json:"amount"`
+		Size        float64 `json:"size"`
+		CoinAmount  float64 `json:"coin_amount"`
+		QuoteAmount float64 `json:"quote_amount"`
+		AmountUSD   float64 `json:"amount_usd"`
+		PremiumUSD  float64 `json:"premium_usd"`
+		Notional    float64 `json:"notional"`
+	}
+	if err := json.Unmarshal(ev.Data, &d); err != nil {
+		return 0
+	}
+	for _, v := range []float64{d.AmountUSD, d.QuoteAmount, d.PremiumUSD, d.Notional} {
+		if v > 0 {
+			return v
+		}
+	}
+	size := d.CoinAmount
+	if size == 0 {
+		size = d.Size
+	}
+	if size == 0 && strings.HasPrefix(ev.Channel, "trades.predictions.") {
+		size = d.Amount
+	}
+	if size > 0 && d.Price > 0 {
+		return size * d.Price
+	}
+	if d.Amount > 0 {
+		return d.Amount
+	}
+	return 0
 }
 
 // ─── column aligner ─────────────────────────────────────────────────────────
@@ -572,7 +651,7 @@ func showExchangeColumn(channels []string) bool {
 // first column convention, so this one helper works for all of them.
 func insertExchangeHeader(headers []string) []string {
 	out := make([]string, 0, len(headers)+1)
-	out = append(out, headers[0])      // TIME
+	out = append(out, headers[0]) // TIME
 	out = append(out, "EXCHANGE")
 	out = append(out, headers[1:]...)
 	return out
@@ -834,17 +913,17 @@ func renderVT(events []wsclient.Event, width int, exchangeCol bool) string {
 		//   liquidation_buy_volume etc — forced-liquidation portion of each side
 		// There is no top-level `volume` field; total volume = buy + sell.
 		var d struct {
-			Timestamp            int64   `json:"timestamp"`
-			InstrumentName       string  `json:"instrument_name"`
-			Open                 float64 `json:"open"`
-			High                 float64 `json:"high"`
-			Low                  float64 `json:"low"`
-			Close                float64 `json:"close"`
-			VWAP                 float64 `json:"vwap"`
-			BuyVolume            float64 `json:"buy_volume"`
-			SellVolume           float64 `json:"sell_volume"`
-			LiqBuyVolume         float64 `json:"liquidation_buy_volume"`
-			LiqSellVolume        float64 `json:"liquidation_sell_volume"`
+			Timestamp      int64   `json:"timestamp"`
+			InstrumentName string  `json:"instrument_name"`
+			Open           float64 `json:"open"`
+			High           float64 `json:"high"`
+			Low            float64 `json:"low"`
+			Close          float64 `json:"close"`
+			VWAP           float64 `json:"vwap"`
+			BuyVolume      float64 `json:"buy_volume"`
+			SellVolume     float64 `json:"sell_volume"`
+			LiqBuyVolume   float64 `json:"liquidation_buy_volume"`
+			LiqSellVolume  float64 `json:"liquidation_sell_volume"`
 		}
 		_ = json.Unmarshal(events[i].Data, &d)
 

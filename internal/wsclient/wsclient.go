@@ -56,12 +56,12 @@ const (
 // Server-defined close codes (API v1.18.0 / v1.19.0). Codes < 4000 fall
 // through to default reconnect handling.
 const (
-	closeAuthFailed     websocket.StatusCode = 4001
-	closeIdleTimeout    websocket.StatusCode = 4002
-	closeSlowConsumer   websocket.StatusCode = 4003
-	closeLifetimeMax    websocket.StatusCode = 4004
-	closeConnCap        websocket.StatusCode = 4005
-	closeRateExceeded   websocket.StatusCode = 4008
+	closeAuthFailed   websocket.StatusCode = 4001
+	closeIdleTimeout  websocket.StatusCode = 4002
+	closeSlowConsumer websocket.StatusCode = 4003
+	closeLifetimeMax  websocket.StatusCode = 4004
+	closeConnCap      websocket.StatusCode = 4005
+	closeRateExceeded websocket.StatusCode = 4008
 )
 
 // fatalCloseError is returned by connectAndServe when the server closed the

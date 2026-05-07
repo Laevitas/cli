@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.11.2] — 2026-05-07
+
+Polish on top of v0.11.1. Adds the shared `F min size` tape filter
+across every live trade surface, fixes Hyperliquid namespaced
+instruments, and tightens the spot detail's LARGE PRINTS pane.
+
+### Added
+
+- `F` cycles the minimum visible notional on live trade tapes
+  (`all` → `$1K` → `$10K` → `$50K` → `$100K` → `$500K`).
+  Applies to `dash flow`'s `TAPE` pane and standalone
+  `ws ... trades` rolling tapes. The filter is display-only:
+  the trade buffer and rolling flow stats still ingest every
+  valid print, so lowering the threshold restores recent context
+  instead of starting from an empty tape. Lowercase `f` remains
+  page-down (shared list vocabulary); the cycle is uppercase
+  `F` only. Footer + help advertise `F min size` when the
+  active surface declares the new `TapeFilter` capability.
+
+### Changed
+
+- LARGE PRINTS threshold raised from `$10K` to `$100K`. On
+  `binance:BTCUSDT` retail prints clear $10K constantly, so a $10K
+  filter rendered as a wall of small trades indistinguishable from
+  the unfiltered tape. $100K pulls out the actual outliers — block
+  trades, OTC flow, large market-takers — without going so high that
+  quieter pairs go silent. Future polish (v0.12+) could adapt this
+  to a per-pair percentile of recent notionals; v0.11.x keeps it
+  fixed.
+
+### Fixed
+
+- Namespaced crypto instruments now preserve the lower-case
+  namespace prefix during request normalization
+  (`xyz:sndk-usd` → `xyz:SNDK-USD`). v0.11.1's normalizer
+  uppercased everything, breaking Hyperliquid OHLCVT history
+  seeding for names such as `xyz:SNDK-USD` (the API would 400
+  on `XYZ:SNDK-USD`). Predictions instrument IDs still pass
+  through unchanged.
+- Pressing `F` while the LARGE PRINTS pane is focused (or
+  expanded) no longer cycles its threshold. The pane is
+  opinionated by design — fixed at $100K notional, no controls —
+  and the `F min size` cycle is reserved for the regular TAPE
+  pane (which starts at "all" and cycles per `F`). Users who
+  want a different filter shape on spot use the regular TAPE
+  pane or the WS NDJSON feed.
+- LARGE PRINTS no longer advertises the `TapeFilter` capability
+  in its panel `Capabilities()`. Footer/help in expanded
+  LARGE PRINTS now correctly omits the `F min size` hint that
+  doesn't apply there. Expanded regular TAPE still advertises
+  it; the four-pane overview still advertises it (TAPE is
+  always visible in the grid).
+- `wsrender` only honours `F` on live trade tables. Previously
+  the keymap accepted `F` on ticker / vt / liquidations
+  surfaces too, even though no filtering happened — the footer
+  could show `min $...` while values had no effect. Non-trade
+  WS live tables now use a plain `stream` capability set
+  (Pause + Help only); `F min size` is hidden when there's no
+  trades channel to filter against.
+
 ## [0.11.1] — 2026-05-06
 
 Polish + small-fix release on top of v0.11.0. No breaking changes;
@@ -31,7 +91,6 @@ glyphs. Restores dashboard pause as a kernel-level control.
   negative funding red, and surface live up/down tick markers in
   the `LAST` column when overscanned trade subscriptions deliver
   fresh prints for nearby instruments.
-
 ### Changed
 
 - Order-book grouping (`+/-` to widen / narrow) now uses an
@@ -75,7 +134,6 @@ glyphs. Restores dashboard pause as a kernel-level control.
   by frozen time. `PanelContext.Paused` is exposed so panels can
   also gate render-time effects (e.g. `flow_book` flash
   suppression) without needing their own pause state.
-
 ## [0.11.0] — 2026-05-06
 
 ### Added

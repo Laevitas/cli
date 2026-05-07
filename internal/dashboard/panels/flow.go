@@ -79,7 +79,21 @@ const (
 	flowModeDetail
 )
 
-const flowLargePrintMinUSD = 10_000
+// flowLargePrintMinUSD is the fixed notional threshold for the spot
+// detail's LARGE PRINTS pane. The pane is opinionated by design — it
+// shows only trades worth paying attention to on liquid spot pairs —
+// and does NOT participate in the `F min size` cycle. Users who want
+// a different threshold or no threshold use the regular TAPE pane,
+// which starts at "all" and cycles via `F`.
+//
+// $100K is the right starting point: on `binance:BTCUSDT`, retail
+// prints clear $10K constantly, so a $10K filter renders as a wall
+// of small trades that look identical to the unfiltered tape. $100K
+// pulls out the actual outliers — block trades, OTC flow, large
+// market-takers — without going so high that quieter pairs go
+// silent. Future polish (v0.12+) could adapt this to a per-pair
+// percentile of recent notionals; v0.11.x keeps it fixed.
+const flowLargePrintMinUSD = 100_000
 
 type flowDetailPane int
 
@@ -311,6 +325,11 @@ func (p *FlowPanel) Update(msg tea.Msg) (Panel, tea.Cmd) {
 			if key == keymap.ActTimeframeCycle {
 				updated, cmd := p.chart.Update(msg)
 				p.chart = updated
+				return p, cmd
+			}
+			if key == keymap.ActTapeFilter && p.detailFocus == flowPaneTape {
+				updated, cmd := p.tape.Update(msg)
+				p.tape = updated
 				return p, cmd
 			}
 			if p.detailExpanded {
@@ -553,17 +572,18 @@ func (p *FlowPanel) Subscriptions(sel dashboard.Selection) dashboard.FeedSpec {
 func (p *FlowPanel) Title() string { return "" }
 
 // Capabilities — mode-gated. Screener mode advertises ListNav +
-// Drill (the screener's keys); detail mode unions Back (Esc back
-// to screener) with the detail composite's own caps so the
-// footer hints reflect every key any pane responds to. The book
-// pane declares DepthCycle/Group/Recenter; tape and liquidations
-// declare nothing. The composite's Capabilities() unions all
-// children, so detail mode's footer ends up with "esc back · d
-// depth · +/- group · c recenter."
+// Drill (the screener's keys). Detail overview unions every visible
+// pane, because every pane is on screen. Expanded detail advertises
+// the focused pane only, plus chart timeframe because `t` is routed
+// globally in detail mode even when CHART is not focused.
 func (p *FlowPanel) Capabilities() keymap.Capabilities {
 	switch p.mode {
 	case flowModeDetail:
-		return keymap.Capabilities{Back: true, MultiPane: true}.Union(p.detail.Capabilities())
+		base := keymap.Capabilities{Back: true, MultiPane: true}.Union(p.chart.Capabilities())
+		if p.detailExpanded {
+			return base.Union(p.focusedDetailPane().Capabilities())
+		}
+		return base.Union(p.detail.Capabilities())
 	default:
 		return p.screener.Capabilities()
 	}

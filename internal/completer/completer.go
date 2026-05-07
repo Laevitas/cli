@@ -18,7 +18,7 @@ import (
 // subCmd describes a subcommand: its name and whether it expects a positional
 // instrument argument (e.g. "ohlcv <instrument>").
 type subCmd struct {
-	Name           string
+	Name            string
 	NeedsInstrument bool
 }
 

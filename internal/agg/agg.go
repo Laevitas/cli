@@ -165,8 +165,8 @@ func CrossVenueSpread(books []VenueBook) CrossVenueQuote {
 	// cross); the arb is the difference. Buy at the lower ask, sell
 	// at the higher bid.
 	q.Arb = bb.Price - ba.Price
-	q.BuyVenue = ba.Venue   // where you'd buy (lowest ask)
-	q.SellVenue = bb.Venue  // where you'd sell (highest bid)
+	q.BuyVenue = ba.Venue  // where you'd buy (lowest ask)
+	q.SellVenue = bb.Venue // where you'd sell (highest bid)
 	return q
 }
 
@@ -307,11 +307,11 @@ func VolumeWeightedMetric(quotes []VenueQuote) float64 {
 // report). Used to surface arb opportunities or "is one venue lying
 // to me" warnings on the perp screener.
 type DivergenceResult struct {
-	Spread       float64
-	HighVenue    string
-	HighValue    float64
-	LowVenue     string
-	LowValue     float64
+	Spread    float64
+	HighVenue string
+	HighValue float64
+	LowVenue  string
+	LowValue  float64
 }
 
 // CrossVenueDivergence computes the spread between the highest and

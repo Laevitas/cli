@@ -43,10 +43,10 @@ import (
 type checkStatus string
 
 const (
-	statusPass   checkStatus = "pass"
-	statusWarn   checkStatus = "warn"
-	statusFail   checkStatus = "fail"
-	statusSkip   checkStatus = "skipped"
+	statusPass checkStatus = "pass"
+	statusWarn checkStatus = "warn"
+	statusFail checkStatus = "fail"
+	statusSkip checkStatus = "skipped"
 )
 
 // doctorCheck is one row of the report. Remediation is a short
@@ -73,11 +73,11 @@ type doctorEnv struct {
 }
 
 type doctorReport struct {
-	Version   string        `json:"version"`
-	GeneratedAt string      `json:"generated_at"`
-	Env       doctorEnv     `json:"env"`
-	Checks    []doctorCheck `json:"checks"`
-	Summary   doctorSummary `json:"summary"`
+	Version     string        `json:"version"`
+	GeneratedAt string        `json:"generated_at"`
+	Env         doctorEnv     `json:"env"`
+	Checks      []doctorCheck `json:"checks"`
+	Summary     doctorSummary `json:"summary"`
 }
 
 type doctorSummary struct {
@@ -284,9 +284,9 @@ func checkVersionFreshness() doctorCheck {
 	dur := time.Since(start).Milliseconds()
 	if err != nil {
 		return doctorCheck{
-			Name:   "version",
-			Status: statusWarn,
-			Detail: fmt.Sprintf("could not reach GitHub releases (%s); current: %s", err, version.Version),
+			Name:       "version",
+			Status:     statusWarn,
+			Detail:     fmt.Sprintf("could not reach GitHub releases (%s); current: %s", err, version.Version),
 			DurationMs: dur,
 		}
 	}
@@ -297,18 +297,18 @@ func checkVersionFreshness() doctorCheck {
 	}
 	if err := json.Unmarshal(body, &rel); err != nil || rel.TagName == "" {
 		return doctorCheck{
-			Name:   "version",
-			Status: statusWarn,
-			Detail: fmt.Sprintf("could not parse latest release; current: %s", version.Version),
+			Name:       "version",
+			Status:     statusWarn,
+			Detail:     fmt.Sprintf("could not parse latest release; current: %s", version.Version),
 			DurationMs: dur,
 		}
 	}
 	latest := strings.TrimPrefix(rel.TagName, "v")
 	if latest == version.Version {
 		return doctorCheck{
-			Name:   "version",
-			Status: statusPass,
-			Detail: fmt.Sprintf("v%s is current", version.Version),
+			Name:       "version",
+			Status:     statusPass,
+			Detail:     fmt.Sprintf("v%s is current", version.Version),
 			DurationMs: dur,
 		}
 	}

@@ -340,6 +340,39 @@ func TestFlowPanelCapabilitiesDetailMode(t *testing.T) {
 	}
 }
 
+func TestFlowPanelExpandedLargePrintsDoesNotAdvertiseTapeFilter(t *testing.T) {
+	screener := newTestFlowScreenerPanel(fakeClient(), "BTC", "spot")
+	screener.Update(snapMsg(makeRows(2)))
+	p := NewFlowPanel(screener)
+	p.Update(FlowDrillMsg{Selection: screener.currentSelection()})
+
+	overviewCaps := p.Capabilities()
+	if !overviewCaps.TapeFilter {
+		t.Fatalf("spot detail overview caps missing TapeFilter for regular TAPE pane: %+v", overviewCaps)
+	}
+
+	p.detailFocus = flowPaneLiquidations
+	p.detailExpanded = true
+	caps := p.Capabilities()
+	if caps.TapeFilter {
+		t.Fatalf("expanded LARGE PRINTS advertised TapeFilter: %+v", caps)
+	}
+	if !caps.ChartTimeframe {
+		t.Fatalf("expanded LARGE PRINTS should still advertise global chart timeframe: %+v", caps)
+	}
+}
+
+func TestFlowPanelExpandedTapeAdvertisesTapeFilter(t *testing.T) {
+	p, screener := newFlowFixture(t, 5)
+	p.Update(FlowDrillMsg{Selection: screener.currentSelection()})
+	p.detailFocus = flowPaneTape
+	p.detailExpanded = true
+
+	if caps := p.Capabilities(); !caps.TapeFilter {
+		t.Fatalf("expanded TAPE caps missing TapeFilter: %+v", caps)
+	}
+}
+
 func TestFlowPanelTimeframeKeyRoutesToChartWithoutChartFocus(t *testing.T) {
 	p, screener := newFlowFixture(t, 5)
 	p.Update(FlowDrillMsg{Selection: screener.currentSelection()})
