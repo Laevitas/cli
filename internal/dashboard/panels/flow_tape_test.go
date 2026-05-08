@@ -284,6 +284,38 @@ func TestBuildTapeStatsUsesSideBreakdownWhenWidthAllows(t *testing.T) {
 	}
 }
 
+func TestBuildTapeStatsShowsFilterAllWhenWidthAllows(t *testing.T) {
+	now := time.Date(2026, 5, 4, 14, 25, 0, 0, time.UTC)
+	var stats tapeStatsRing
+	stats.add(now.Add(-30*time.Second), 10_000, "buy")
+
+	lines := buildTapeStats(&stats, now, 80, 0)
+	if len(lines) != 1 {
+		t.Fatalf("stats lines = %d, want 1", len(lines))
+	}
+	if !strings.Contains(lines[0], "min") || !strings.Contains(lines[0], "all") {
+		t.Fatalf("wide stats missing all-filter label:\n%s", lines[0])
+	}
+}
+
+func TestBuildTapeStatsHidesFilterLabelWhenNarrow(t *testing.T) {
+	now := time.Date(2026, 5, 4, 14, 25, 0, 0, time.UTC)
+	var stats tapeStatsRing
+	stats.add(now.Add(-30*time.Second), 1_700_000, "buy")
+	stats.add(now.Add(-90*time.Second), 2_107_000, "sell")
+
+	lines := buildTapeStats(&stats, now, 12, 1_000)
+	if len(lines) != 1 {
+		t.Fatalf("stats lines = %d, want 1", len(lines))
+	}
+	if strings.Contains(lines[0], "min") || strings.Contains(lines[0], "$1K") {
+		t.Fatalf("narrow stats should hide active filter label:\n%s", lines[0])
+	}
+	if got := output.VisibleWidth(lines[0]); got != 12 {
+		t.Fatalf("narrow stats width = %d, want 12", got)
+	}
+}
+
 func TestFlowTapeCapabilitiesAdvertiseFilter(t *testing.T) {
 	p := NewFlowTapePanel(dashboard.Selection{})
 	if got := p.Capabilities(); !got.TapeFilter {

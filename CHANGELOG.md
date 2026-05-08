@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.11.3] — 2026-05-08
+
+### Fixed
+
+- `dash flow` TAPE now surfaces the active `F min size` threshold
+  in-pane when width allows, including `min all`.
+- `ws` now gives targeted hints for stream-first invocations such as
+  `ws trades binance:BTCUSDT` and `ws trades binance BTCUSDT`,
+  suggesting `laevitas ws perpetuals trades binance:BTCUSDT`.
+
 ## [0.11.2] — 2026-05-07
 
 Polish on top of v0.11.1. Adds the shared `F min size` tape filter

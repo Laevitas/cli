@@ -202,7 +202,11 @@ func (p *FlowTapePanel) CardSubtitle() string {
 	if p.selection.Venue == "" || p.selection.Symbol == "" {
 		return ""
 	}
-	return p.selection.Venue + ":" + p.selection.Symbol
+	label := p.selection.Venue + ":" + p.selection.Symbol
+	if p.minUSD > 0 {
+		label += " · min " + tapefilter.Label(p.minUSD)
+	}
+	return label
 }
 
 // Init has no startup commands.
@@ -533,10 +537,11 @@ func buildTapeStats(stats *tapeStatsRing, now time.Time, width int, minUSD float
 }
 
 func appendTapeFilterLabel(line string, minUSD float64) string {
-	if minUSD <= 0 {
-		return line
-	}
-	return line + output.BrandGreyMid + " · min " + output.Reset + tapefilter.Label(minUSD)
+	return line + output.BrandGreyMid + " · " + output.Reset + tapeFilterLabel(minUSD)
+}
+
+func tapeFilterLabel(minUSD float64) string {
+	return output.BrandGreyMid + "min " + output.Reset + tapefilter.Label(minUSD)
 }
 
 func formatTapeStatsCompact(five tapeStatsWindow) string {

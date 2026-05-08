@@ -193,8 +193,52 @@ func wsArgHint(args []string) string {
 	// options, …) even when the user typed an alias. Keeps the help
 	// path consistent with what agents should emit and matches what
 	// shows up in --help.
+	if len(args) == 1 && isStream(args[0]) {
+		return fmt.Sprintf(
+			"you forgot the market and exchange:instrument target.\nTry: laevitas ws perpetuals %s binance:BTCUSDT",
+			args[0],
+		)
+	}
+	if len(args) == 2 && isStream(args[0]) {
+		if hasColon(args[1]) {
+			return fmt.Sprintf(
+				"you forgot the market.\nTry: laevitas ws perpetuals %s %s",
+				args[0],
+				args[1],
+			)
+		}
+		return fmt.Sprintf(
+			"you forgot the market, and the target must be exchange:instrument.\nTry: laevitas ws perpetuals %s %s:BTCUSDT",
+			args[0],
+			args[1],
+		)
+	}
+	if len(args) == 3 && isStream(args[0]) && isMarket(args[1]) && !hasColon(args[2]) {
+		canonical := canonicalMarketHint(args[1])
+		return fmt.Sprintf(
+			"stream comes after market, and the target must be exchange:instrument.\nTry: laevitas ws %s %s <exchange>:%s",
+			canonical,
+			args[0],
+			args[2],
+		)
+	}
+	if len(args) == 3 && isStream(args[0]) && !isMarket(args[1]) {
+		if hasColon(args[2]) {
+			return fmt.Sprintf(
+				"you forgot the market; exchange belongs inside the exchange:instrument target.\nTry: laevitas ws perpetuals %s %s",
+				args[0],
+				args[2],
+			)
+		}
+		return fmt.Sprintf(
+			"you forgot the market, and exchange and instrument should be joined with `:`.\nTry: laevitas ws perpetuals %s %s:%s",
+			args[0],
+			args[1],
+			args[2],
+		)
+	}
 	if len(args) == 3 && isStream(args[0]) && isMarket(args[1]) {
-		canonical, _ := api.NormalizeMarket(args[1])
+		canonical := canonicalMarketHint(args[1])
 		return fmt.Sprintf(
 			"ws expects: laevitas ws <market> <stream> <exchange:instrument>\nTry: laevitas ws %s %s %s",
 			canonical,
@@ -203,7 +247,7 @@ func wsArgHint(args []string) string {
 		)
 	}
 	if len(args) == 4 && isStream(args[0]) && isMarket(args[1]) {
-		canonical, _ := api.NormalizeMarket(args[1])
+		canonical := canonicalMarketHint(args[1])
 		return fmt.Sprintf(
 			"ws expects: laevitas ws <market> <stream> <exchange:instrument>\nTry: laevitas ws %s %s %s:%s",
 			canonical,
@@ -213,7 +257,7 @@ func wsArgHint(args []string) string {
 		)
 	}
 	if len(args) == 4 && isMarket(args[0]) && isStream(args[1]) {
-		canonical, _ := api.NormalizeMarket(args[0])
+		canonical := canonicalMarketHint(args[0])
 		return fmt.Sprintf(
 			"ws exchange and instrument must be one colon-separated argument.\nTry: laevitas ws %s %s %s:%s",
 			canonical,
@@ -223,6 +267,21 @@ func wsArgHint(args []string) string {
 		)
 	}
 	return ""
+}
+
+func canonicalMarketHint(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "*" {
+		return raw
+	}
+	if canonical, ok := api.NormalizeMarket(raw); ok {
+		return canonical
+	}
+	return raw
+}
+
+func hasColon(s string) bool {
+	return strings.Contains(s, ":")
 }
 
 func isMarket(s string) bool {
