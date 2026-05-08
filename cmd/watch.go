@@ -18,6 +18,13 @@ import (
 )
 
 // ANSI escape sequences for watch mode rendering.
+//
+// Colours intentionally route through `internal/output` so the
+// palette-detection layer can swap dark-red `\x1b[31m` for bright
+// red `\x1b[91m` (or 24-bit RGB on truecolor terminals) at startup.
+// Without this, watch mode rendered SELL/down highlights as
+// invisible text on terminal themes that map the dark-red palette
+// index to a near-background hue (e.g. several Termius themes).
 const (
 	wClearScreen = "\033[H\033[2J"
 	wHideCursor  = "\033[?25l"
@@ -25,9 +32,6 @@ const (
 	wBold        = "\033[1m"
 	wDim         = "\033[2m"
 	wReset       = "\033[0m"
-	wGreen       = "\033[32m"
-	wRed         = "\033[31m"
-	wCyan        = "\033[36m"
 	wBgDarkGray  = "\033[48;5;236m"
 	wWhite       = "\033[97m"
 )
@@ -352,7 +356,7 @@ func watchEndpointForCommand(cmd *cobra.Command) (string, error) {
 func watchPrintHeader(cmdLabel, interval string) {
 	now := time.Now().Format("15:04:05")
 	header := fmt.Sprintf(" %s%sLAEVITAS WATCH%s  %s%s%s  every %s  %s",
-		wBold, wCyan, wReset,
+		wBold, output.Cyan, wReset,
 		wDim, cmdLabel, wReset,
 		interval,
 		wDim+now+wReset,
@@ -463,9 +467,9 @@ func watchRenderTable(data, prevData []byte) {
 					currRaw := dataRows[r][c]
 					change := watchCompare(currRaw, prevVal)
 					if change > 0 {
-						padded = wGreen + wBold + padded + wReset
+						padded = output.Green + wBold + padded + wReset
 					} else if change < 0 {
-						padded = wRed + wBold + padded + wReset
+						padded = output.Red + wBold + padded + wReset
 					}
 				}
 			}
