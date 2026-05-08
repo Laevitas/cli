@@ -116,7 +116,7 @@ func handleSavesCommand() {
 	bold := "\033[1m"
 	dim := "\033[2m"
 	cyan := "\033[36m"
-	yellow := "\033[33m"
+	yellow := output.Yellow
 	reset := "\033[0m"
 
 	fmt.Printf("\n  %s%sSaved Queries%s (%d)\n\n", bold, cyan, reset, len(sq.Queries))

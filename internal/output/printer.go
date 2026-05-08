@@ -980,29 +980,26 @@ func formatValue(v interface{}) string {
 // ─── Colored message helpers ────────────────────────────────────────────────
 
 const (
-	ansiRed    = "\033[31m"
-	ansiGreen  = "\033[32m"
-	ansiYellow = "\033[33m"
-	ansiBold   = "\033[1m"
-	ansiReset  = "\033[0m"
+	ansiBold  = "\033[1m"
+	ansiReset = "\033[0m"
 )
 
 // Errorf prints a red ✗ prefixed error message to stderr.
 func Errorf(format string, a ...interface{}) {
 	msg := fmt.Sprintf(format, a...)
-	fmt.Fprintf(os.Stderr, "%s%s✗ %s%s\n", ansiBold, ansiRed, msg, ansiReset)
+	fmt.Fprintf(os.Stderr, "%s%s✗ %s%s\n", ansiBold, Red, msg, ansiReset)
 }
 
 // Successf prints a green ✓ prefixed success message to stderr.
 func Successf(format string, a ...interface{}) {
 	msg := fmt.Sprintf(format, a...)
-	fmt.Fprintf(os.Stderr, "%s%s✓ %s%s\n", ansiBold, ansiGreen, msg, ansiReset)
+	fmt.Fprintf(os.Stderr, "%s%s✓ %s%s\n", ansiBold, Green, msg, ansiReset)
 }
 
 // Warnf prints a yellow warning message to stderr.
 func Warnf(format string, a ...interface{}) {
 	msg := fmt.Sprintf(format, a...)
-	fmt.Fprintf(os.Stderr, "%s%s⚠ %s%s\n", ansiBold, ansiYellow, msg, ansiReset)
+	fmt.Fprintf(os.Stderr, "%s%s⚠ %s%s\n", ansiBold, Yellow, msg, ansiReset)
 }
 
 // PrintError outputs a structured error.

@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.11.4] — 2026-05-08
+
+Defensive palette hardening. Several call sites used the 8-colour
+SGR `red` (`\x1b[31m`) and `yellow` (`\x1b[33m`) palette indices,
+which on terminal themes that map those entries to dark/blended
+hues rendered as invisible text. Switched to terminal-capability
+detection at startup with bright-16-colour fallbacks, and migrated
+the last two stragglers (`cmd/watch.go`, `cmd/saved.go`) to use
+the package palette so they get the same fallback.
+
+### Changed
+
+- `internal/output` now detects terminal colour capability at
+  startup and emits one of two palettes:
+  - **truecolor**: 24-bit RGB brand colours, advertised by
+    `COLORTERM=truecolor`, `TERM=*truecolor*`/`*24bit*`,
+    `TERM_PROGRAM=iterm.app/vscode/wezterm/kitty`, or
+    `WT_SESSION` (Windows Terminal). Bright red (`\x1b[91m`)
+    used instead of dark red (`\x1b[31m`) for SELL/down/loss
+    text — the dark-red palette index gets dimmed on several
+    common themes and was rendering as invisible.
+  - **ansi fallback**: bright 16-colour SGRs that older clients
+    such as Termius render reliably. `LAEVITAS_COLOR=ansi`
+    forces this branch; `LAEVITAS_COLOR=truecolor` forces the
+    other.
+- `cmd/watch.go` migrated from local `wRed`/`wGreen`/`wCyan`
+  hardcoded ANSI constants to `output.Red`/`output.Green`/
+  `output.Cyan`. Watch mode now respects palette detection.
+- `cmd/saved.go` migrated from a local hardcoded `yellow`
+  constant to `output.Yellow`. Saved-query listing now respects
+  palette detection.
+
+### Fixed
+
+- `dash flow` TAPE BUY/SELL/NET stats line no longer collapses
+  to `5m · · min all` on terminals where the dark-red palette
+  index renders invisibly. Bright red is now used everywhere
+  the brand red was previously the dark `\x1b[31m`.
+
 ## [0.11.3] — 2026-05-08
 
 ### Fixed
