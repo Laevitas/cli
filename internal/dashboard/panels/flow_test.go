@@ -373,6 +373,38 @@ func TestFlowPanelExpandedTapeAdvertisesTapeFilter(t *testing.T) {
 	}
 }
 
+func TestFlowPanelOverviewTapeFilterRoutesToTape(t *testing.T) {
+	p, screener := newFlowFixture(t, 5)
+	sel := screener.currentSelection()
+	p.Update(FlowDrillMsg{Selection: sel})
+	if p.detailFocus != flowPaneBook || p.detailExpanded {
+		t.Fatalf("setup focus=%d expanded=%v, want overview with book focus", p.detailFocus, p.detailExpanded)
+	}
+
+	p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+
+	card, ok := p.tape.(*CardPanel)
+	if !ok {
+		t.Fatalf("tape panel = %T, want *CardPanel", p.tape)
+	}
+	tape, ok := card.inner.(*FlowTapePanel)
+	if !ok {
+		t.Fatalf("tape card inner = %T, want *FlowTapePanel", card.inner)
+	}
+	if tape.minUSD != 1_000 {
+		t.Fatalf("overview F minUSD = %v, want 1000", tape.minUSD)
+	}
+	if p.detailFocus != flowPaneBook || p.detailExpanded {
+		t.Fatalf("overview F changed focus/expand: focus=%d expanded=%v", p.detailFocus, p.detailExpanded)
+	}
+
+	p.Update(makeTradeEvent(tradesChannelForSelection(sel), 100, 20, "buy"))
+	view := p.View(200, 24, dashboard.PanelContext{})
+	if !strings.Contains(view, "min") || !strings.Contains(view, "$1K") {
+		t.Fatalf("overview tape view missing active filter cue:\n%s", view)
+	}
+}
+
 func TestFlowPanelTimeframeKeyRoutesToChartWithoutChartFocus(t *testing.T) {
 	p, screener := newFlowFixture(t, 5)
 	p.Update(FlowDrillMsg{Selection: screener.currentSelection()})

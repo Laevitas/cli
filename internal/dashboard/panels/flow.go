@@ -327,7 +327,7 @@ func (p *FlowPanel) Update(msg tea.Msg) (Panel, tea.Cmd) {
 				p.chart = updated
 				return p, cmd
 			}
-			if key == keymap.ActTapeFilter && p.detailFocus == flowPaneTape {
+			if key == keymap.ActTapeFilter && (!p.detailExpanded || p.detailFocus == flowPaneTape) {
 				updated, cmd := p.tape.Update(msg)
 				p.tape = updated
 				return p, cmd
