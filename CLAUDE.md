@@ -77,7 +77,8 @@ main.go → cmd/root.go → cmd/{futures,perps,options,spot,predictions,instrume
 | Tab-completion + catalog cache | `internal/completer/completer.go` |
 | Version auto-detection | `internal/version/version.go` |
 | Build config | `Makefile` |
-| Agent skill doc | `docs/SKILL.md` |
+| Agent skill (installable via `npx skills add laevitas/cli`) | `skills/laevitas-cli/SKILL.md` + `skills/laevitas-cli/reference/` |
+| Agent skill (legacy pointer) | `docs/SKILL.md` (redirects to the above) |
 | Go dependencies | `go.mod` |
 | Config file location | `~/.config/laevitas/config.json` |
 | Saved queries location | `~/.config/laevitas/saved.json` |
@@ -343,7 +344,7 @@ The display cap is purely a render-time concern in `internal/output/book_table.g
 4. Add to watch endpoint map in `cmd/watch.go`
 5. Add to completer command tree in `internal/completer/completer.go`
 6. If the new command requires a query field that's not on `RequestParams`, add it AND wire it through `buildURL` in `internal/api/client.go`.
-7. Update `docs/SKILL.md` and `README.md` with the new command
+7. Update the agent skill (`skills/laevitas-cli/SKILL.md` and the relevant file under `skills/laevitas-cli/reference/`) and `README.md` with the new command
 8. Build and test: `go build -o laevitas . && ./laevitas {group} {cmd} --help`
 
 ### Adding a new product group (like spot or instruments)
@@ -376,7 +377,7 @@ The canonical release flow. **Every release follows these steps in this order**,
 
 **Pre-flight (in any order):**
 1. CHANGELOG.md has a `## [X.Y.Z] — YYYY-MM-DD` entry at the top.
-2. README.md and docs/SKILL.md mention every new command/flag/field.
+2. README.md and the agent skill (`skills/laevitas-cli/SKILL.md` + `skills/laevitas-cli/reference/`) mention every new command/flag/field.
 3. `go build -o laevitas-test.exe .` is clean (no errors, no `dirty` other than the pending changes).
 4. Smoke tests pass — at minimum: top-level `--help` lists new groups, JSON envelope on a representative command parses cleanly, error envelope on a forced auth failure carries the expected error code.
 

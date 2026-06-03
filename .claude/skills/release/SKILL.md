@@ -29,7 +29,7 @@ Run all four. Report each as PASS / FAIL with the actual evidence.
    ```
    FAIL if the first match isn't `## [X.Y.Z] — YYYY-MM-DD` matching today and the version we're shipping.
 
-2. **README.md and docs/SKILL.md mention the new commands/flags.** Open both. Look for the headline feature names from the CHANGELOG entry. If a v0.X.0 added a new command group or flag, the docs must reference it. FAIL if not.
+2. **README.md and the agent skill mention the new commands/flags.** Open `README.md` and the relevant file under `skills/laevitas-cli/` (`SKILL.md` for the headline rules/quick-start, `reference/commands.md` and friends for the detail; `docs/SKILL.md` is now just a pointer to that directory). Look for the headline feature names from the CHANGELOG entry. If a v0.X.0 added a new command group or flag, the docs must reference it. FAIL if not.
 
 3. **Build is clean.**
    ```sh

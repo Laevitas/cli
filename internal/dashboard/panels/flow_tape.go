@@ -39,6 +39,8 @@ const flowTapeCapacity = 64
 
 const flowTapeStatsBuckets = 5 * 60
 
+const flowTapeStatsFutureSkewSeconds int64 = 5
+
 // flowTapeMinWidth is the smallest width that fits the narrow
 // row format (TIME / DIR / SIZE / PRICE) — USD column is dropped
 // when the pane is below flowTapeUSDThreshold cells wide.
@@ -124,7 +126,7 @@ func (s *tapeStatsRing) window(now time.Time, seconds int) tapeStatsWindow {
 	var out tapeStatsWindow
 	for i := range s.buckets {
 		b := s.buckets[i]
-		if b.count == 0 || b.unix <= cutoff || b.unix > nowSec {
+		if b.count == 0 || b.unix <= cutoff || b.unix > nowSec+flowTapeStatsFutureSkewSeconds {
 			continue
 		}
 		out.buyUSD += b.buyUSD
