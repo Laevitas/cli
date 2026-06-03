@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.11.5] — 2026-06-03
+
+### Added
+
+- **Installable Agent Skill** for AI coding assistants. `npx skills add
+  laevitas/cli` now installs an [Agent
+  Skill](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills)
+  that teaches Claude Code / Cursor / Codex how to drive the CLI correctly:
+  the JSON envelope contract, instrument discovery, the snapshot-vs-time-series
+  flag rules, auth paths, and the NDJSON streaming model. README gains an "Add
+  the CLI skill (AI assistants)" section.
+
+### Changed
+
+- The agent skill is restructured per Anthropic skill-authoring guidance:
+  a short, front-loaded `skills/laevitas-cli/SKILL.md` (the five
+  failure-preventing rules + a copy-pasteable quick start) plus topic reference
+  files under `skills/laevitas-cli/reference/` (commands, response-shape, auth,
+  parameters, streaming, orderbooks, dashboards) that load on demand
+  (progressive disclosure). The previous monolithic `docs/SKILL.md` becomes a
+  pointer to the new location. No CLI behaviour changes.
+
+### Fixed
+
+- **TAPE stats dropped trades under small forward clock skew.** The 5-minute
+  rolling stats window in the `dash flow` tape panel discarded any bucket
+  timestamped after the local clock (`b.unix > nowSec`), so trades stamped a
+  second or two ahead — common with exchange/local clock drift — silently
+  fell out of the window and the net/buy/sell figures under-counted. The
+  window now tolerates up to 5 seconds of forward skew
+  (`flowTapeStatsFutureSkewSeconds`); genuinely future buckets beyond that are
+  still excluded. Covered by `TestTapeStatsRingToleratesSmallFutureClockSkew`.
+
 ## [0.11.4] — 2026-05-08
 
 Defensive palette hardening. Several call sites used the 8-colour

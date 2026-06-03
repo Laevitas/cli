@@ -44,6 +44,16 @@ go install github.com/laevitas/cli@latest
 
 Or grab a pre-built binary from the [latest release](https://github.com/laevitas/cli/releases/latest).
 
+### Add the CLI skill (AI assistants)
+
+To let AI coding assistants (Claude Code, Cursor, Codex, …) drive the Laevitas CLI correctly — JSON envelope handling, instrument discovery, streaming contracts, the snapshot-vs-time-series flag rules — add the official [Agent Skill](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills):
+
+```bash
+npx skills add laevitas/cli
+```
+
+After adding the skill, the assistant can run `laevitas` commands, discover instruments and venues, and follow the CLI's output and auth contracts when helping you work with Laevitas data. The skill lives at [`skills/laevitas-cli/`](skills/laevitas-cli/) — a short `SKILL.md` plus on-demand reference files.
+
 ## Quick Start
 
 ```bash
@@ -493,7 +503,9 @@ fi
 
 ### Claude / Codex Skill
 
-To teach an AI agent about this CLI, point it at the `--help` output or include this in your system prompt:
+The fastest path is the installable Agent Skill — `npx skills add laevitas/cli` (see [Add the CLI skill](#add-the-cli-skill-ai-assistants) above). It bundles the full operating guide: REST/WS contracts, error codes, auth paths, and the instrument-discovery workflow. The source lives at [`skills/laevitas-cli/`](skills/laevitas-cli/).
+
+For a lighter touch — or an agent without skill support — point it at the `--help` output, run `laevitas commands -o json` for the machine-readable manifest, or paste this into your system prompt:
 
 ```
 The laevitas CLI provides REST and WebSocket crypto market data. For REST commands, always use -o json and parse .success before reading .data or .error.

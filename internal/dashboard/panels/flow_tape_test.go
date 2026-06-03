@@ -248,6 +248,18 @@ func TestTapeStatsRingEvictsOutsideFiveMinutes(t *testing.T) {
 	}
 }
 
+func TestTapeStatsRingToleratesSmallFutureClockSkew(t *testing.T) {
+	now := time.Date(2026, 5, 4, 14, 25, 0, 0, time.UTC)
+	var stats tapeStatsRing
+	stats.add(now.Add(3*time.Second), 100, "buy")
+	stats.add(now.Add(6*time.Second), 200, "sell")
+
+	five := stats.window(now, 5*60)
+	if five.count != 1 || five.buyUSD != 100 || five.sellUSD != 0 {
+		t.Fatalf("5m window = %+v, want only the +3s skewed buy", five)
+	}
+}
+
 func TestBuildTapeStatsCompactFiveMinuteNet(t *testing.T) {
 	now := time.Date(2026, 5, 4, 14, 25, 0, 0, time.UTC)
 	var stats tapeStatsRing
