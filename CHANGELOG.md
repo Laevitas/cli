@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.11.6] — 2026-10-24
+
+### Changed
+
+- Docs: x402 credits are drawn by the age of the requested data. Since API v2
+  1.76–1.79 a wallet payment buys a bundle of credits (currently 100 for $0.10
+  USDC) and each request draws 1 credit for data up to 1 year back, 5 for 1–3
+  years and 10 beyond; MCP tool calls are priced the same way per call, and
+  empty results are not charged. Retained history and the v1-compatible
+  history routes are payable too. README (x402 wallet section) and the agent
+  skill's `reference/auth.md` (pricing note and budget loop) say so. No CLI
+  behaviour changes.
+
 ## [0.11.5] — 2026-06-03
 
 ### Added

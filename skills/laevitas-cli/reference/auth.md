@@ -22,6 +22,8 @@ laevitas wallet show -o json               # inspect state without spending cred
 
 Each request triggers an on-chain payment if no credit token is cached. After the first payment the API issues a JWT credit token cached at `~/.config/laevitas/x402-token` and reused until it expires. **REST only** — calling `laevitas ws` on the wallet path returns a clear error; switch to API-key auth for streaming.
 
+Credits are drawn by the age of the oldest data a request asks for: **1 credit** up to 1 year back, **5** for 1–3 years, **10** beyond (current data and snapshots cost 1). A payment buys a bundle of credits (currently 100 for $0.10 USDC); empty results are not charged. Retained history and the v1-compatible history routes are payable the same way.
+
 ## Choosing the path
 
 `LAEVITAS_AUTH=auto|api-key|x402` controls preference when both are configured. Default `auto` = API key first, wallet fallback on 401/402.
@@ -30,7 +32,7 @@ Read `.meta.auth` on every response to confirm which path served it: `api-key`, 
 
 ## Budget-aware loop (wallet path)
 
-Self-throttle by reading `.meta.credits_remaining` after each request and handling the 402-family error codes:
+Self-throttle by reading `.meta.credits_remaining` after each request and handling the 402-family error codes. Budget in credits, not requests: a request for data older than a year draws 5 or 10.
 
 ```bash
 export LAEVITAS_WALLET_KEY=0x...
