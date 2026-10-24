@@ -536,6 +536,8 @@ LAEVITAS_API_KEY=<key> laevitas …          # env override
 
 Pay per request with an EVM wallet — no signup, no API key. Each request triggers an on-chain payment if no credit token is cached; subsequent requests use the cached token until it expires.
 
+A payment buys a bundle of credits (currently 100 for $0.10 USDC). Each request draws credits by the age of the oldest data it asks for: 1 credit up to 1 year back, 5 for 1–3 years, 10 beyond. Empty results are not charged, and `laevitas wallet credits` shows what is left. Retained history and the v1-compatible history routes are payable the same way.
+
 ```sh
 laevitas wallet                            # show address, credits, auth mode
 laevitas wallet init                       # interactive: paste private key
