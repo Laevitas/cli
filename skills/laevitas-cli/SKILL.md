@@ -83,3 +83,12 @@ laevitas doctor -o json          # pass/warn/fail/skipped per check + environmen
 | `dash` TUI dashboards (human-only) and their REST/WS equivalents | [reference/dashboards.md](reference/dashboards.md) |
 
 When in doubt about a flag or shape, confirm with `laevitas <cmd> --help` or `laevitas commands -o json` rather than assuming — instrument names in `--help` are generated from today's date and may not match a real listing.
+
+### Free starter credits
+
+Run `laevitas update`, then `laevitas wallet init --generate` if you need a wallet. Keep an existing wallet to keep its balance.
+Run `laevitas agent login` and `laevitas agent claim`. The claim requires a verified wallet signature, accepts no wallet or amount arguments, and never signs a payment.
+The live `agent catalog` publishes `starterOffer` (1,000 credits at launch, subject to availability). One claim per wallet, across sessions and networks; retrying returns the original grant. Credits have no expiry.
+Use `agent balance` and `agent usage` to inspect the balance and starter claim. Claimed credits cover live REST and MCP. Connect `laevitas agent mcp` in your MCP client; it spends existing credits without buying more automatically.
+When credits run out, request a credit-pack quote and approve its price explicitly. API keys still require paid Agent Enterprise.
+Browser onboarding: https://app.laevitas.ch/claim.

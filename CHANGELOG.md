@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.12.1] — 2026-11-04
+
+### Added
+
+- `agent claim`: verify the configured wallet and claim starter credits once, without payment. The live catalog publishes availability.
+
+### Fixed
+
+- Show the logo at the start of root help only; subcommand help stays compact.
+- `doctor` reports missing configuration files accurately, including environment-only setup.
+
 ## [0.12.0] — 2026-11-04
 
 ### Added
