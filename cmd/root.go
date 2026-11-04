@@ -146,9 +146,8 @@ func init() {
 		bgm = output.BrandGreyMid
 		reset = output.Reset
 	}
-	rootCmd.SetUsageTemplate(bg + helpBanner + reset + bgm + `            v` + version.Version + reset + `
-
-` + bgl + `USAGE:` + reset + `
+	rootCmd.SetHelpTemplate(`{{if not .HasParent}}` + bg + helpBanner + reset + bgm + `            v` + version.Version + reset + "\n\n{{end}}" + rootCmd.HelpTemplate())
+	rootCmd.SetUsageTemplate(bgl + `USAGE:` + reset + `
   {{.UseLine}}{{if .HasAvailableSubCommands}} [command]{{end}}
 
 ` + bgl + `COMMANDS:` + reset + `{{range .Commands}}{{if .IsAvailableCommand}}

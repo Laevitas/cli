@@ -237,6 +237,9 @@ func (c *Client) Sample(ctx context.Context) (map[string]any, error) {
 func (c *Client) Account(ctx context.Context) (map[string]any, error) {
 	return c.call(ctx, "GET", prefix+"me", nil, true)
 }
+func (c *Client) Claim(ctx context.Context) (map[string]any, error) {
+	return c.call(ctx, "POST", prefix+"credits/claim", map[string]any{}, true)
+}
 func (c *Client) Balance(ctx context.Context) (map[string]any, error) {
 	return c.call(ctx, "GET", prefix+"credits", nil, true)
 }

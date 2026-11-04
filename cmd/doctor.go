@@ -335,6 +335,15 @@ func checkConfigFile() (doctorCheck, *config.Config) {
 		}, nil
 	}
 	cfgPath, _ := config.Path()
+	if _, statErr := os.Stat(cfgPath); os.IsNotExist(statErr) {
+		detail := "No config file; using defaults."
+		if anyConfigEnvSet() {
+			detail = "No config file; using environment settings and defaults."
+		}
+		return doctorCheck{Name: "config_file", Status: statusWarn, Detail: detail, Remediation: "laevitas config init", DurationMs: dur}, cfg
+	} else if statErr != nil {
+		return doctorCheck{Name: "config_file", Status: statusFail, Detail: "Cannot inspect config file.", DurationMs: dur}, cfg
+	}
 	return doctorCheck{
 		Name:       "config_file",
 		Status:     statusPass,

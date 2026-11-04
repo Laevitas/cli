@@ -177,3 +177,34 @@ func TestRefusesRedirectsAndMCPDoesNotBuyCredits(t *testing.T) {
 		t.Fatalf("expected structured payment refusal: %s", out.String())
 	}
 }
+
+func TestClaimRequiresWalletSessionAndNeverAcceptsAnAddressOrPayment(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Path != prefix+"credits/claim" || r.Method != "POST" || r.Header.Get("Authorization") != "Bearer verified-wallet-session" || r.Header.Get("Payment-Signature") != "" {
+			t.Error("claim must use the verified wallet session only")
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body) != 0 {
+			t.Error("claim must not send a wallet or amount")
+		}
+		fmt.Fprint(w, `{"claimed":true,"alreadyClaimed":false,"creditsGranted":1000,"creditsRemaining":1000}`)
+	}))
+	defer server.Close()
+	c := testClient(t, server.URL)
+	c.state.Session = "verified-wallet-session"
+	c.state.ExpiresAt = time.Now().Add(time.Minute)
+	if result, err := c.Claim(context.Background()); err != nil || result["creditsGranted"] != float64(1000) {
+		t.Fatalf("claim: %v %v", result, err)
+	}
+	if calls != 1 {
+		t.Fatalf("unexpected requests: %d", calls)
+	}
+	c.cfg.WalletKey = ""
+	c.wallet = ""
+	c.state.Session = ""
+	if _, err := c.Claim(context.Background()); err == nil || calls != 1 {
+		t.Fatal("unverified client attempted a claim")
+	}
+}

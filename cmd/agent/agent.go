@@ -12,7 +12,7 @@ import (
 )
 
 var Cmd = &cobra.Command{Use: "agent", Short: "Wallet sign-in, product catalog, credits and Agent Enterprise", Long: `Use the same wallet for prepaid data and agent subscriptions.
-Catalog and sample are free. Sign-in does not authorize payment.
+Catalog and sample are free. Sign in with your wallet, then run agent claim for starter credits (once per wallet, subject to availability). Sign-in does not authorize payment.
 Quote first, then pay with an explicit --max-usdc limit. JSON output is suitable for agents.
 API keys require an active Agent Enterprise plan. Use agent mcp as a local MCP connection.`}
 
@@ -49,6 +49,7 @@ func init() {
 		{"sample", "Fetch free synthetic data", func(ctx context.Context, c *agentclient.Client) (map[string]any, error) { return c.Sample(ctx) }},
 		{"login", "Sign in with the configured Base wallet; no payment", func(ctx context.Context, c *agentclient.Client) (map[string]any, error) { return c.Login(ctx) }},
 		{"account", "Inspect your wallet identity and paid entitlement", func(ctx context.Context, c *agentclient.Client) (map[string]any, error) { return c.Account(ctx) }},
+		{"claim", "Claim free starter credits after verifying your wallet (once per wallet)", func(ctx context.Context, c *agentclient.Client) (map[string]any, error) { return c.Claim(ctx) }},
 		{"balance", "Read your current credit balance without spending", func(ctx context.Context, c *agentclient.Client) (map[string]any, error) { return c.Balance(ctx) }},
 		{"logout", "Revoke the management session on this device", func(ctx context.Context, c *agentclient.Client) (map[string]any, error) { return c.Logout(ctx) }},
 	}
@@ -95,12 +96,12 @@ func init() {
 		return c.RevokeKey(ctx, args[0])
 	})})
 	Cmd.AddCommand(keys)
-	Cmd.AddCommand(&cobra.Command{Use: "mcp", Short: "Connect an MCP client over stdio using purchased credits or an Enterprise key", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	Cmd.AddCommand(&cobra.Command{Use: "mcp", Short: "Connect an MCP client over stdio using claimed or purchased credits, or an Enterprise key", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := client()
 		if err != nil {
 			return commandError(cmd, err)
 		}
 		return c.MCP(cmd.Context(), os.Stdin, cmd.OutOrStdout())
 	}})
-	Cmd.Example = fmt.Sprint("  laevitas agent catalog\n  laevitas agent sample\n  laevitas agent login\n  laevitas agent balance\n  laevitas agent quote credits-100\n  laevitas agent pay CHECKOUT_ID --max-usdc 0.10\n  laevitas agent status CHECKOUT_ID")
+	Cmd.Example = fmt.Sprint("  laevitas agent catalog\n  laevitas agent sample\n  laevitas agent login\n  laevitas agent claim\n  laevitas agent balance\n  laevitas agent quote credits-100\n  laevitas agent pay CHECKOUT_ID --max-usdc 0.10\n  laevitas agent status CHECKOUT_ID")
 }
