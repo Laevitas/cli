@@ -32,12 +32,10 @@ jobs:
           cp install.sh  site/install.sh
 
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/pages-action@v1
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          projectName: cli
-          directory: site
-          branch: main
+          command: pages deploy site --project-name=cli --branch=main
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
-          wranglerVersion: "3"
+          wranglerVersion: "3.114.17"
