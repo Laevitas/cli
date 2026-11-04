@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.12.2] — 2026-11-04
+
+### Fixed
+
+- Verify 6022 registry and NFT identity with read-only Polygon/Amoy calls; report unavailable and mismatched evidence separately from signature validity.
+- Document starter-credit eligibility, daily limits, 401/403/429 responses and idempotent duplicate claims. Fresh empty wallets use the free sample or an explicitly approved purchase.
+
+### Added
+
+- A narrow Welcome proxy for agents.laevitas.ch, pending canonical signed discovery from the existing 6022 operator.
+
 ## [0.12.1] — 2026-11-04
 
 ### Added

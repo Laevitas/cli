@@ -15,9 +15,10 @@ redirects, changed signers, cross-origin interfaces and invalid/error replies.
 Laevitas credentials are never sent to the partner.
 
 A valid signature proves document integrity. It does **not** prove ENS/NFT
-ownership. Verify that binding with the partner's official tools and supply the
-verified signer. `inspect` explicitly reports `registryVerified: false` and
-`liveExchangeVerified: false`; a real nonce-echo exchange is a separate test.
+ownership. `inspect` additionally checks the canonical 6022 registry and NFT
+binding and sets `registryVerified` only when all checks match. Supply a trusted
+`--signer` for `ask`. `liveExchangeVerified` remains false during inspection;
+a real nonce-echo exchange is a separate test.
 
 On HTTP 402, `ask` reports `delivered: false` and the payment requirements. It
 never signs or pays a partner challenge. A zero-priced payment rule can still
@@ -34,3 +35,5 @@ reviewed at the pinned revision. The local test suite covers signed discovery,
 wrong-hash/tamper rejection, advertised routing, successful replies, JSONRPC
 errors and payment-required responses. A paid live partner exchange is not part
 of those tests.
+
+`partner inspect` now reads the canonical 6022 registry on Polygon or Amoy. It checks the ENS name, registered URL and signer, manager/collection membership, NFT name, owner and controller at one block. `registryVerified` is true only if all checks match. `registry.state` distinguishes `verified`, `mismatch`, `unavailable` and `not_checked`. Use `--registry-rpc HTTPS_URL` to choose a trusted RPC on the same chain. This direct registry check does not claim Ethereum ENS/CCIP resolution (`ensResolutionVerified:false`) or a successful A2A conversation. `partner ask` still needs a trusted `--signer` and never signs or pays.
