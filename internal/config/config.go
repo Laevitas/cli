@@ -20,9 +20,10 @@ const (
 
 // Auth type constants for choosing default authentication method.
 const (
-	AuthTypeAuto   = "auto"    // API key if set, otherwise x402 wallet
-	AuthTypeAPIKey = "api-key" // Always use API key
-	AuthTypeX402   = "x402"    // Always use x402 wallet payment
+	AuthTypeAuto    = "auto"    // API key if set, otherwise x402 wallet
+	AuthTypeAPIKey  = "api-key" // Always use API key
+	AuthTypeCredits = "credits" // Spend prepaid credits without authorizing on-chain payments
+	AuthTypeX402    = "x402"    // Always use x402 wallet payment
 )
 
 // Config holds all CLI configuration.
@@ -37,6 +38,9 @@ type Config struct {
 
 // configDir returns ~/.config/laevitas/
 func configDir() (string, error) {
+	if path := os.Getenv("LAEVITAS_CONFIG_DIR"); path != "" {
+		return filepath.Abs(path)
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("cannot determine home directory: %w", err)

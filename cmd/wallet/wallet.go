@@ -6,8 +6,12 @@ package wallet
 import (
 	"bufio"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/laevitas/cli/internal/agentclient"
+	"golang.org/x/term"
 	"os"
 	"strings"
 	"time"
@@ -74,10 +78,15 @@ var showCmd = &cobra.Command{
 
 // ─── init ───────────────────────────────────────────────────────────────────
 
+var generateWallet bool
+
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Interactive setup — paste your EVM private key, validate, and save",
+	Short: "Configure a wallet or generate a dedicated agent wallet with --generate",
 	Long: `Walks you through configuring an x402 wallet.
+Use --generate to create a dedicated wallet locally, with credit-only data access.
+The private key is stored in your private config and is never printed.
+Generation refuses to overwrite an existing wallet; back up the config securely.
 
 You'll need a hex-encoded EVM private key (with or without 0x prefix). Any of:
   * Generate fresh:  cast wallet new          (Foundry)
@@ -86,6 +95,25 @@ You'll need a hex-encoded EVM private key (with or without 0x prefix). Any of:
 The wallet only needs to hold USDC on Base mainnet — it pays per-request and
 holds no other state.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if generateWallet {
+			cfg, err := internalConfig.Load()
+			if err != nil {
+				return err
+			}
+			if cfg.WalletKey != "" {
+				return fmt.Errorf("a wallet is already configured; use a separate LAEVITAS_CONFIG_DIR for a new agent")
+			}
+			key, err := crypto.GenerateKey()
+			if err != nil {
+				return err
+			}
+			cfg.WalletKey = hex.EncodeToString(crypto.FromECDSA(key))
+			cfg.Auth = internalConfig.AuthTypeCredits
+			if err = internalConfig.Save(cfg); err != nil {
+				return err
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"success": true, "data": map[string]any{"address": crypto.PubkeyToAddress(key.PublicKey).Hex(), "network": "eip155:8453", "auth": "credits"}, "meta": map[string]any{"command": "wallet init"}})
+		}
 		reader := bufio.NewReader(os.Stdin)
 
 		fmt.Println()
@@ -94,8 +122,17 @@ holds no other state.`,
 		fmt.Println("  You'll need a hex-encoded EVM private key holding USDC on Base.")
 		fmt.Println("  Generate a fresh key with: cast wallet new   (or any EVM wallet).")
 		fmt.Println()
-		fmt.Print("  Paste private key (input is echoed): ")
-		raw, err := reader.ReadString('\n')
+		fmt.Fprint(os.Stderr, "  Paste private key: ")
+		var raw string
+		var err error
+		if term.IsTerminal(int(os.Stdin.Fd())) {
+			var secret []byte
+			secret, err = term.ReadPassword(int(os.Stdin.Fd()))
+			raw = string(secret)
+			fmt.Fprintln(os.Stderr)
+		} else {
+			raw, err = reader.ReadString('\n')
+		}
 		if err != nil {
 			return fmt.Errorf("reading input: %w", err)
 		}
@@ -211,19 +248,24 @@ interactive user sees what to do, while scripts using
 // ─── credits ────────────────────────────────────────────────────────────────
 
 var creditsCmd = &cobra.Command{
-	Use:   "credits",
-	Short: "Print credits remaining from the most recent x402 response (pipe-friendly)",
-	Long: `Prints the credit count last reported by the API. The CLI doesn't poll
-for balance — credits update on every data request via the X-Credits-Remaining
-response header. After a fresh install or expired session, this returns "unknown"
-until the next data request.`,
+	Use: "credits", Short: "Read your current prepaid credit balance without spending", Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		state := loadWalletState()
-		if state.CreditsRemaining == nil {
-			fmt.Println("unknown")
-			return nil
+		cfg, err := internalConfig.Load()
+		if err != nil {
+			return err
 		}
-		fmt.Println(*state.CreditsRemaining)
+		client, err := agentclient.New(cfg)
+		if err != nil {
+			return err
+		}
+		result, err := client.Balance(cmd.Context())
+		if err != nil {
+			return err
+		}
+		if cmdutil.OutputFormat == "json" {
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"success": true, "data": result, "meta": map[string]any{"command": "wallet credits"}})
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), result["creditsRemaining"])
 		return nil
 	},
 }
@@ -281,7 +323,7 @@ func loadWalletState() walletState {
 	}
 
 	// Cached credit token: parse the JWT exp claim if standard.
-	if tok := internalConfig.LoadCreditToken(); tok != "" {
+	if tok := internalConfig.LoadCreditTokenFor(cfg.BaseURL, state.Address); tok != "" {
 		ct := &creditTokenState{Cached: true}
 		if exp, ok := parseJWTExp(tok); ok {
 			expTime := time.Unix(exp, 0).UTC()
@@ -409,6 +451,8 @@ func authDescription(mode string) string {
 	switch mode {
 	case internalConfig.AuthTypeAPIKey:
 		return "API key only — wallet ignored"
+	case internalConfig.AuthTypeCredits:
+		return "prepaid credits only — no automatic purchases"
 	case internalConfig.AuthTypeX402:
 		return "wallet only — API key ignored"
 	default:
@@ -441,6 +485,7 @@ func humanDuration(d time.Duration) string {
 var _ = api.RequestMeta{}.Credits
 
 func init() {
+	initCmd.Flags().BoolVar(&generateWallet, "generate", false, "Generate a dedicated wallet locally without printing its private key")
 	Cmd.AddCommand(showCmd)
 	Cmd.AddCommand(initCmd)
 	Cmd.AddCommand(setKeyCmd)

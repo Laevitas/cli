@@ -306,23 +306,25 @@ func parseExamples(example string) []string {
 // rather than spread across each command file.
 func commandRequiresAuth(path string) bool {
 	authFree := map[string]bool{
-		"version":        true,
-		"commands":       true,
-		"doctor":         true,
-		"update":         true,
-		"config init":    true,
-		"config show":    true,
-		"config set":     true,
-		"config unset":   true,
-		"config path":    true,
-		"wallet show":    true,
-		"wallet init":    true,
-		"wallet set-key": true,
-		"wallet unset":   true,
-		"wallet address": true,
-		// `wallet credits` does NOT appear here — it reads cached
-		// state from disk but the canonical path is to refresh from
-		// API responses, so we treat it as auth-touching.
+		"agent catalog":         true,
+		"agent sample":          true,
+		"agent partner inspect": true,
+		"agent partner ask":     true,
+		"version":               true,
+		"commands":              true,
+		"doctor":                true,
+		"update":                true,
+		"config init":           true,
+		"config show":           true,
+		"config set":            true,
+		"config unset":          true,
+		"config path":           true,
+		"wallet show":           true,
+		"wallet init":           true,
+		"wallet set-key":        true,
+		"wallet unset":          true,
+		"wallet address":        true,
+		// `wallet credits` reads the authenticated live balance.
 	}
 	return !authFree[path]
 }
@@ -333,6 +335,9 @@ func commandRequiresAuth(path string) bool {
 // the x402 wallet — only the wallet-management subcommands force
 // the wallet path.
 func commandRequiresWallet(path string) bool {
+	if strings.HasPrefix(path, "agent ") && path != "agent catalog" && path != "agent sample" && path != "agent mcp" && !strings.HasPrefix(path, "agent partner ") {
+		return true
+	}
 	walletOnly := map[string]bool{
 		"wallet init":    true,
 		"wallet set-key": true,
@@ -347,7 +352,7 @@ func commandRequiresWallet(path string) bool {
 // rather than the canonical envelope; agents that try to parse
 // streaming output as one JSON document will hang.
 func commandIsStreaming(path string) bool {
-	return strings.HasPrefix(path, "ws") || strings.HasPrefix(path, "dash")
+	return path == "agent mcp" || strings.HasPrefix(path, "ws") || strings.HasPrefix(path, "dash")
 }
 
 // commandOutputModes enumerates the -o values the command accepts.
@@ -363,6 +368,9 @@ func commandIsStreaming(path string) bool {
 // `dash ...` into a parser will fail with a TTY-only error rather
 // than yielding JSON.
 func commandOutputModes(path string) []string {
+	if strings.HasPrefix(path, "agent ") {
+		return []string{"json"}
+	}
 	if strings.HasPrefix(path, "dash") {
 		return []string{}
 	}

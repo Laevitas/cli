@@ -44,6 +44,7 @@ type Client struct {
 	// x402 payment support
 	paymentClient *x402.PaymentClient
 	creditToken   string // cached JWT credit token
+	creditOnly    bool
 
 	// LastMeta contains metadata from the most recent request.
 	LastMeta RequestMeta
@@ -72,15 +73,17 @@ func NewClient(cfg *config.Config) *Client {
 	switch authType {
 	case config.AuthTypeAPIKey:
 		useWallet = false
-	case config.AuthTypeX402:
+	case config.AuthTypeX402, config.AuthTypeCredits:
 		apiKey = "" // don't send API key — use wallet only
 	}
 
 	c := &Client{
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-		apiKey:  apiKey,
+		creditOnly: authType == config.AuthTypeCredits,
+		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
+		apiKey:     apiKey,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout:       30 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 		},
 	}
 
@@ -91,7 +94,10 @@ func NewClient(cfg *config.Config) *Client {
 			fmt.Fprintf(os.Stderr, "\033[33m⚠ Invalid wallet key: %s\033[0m\n", err)
 		} else {
 			c.paymentClient = pc
-			c.creditToken = config.LoadCreditToken()
+			c.creditToken = config.LoadCreditTokenFor(cfg.BaseURL, pc.Address())
+			if authType == config.AuthTypeAuto && c.creditToken != "" {
+				c.creditOnly = true
+			}
 		}
 	}
 
@@ -510,6 +516,9 @@ func (c *Client) Do(method, path string, params *RequestParams) ([]byte, error) 
 			// Print headers
 			for k, vals := range resp.Header {
 				for _, v := range vals {
+					if strings.EqualFold(k, "X-Credit-Token") || strings.EqualFold(k, "Set-Cookie") {
+						v = "[redacted]"
+					}
 					fmt.Fprintf(os.Stderr, "%s: %s\n", k, v)
 				}
 			}
@@ -584,7 +593,7 @@ func (c *Client) Do(method, path string, params *RequestParams) ([]byte, error) 
 func (c *Client) extractCreditHeaders(resp *http.Response) {
 	if token := resp.Header.Get("X-Credit-Token"); token != "" {
 		c.creditToken = token
-		_ = config.SaveCreditToken(token)
+		_ = config.SaveCreditTokenFor(c.baseURL, c.WalletAddress(), token)
 	}
 	if remaining := resp.Header.Get("X-Credits-Remaining"); remaining != "" {
 		c.LastMeta.Credits = remaining
@@ -593,10 +602,14 @@ func (c *Client) extractCreditHeaders(resp *http.Response) {
 
 // handlePaymentRequired processes a 402 response by signing an x402 payment and retrying.
 func (c *Client) handlePaymentRequired(method, fullURL string, resp *http.Response, body []byte, path string) ([]byte, error) {
+	if c.creditOnly {
+		return nil, &PaymentError{StatusCode: http.StatusPaymentRequired, CodeStr: ErrCodePaymentReq,
+			Message: "Prepaid credits are unavailable. Run laevitas agent login and agent balance; purchase more with agent quote and agent pay. No payment was signed.", Endpoint: path}
+	}
 	// If we sent a credit token that was rejected, clear it
 	if c.creditToken != "" {
 		c.creditToken = ""
-		config.ClearCreditToken()
+		config.ClearCreditTokenFor(c.baseURL, c.WalletAddress())
 	}
 
 	// No wallet configured — can't pay
@@ -662,6 +675,9 @@ func (c *Client) handlePaymentRequired(method, fullURL string, resp *http.Respon
 		if c.apiKey != "" {
 			dumpStr = strings.Replace(dumpStr, c.apiKey, config.MaskKey(c.apiKey), -1)
 		}
+		for _, value := range paymentHeaders {
+			dumpStr = strings.ReplaceAll(dumpStr, value, "[redacted]")
+		}
 		fmt.Fprintf(os.Stderr, "\n--- x402 RETRY REQUEST ---\n%s", dumpStr)
 	}
 
@@ -683,6 +699,9 @@ func (c *Client) handlePaymentRequired(method, fullURL string, resp *http.Respon
 		fmt.Fprintf(os.Stderr, "\n--- x402 RETRY RESPONSE %d ---\n", retryResp.StatusCode)
 		for k, vals := range retryResp.Header {
 			for _, v := range vals {
+				if strings.EqualFold(k, "X-Credit-Token") || strings.EqualFold(k, "Set-Cookie") {
+					v = "[redacted]"
+				}
 				fmt.Fprintf(os.Stderr, "%s: %s\n", k, v)
 			}
 		}

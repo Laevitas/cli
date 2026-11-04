@@ -23,6 +23,20 @@ This skill front-loads the few things that actually trip agents up. The detail l
 
 5. **REST and WS are different output contracts.** REST groups (`futures perps options spot predictions instruments analytics wallet`) emit the JSON envelope. `ws` and `dash` stream **NDJSON** — one `{channel, data}` object per line, no `.success` wrapper; parse line-by-line. `dash` is a TTY-only human dashboard — agents should never invoke it for data, use `ws` or REST instead.
 
+## Wallet agent access
+
+Start with `laevitas agent catalog` and `laevitas agent sample` (free). Generate a
+dedicated wallet with `laevitas wallet init --generate` only when the owner wants
+one; it never prints the key and refuses to overwrite an existing wallet.
+Use `agent login`, `account`, `balance` and `usage`. Wallet sign-in is not payment.
+Only `agent pay CHECKOUT_ID --max-usdc LIMIT` signs an explicitly approved purchase.
+After an interruption use `agent status` before retrying. Use `LAEVITAS_AUTH=credits`
+for data automation. Never change it to `x402` to bypass a spending refusal.
+API keys require active Agent Enterprise; never create keys into chat output.
+See [all agent commands and flags](reference/agents.md), including `agent mcp`,
+`agent keys`, `agent partner`, `--request-id`, `--cycle`, `--before`, `--origin`,
+`--signer`, `--message`, `--context-id` and `LAEVITAS_CONFIG_DIR`.
+
 ## Quick start
 
 ```bash

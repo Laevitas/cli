@@ -1,0 +1,5 @@
+# Merge into ~/.hermes/config.yaml after local wallet sign-in and credit purchase.
+mcp_servers:
+  laevitas:
+    command: laevitas
+    args: ["agent", "mcp"]

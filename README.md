@@ -600,3 +600,24 @@ make release     # → dist/ (all platforms)
 ## License
 
 MIT
+
+## Wallet agents
+
+Use `laevitas agent catalog` and `laevitas agent sample` without credentials.
+`laevitas wallet init --generate` creates a dedicated local wallet without printing
+its key. Sign in with `laevitas agent login`, then inspect `account`, `balance`
+and `usage`. Quote a product with `agent quote`; pay only after reviewing it,
+using `agent pay CHECKOUT_ID --max-usdc LIMIT`. Check `agent status` after any
+interruption. `wallet credits` reads the live balance.
+
+API keys require active Agent Enterprise (25% below the same Enterprise billing
+period). Manage them with `agent keys list`, `create --label NAME` and
+`revoke KEY_ID`. `agent logout` revokes the local management session.
+
+`agent mcp` connects stdio MCP clients using existing credits or an Enterprise key.
+`agent partner inspect` and `agent partner ask` support signed 6022 discovery and
+A2A messages without automatic partner payments. `LAEVITAS_AUTH=credits` prevents
+automatic on-chain purchases; `LAEVITAS_CONFIG_DIR` isolates local credentials.
+
+See [complete commands and flags](skills/laevitas-cli/reference/agents.md) and
+[Hermes, Muse, Grok Bot, chat, Telegram and partner examples](examples/agents/README.md).

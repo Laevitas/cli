@@ -58,3 +58,11 @@ done
 ```
 
 `laevitas doctor` validates auth locally (it decodes the wallet key without dialing chain) and never costs money.
+
+## Agent credits and Enterprise
+
+`LAEVITAS_AUTH=credits` disables automatic on-chain purchases. Start with
+`laevitas agent login`; buy credits with a reviewed `agent quote` and explicit
+`agent pay --max-usdc`. `agent balance` and `agent usage` read the shared wallet
+balance and activity. API keys require paid Agent Enterprise. See
+[agent commands](agents.md) for all flags, renewals and MCP setup.
