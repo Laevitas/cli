@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.12.0] — 2026-11-04
+
+### Added
+
+- Wallet agent catalog, free sample, sign-in, account, balance, usage, quotes,
+  capped USDC payments, payment status and Enterprise key management.
+- `agent mcp` for stdio MCP clients, plus chat/Telegram and client setup examples.
+- `agent partner inspect` and `ask` for signed 6022 discovery and A2A messages.
+  Partner payment challenges are reported without signing or paying them.
+- `wallet init --generate` creates a dedicated local wallet without printing its
+  key. Interactive private-key input is hidden on supported terminals.
+- `LAEVITAS_AUTH=credits` and `LAEVITAS_CONFIG_DIR` for prepaid automation and
+  separate local agent configuration.
+
+### Changed
+
+- `wallet credits` reads the authoritative live balance. Wallet/session tokens
+  are bound to their origin and wallet; redirects cannot forward credentials.
+- Wallet access with an agent credit token spends existing credits in auto mode.
+  Explicit `x402` mode retains automatic payment behavior.
+- API keys for wallet agents require active Agent Enterprise. Discovery and the
+  synthetic sample remain free; payment always needs an explicit CLI ceiling.
+
+### Fixed
+
+- Credit credentials are redacted from verbose response logs. Migrated legacy
+  credentials cannot reappear after local logout.
+
 ## [0.11.6] — 2026-10-24
 
 ### Changed

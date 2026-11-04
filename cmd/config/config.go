@@ -81,7 +81,7 @@ var initCmd = &cobra.Command{
 		if currentAuth == "" {
 			currentAuth = "auto"
 		}
-		fmt.Printf("Auth type (auto/api-key/x402) [%s]: ", currentAuth)
+		fmt.Printf("Auth type (auto/api-key/credits/x402) [%s]: ", currentAuth)
 		auth, _ := reader.ReadString('\n')
 		auth = strings.TrimSpace(auth)
 		if auth != "" {
@@ -191,7 +191,7 @@ var setCmd = &cobra.Command{
 			cfg.WalletKey = value
 		case "auth", "auth_type":
 			switch strings.ToLower(value) {
-			case "auto", "api-key", "apikey", "x402", "wallet":
+			case "auto", "api-key", "apikey", "credits", "x402", "wallet":
 				if value == "apikey" {
 					value = "api-key"
 				}
@@ -200,7 +200,7 @@ var setCmd = &cobra.Command{
 				}
 				cfg.Auth = value
 			default:
-				return fmt.Errorf("invalid auth type: %s (valid: auto, api-key, x402)", value)
+				return fmt.Errorf("invalid auth type: %s (valid: auto, api-key, credits, x402)", value)
 			}
 		default:
 			return fmt.Errorf("unknown config key: %s (valid: api_key, exchange, output, base_url, wallet_key, auth)", key)

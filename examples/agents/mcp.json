@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "laevitas": { "command": "laevitas", "args": ["agent", "mcp"] }
+  }
+}

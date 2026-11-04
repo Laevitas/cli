@@ -25,6 +25,7 @@ type subCmd struct {
 // commandTree defines the full command hierarchy with instrument expectations.
 // The key is the top-level command name (e.g. "futures").
 var commandTree = map[string][]subCmd{
+	"agent": {{Name: "catalog"}, {Name: "sample"}, {Name: "login"}, {Name: "logout"}, {Name: "account"}, {Name: "balance"}, {Name: "usage"}, {Name: "quote"}, {Name: "pay"}, {Name: "status"}, {Name: "keys"}, {Name: "mcp"}, {Name: "partner"}},
 	"futures": {
 		{Name: "catalog"},
 		{Name: "snapshot"},
@@ -126,6 +127,7 @@ var commandTree = map[string][]subCmd{
 
 // topLevelCommands includes both tree commands and REPL built-ins.
 var topLevelCommands = []string{
+	"agent",
 	"futures", "perps", "options", "spot", "predictions", "instruments", "analytics",
 	"ws", "wallet", "config", "watch", "version", "search",
 	"save", "run", "saves", "unsave",

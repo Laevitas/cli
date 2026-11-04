@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/laevitas/cli/cmd/agent"
 	"github.com/laevitas/cli/cmd/analytics"
 	"github.com/laevitas/cli/cmd/config"
 	"github.com/laevitas/cli/cmd/dash"
@@ -117,6 +118,7 @@ var versionCmd = &cobra.Command{
 }
 
 func init() {
+	rootCmd.AddCommand(agent.Cmd)
 	// Set Run here (not in the var declaration) to avoid an init cycle
 	// between rootCmd and runInteractive, which references rootCmd.
 	rootCmd.Run = func(cmd *cobra.Command, args []string) {
