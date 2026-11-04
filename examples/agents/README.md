@@ -1,14 +1,14 @@
 # Wallet access for agents
 
-Use Laevitas CLI **v0.12.0 or later** from [cli.laevitas.ch](https://cli.laevitas.ch).
+Use Laevitas CLI **v0.12.2 or later** from [cli.laevitas.ch](https://cli.laevitas.ch).
 Existing installations: `laevitas update`. Discovery and the fictional sample
 need no wallet, key or payment.
 
 ```sh
 laevitas agent catalog
 laevitas agent sample
-# On the computer running your agent; generates a new, dedicated wallet locally.
-laevitas wallet init --generate
+# Use an existing locally configured wallet for starter eligibility.
+# A new wallet can use the free sample or explicitly purchase a pack.
 laevitas agent login
 laevitas agent balance
 ```

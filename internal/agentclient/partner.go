@@ -184,14 +184,18 @@ func inspectPartner(ctx context.Context, origin, expectedSigner string) (*partne
 	return p, nil
 }
 func InspectPartner(ctx context.Context, origin, signer string) (map[string]any, error) {
+	return InspectPartnerWithRPC(ctx, origin, signer, "")
+}
+func InspectPartnerWithRPC(ctx context.Context, origin, signer, rpcURL string) (map[string]any, error) {
 	p, err := inspectPartner(ctx, origin, signer)
 	if err != nil {
 		return nil, err
 	}
+	registry := verifyPartnerRegistry(ctx, p, rpcURL)
 	return map[string]any{"origin": p.origin, "name": p.card.Name, "endpoint": p.endpoint, "signer": p.signer,
-		"signatureVerified": true, "matchesExpectedSigner": signer != "", "registryVerified": false, "liveExchangeVerified": false,
+		"signatureVerified": true, "matchesExpectedSigner": signer != "", "registryVerified": registry.Verified, "registry": registry, "liveExchangeVerified": false,
 		"ensDomain": p.discovery["ensDomain"], "paymentMethods": p.discovery["paymentMethods"], "skills": p.card.Skills,
-		"next": "Verify the ENS/NFT identity with the partner's official verifier before relying on a new node."}, nil
+		"next": "Registry checks read the canonical 6022 chain directly; L1 ENS/CCIP resolution and a live A2A conversation are separate checks."}, nil
 }
 func AskPartner(ctx context.Context, origin, signer, message, contextID string) (map[string]any, error) {
 	if signer == "" {

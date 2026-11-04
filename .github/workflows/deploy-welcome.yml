@@ -1,0 +1,32 @@
+name: Deploy Welcome domain proxy
+on:
+  push:
+    branches: [main]
+    paths: ['welcome-proxy/**', 'test/welcome-proxy.test.mjs', 'scripts/ensure-welcome-pages.mjs', '.github/workflows/deploy-welcome.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  deployments: write
+concurrency:
+  group: welcome-domain-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test test/welcome-proxy.test.mjs
+      - run: node scripts/ensure-welcome-pages.mjs
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      - uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          command: pages deploy welcome-proxy --project-name=laevitas-agents --branch=main
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          wranglerVersion: '3.114.17'
