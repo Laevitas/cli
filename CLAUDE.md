@@ -84,6 +84,14 @@ main.go → cmd/root.go → cmd/{futures,perps,options,spot,predictions,instrume
 | Saved queries location | `~/.config/laevitas/saved.json` |
 | REPL history location | `~/.config/laevitas/history` |
 
+## Welcome domain homepage
+
+`welcome-proxy/` deploys to `agents.laevitas.ch` through `deploy-welcome.yml`,
+independently of CLI binary releases. Always check `GET /` and `HEAD /` as well as
+signed discovery after deployment. The homepage must reach the existing A2A
+onboarding page even when Welcome is awaiting publication; do not expose the
+partner's owner console or rewrite signed discovery to make the homepage work.
+
 ## Build & Run
 
 ```bash

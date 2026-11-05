@@ -4,6 +4,7 @@ const SIGNER = '0x0e0ea97e037d079a36edeb37824c1be0e2ba0f4c';
 const DISCOVERY = ['/.well-known/6022', '/.well-known/agent-card.json'];
 const TURNS = ['/api/a2a', '/api/responses'];
 const PUBLIC_LINKS = {
+  '/': 'https://app.laevitas.ch/a2a',
   '/skill.md': 'https://apiv2.laevitas.ch/skill.md',
   '/.well-known/laevitas-agents.json': 'https://apiv2.laevitas.ch/api/v1/agents/catalog',
   '/.well-known/x402': 'https://apiv2.laevitas.ch/.well-known/x402',
@@ -60,7 +61,7 @@ export function createWelcomeProxy(upstreamFetch = fetch) {
   return {
     async fetch(request) {
       const url = new URL(request.url), path = url.pathname;
-      if (request.method === 'GET' && PUBLIC_LINKS[path]) return Response.redirect(PUBLIC_LINKS[path], 307);
+      if (['GET', 'HEAD'].includes(request.method) && PUBLIC_LINKS[path]) return Response.redirect(PUBLIC_LINKS[path], 307);
       if (request.method !== (TURNS.includes(path) ? 'POST' : 'GET') || (!DISCOVERY.includes(path) && !TURNS.includes(path))) {
         return error(404, 'not_found', 'No agent endpoint is published at this path.');
       }
