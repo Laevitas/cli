@@ -2,6 +2,10 @@
 
 This origin proxies the existing 6022 Welcome runtime. It does not run a separate
 agent, mint identities, change ownership, or administer the partner's services.
+The homepage (`GET` or `HEAD /`) redirects to `https://app.laevitas.ch/a2a` for
+wallet onboarding, starter-credit eligibility, the catalog and CLI instructions.
+This remains available independently of Welcome publication. Homepage query
+parameters are not forwarded to the onboarding page.
 Only the two signed discovery documents and `/api/a2a` and `/api/responses` are
 proxied. Admin, console and health routes return 404. Laevitas credentials and
 cookies are never forwarded. Payment protocol headers are preserved verbatim.
@@ -9,6 +13,8 @@ cookies are never forwarded. Payment protocol headers are preserved verbatim.
 Deployment uses the `laevitas-agents` Cloudflare Pages project, independently of
 the CLI website. Attach the custom domain `agents.laevitas.ch` to this project.
 Run `node --test test/welcome-proxy.test.mjs` before deploying.
+After deployment, verify both homepage methods redirect to onboarding, that the
+onboarding page renders, and that discovery retains its current publication status.
 
 Before publication, the 6022 operator must:
 

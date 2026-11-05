@@ -62,7 +62,20 @@ test('rejects oversized and malformed requests before calling the partner', asyn
 test('agents can discover the wallet claim catalog and skill without partner readiness', async () => {
   const proxy = createWelcomeProxy(() => { throw new Error('must not call'); });
   for (const path of ['/skill.md', '/.well-known/laevitas-agents.json', '/.well-known/x402']) {
-    const response = await proxy.fetch(new Request(origin + path));
-    assert.equal(response.status, 307); assert.equal(new URL(response.headers.get('location')).origin, 'https://apiv2.laevitas.ch');
+    for (const method of ['GET', 'HEAD']) {
+      const response = await proxy.fetch(new Request(origin + path, { method }));
+      assert.equal(response.status, 307); assert.equal(new URL(response.headers.get('location')).origin, 'https://apiv2.laevitas.ch');
+    }
   }
+});
+test('the public homepage opens onboarding even when Welcome is unavailable', async () => {
+  const proxy = createWelcomeProxy(() => { throw new Error('must not call'); });
+  for (const method of ['GET', 'HEAD']) {
+    for (const suffix of ['/', '/?next=https://untrusted.example&token=not-forwarded']) {
+      const response = await proxy.fetch(new Request(origin + suffix, { method }));
+      assert.equal(response.status, 307);
+      assert.equal(response.headers.get('location'), 'https://app.laevitas.ch/a2a');
+    }
+  }
+  assert.equal((await proxy.fetch(request('/'))).status, 404);
 });
