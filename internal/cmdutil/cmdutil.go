@@ -15,6 +15,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/laevitas/cli/internal/api"
+	"github.com/laevitas/cli/internal/browser"
 	"github.com/laevitas/cli/internal/config"
 	"github.com/laevitas/cli/internal/output"
 	"github.com/laevitas/cli/internal/x402"
@@ -270,7 +271,11 @@ func MustClient() (*api.Client, *config.Config) {
 	}
 
 	// Require either an API key or a wallet key for authentication
-	if cfg.APIKey == "" && cfg.WalletKey == "" {
+	if cfg.APIKey == "" && cfg.WalletKey == "" && cfg.BrowserCreditToken == "" {
+		if browser.Enabled {
+			output.Errorf("Connect your browser wallet with agent login before requesting live data. Catalog and sample remain free.")
+			os.Exit(1)
+		}
 		if !promptOnboarding(cfg) {
 			if !InteractiveMode {
 				os.Exit(1)

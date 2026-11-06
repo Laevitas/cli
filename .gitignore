@@ -29,3 +29,8 @@ x402-token
 # copied here at deploy time so cli.laevitas.ch serves the canonical scripts.
 site/install.ps1
 site/install.sh
+
+# Browser terminal dependencies and local verification artifacts
+/web-terminal/node_modules/
+/web-terminal/artifacts/
+/web-terminal/*.local.json

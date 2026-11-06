@@ -95,6 +95,12 @@ fabricate signed discovery. See `docs/welcome-domain.md`.
 
 ## Build & Run
 
+The browser terminal lives in `web-terminal/` with a `js/wasm` platform adapter
+under `internal/browser/` and `cmd/platform_js.go`. Follow
+[docs/browser-terminal.md](docs/browser-terminal.md) for tests, hosting, wallet
+boundaries and CORS. Stable releases deploy only after GoReleaser succeeds.
+Never test with real keys, sign payments or add keys to browser storage.
+
 ```bash
 go build -o laevitas .       # Dev build (version auto-detected from git)
 make build                   # Production build with ldflags → bin/laevitas

@@ -1,0 +1,13 @@
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self' https://apiv2.laevitas.ch https://apiv2.devitas.ch; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self' https://app.laevitas.ch https://v3.laevitas.ch https://app.devitas.ch https://lvt-dashboard-v3-dev.pages.dev
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=()
+  Cache-Control: no-cache
+  Cross-Origin-Resource-Policy: same-origin
+
+/build.json
+  Cache-Control: no-store
+
+/laevitas.wasm
+  Content-Type: application/wasm

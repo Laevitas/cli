@@ -25,6 +25,13 @@ This skill front-loads the few things that actually trip agents up. The detail l
 
 ## Wallet agent access
 
+With browser access, [terminal.laevitas.ch](https://terminal.laevitas.ch) runs
+the released CLI without installing it. Call
+`window.laevitasTerminal.run({args:["agent","catalog"]})`; inspect `exitCode`
+and `json.success`. `agent login` requests Base or Solana wallet approval;
+never paste keys. The browser uses existing credits and never signs payments.
+See [browser commands and limitations](../../../docs/browser-terminal.md).
+
 Start with `laevitas agent catalog` and `laevitas agent sample` (free). Generate a
 dedicated wallet with `laevitas wallet init --generate` only when the owner wants
 one; it never prints the key and refuses to overwrite an existing wallet.

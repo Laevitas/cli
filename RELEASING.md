@@ -40,6 +40,14 @@ That's it. The `release.yml` workflow will:
 5. Generate `checksums.txt` (SHA-256).
 6. Create a GitHub Release at `https://github.com/laevitas/cli/releases/tag/vX.Y.Z` with all archives + the checksum file attached.
 7. Push an updated formula to [`laevitas/homebrew-cli`](https://github.com/laevitas/homebrew-cli) and an updated manifest to [`laevitas/scoop-bucket`](https://github.com/laevitas/scoop-bucket) (only if `HOMEBREW_TAP_TOKEN` is set — see below).
+8. For stable releases, build and test the same tag as WebAssembly, then deploy
+   both browser terminals through `deploy-terminal.yml`. That workflow refuses
+   unpublished, prerelease or older tags. See [browser deployment and CORS](docs/browser-terminal.md).
+
+Verify both terminal domains' `/build.json` reports the released version and
+commit, and `agent sample` works without wallet access. A browser deployment
+failure can be retried with `deploy-terminal.yml` after repair; never retag or
+republish the native release to retry hosting.
 
 Verify after the workflow finishes:
 

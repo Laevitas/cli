@@ -1,0 +1,22 @@
+# Laevitas browser terminal
+
+Production: https://terminal.laevitas.ch
+Development (test networks): https://terminal.devitas.ch
+Installed CLI: https://cli.laevitas.ch
+Docs: https://github.com/Laevitas/cli/blob/main/docs/browser-terminal.md
+Free production product catalog: https://apiv2.laevitas.ch/api/v1/agents/catalog
+Free synthetic sample: https://apiv2.laevitas.ch/api/v1/agents/sandbox/market-snapshot
+Build/version metadata: /build.json
+
+This website runs the actual released CLI as WebAssembly in a browser Worker.
+Browser agents can await window.laevitasTerminal.run({args:["agent","catalog"]}).
+Returns stdout, stderr, exitCode and parsed json when stdout is JSON.
+Discover commands with args:["commands"]. One command at a time.
+Connect Base or Solana with args:["agent","login"] and the owner's wallet approval.
+Never provide a private key or seed phrase. Credentials stay in tab memory.
+Starter credits require a verified eligible wallet: args:["agent","claim"].
+Inspect credits with args:["agent","balance"], usage with args:["agent","usage"].
+REST data consumes existing credits. HTTP 402 stops; the browser never pays.
+Payment signing, local files, streaming, TUI, stdio MCP and 6022 partner calls
+require the installed CLI. Enterprise API keys require an active entitlement.
+This is not an A2A conversation node and does not publish a signed Agent Card.

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/laevitas/cli/internal/browser"
 	"github.com/laevitas/cli/internal/config"
 	"github.com/laevitas/cli/internal/version"
 	"github.com/laevitas/cli/internal/x402"
@@ -85,6 +86,12 @@ func NewClient(cfg *config.Config) *Client {
 			Timeout:       30 * time.Second,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 		},
+	}
+	if browser.Enabled {
+		c.creditOnly = true
+		c.apiKey = ""
+		c.creditToken = cfg.BrowserCreditToken
+		useWallet = false
 	}
 
 	// Initialize x402 payment client if wallet key is configured and not disabled

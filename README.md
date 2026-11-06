@@ -12,6 +12,12 @@ Human-friendly and agent-native market data for futures, perpetuals, options, sp
 
 REST commands return tables for humans and stable JSON envelopes for scripts and LLMs. Streaming commands emit live TUI views in a terminal and NDJSON when piped.
 
+**Use it in your browser:** [terminal.laevitas.ch](https://terminal.laevitas.ch)
+runs the released Go CLI as WebAssembly. Connect a Base or Solana wallet, explore
+the free sample, claim starter credits if eligible and use existing API credits.
+[Browser commands, agent interface and security](docs/browser-terminal.md).
+Streaming, TUI, stdio MCP and payment signing use the installed CLI.
+
 ```
 $ laevitas futures snapshot --currency BTC -o table
 

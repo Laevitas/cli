@@ -12,7 +12,6 @@ import (
 	"github.com/laevitas/cli/cmd/agent"
 	"github.com/laevitas/cli/cmd/analytics"
 	"github.com/laevitas/cli/cmd/config"
-	"github.com/laevitas/cli/cmd/dash"
 	"github.com/laevitas/cli/cmd/futures"
 	"github.com/laevitas/cli/cmd/instruments"
 	"github.com/laevitas/cli/cmd/options"
@@ -21,7 +20,6 @@ import (
 	"github.com/laevitas/cli/cmd/spot"
 	"github.com/laevitas/cli/cmd/update"
 	"github.com/laevitas/cli/cmd/wallet"
-	wscmd "github.com/laevitas/cli/cmd/ws"
 	"github.com/laevitas/cli/internal/cmdutil"
 	internalConfig "github.com/laevitas/cli/internal/config"
 	"github.com/laevitas/cli/internal/output"
@@ -184,11 +182,9 @@ Twitter:    https://twitter.com/laevitas1` + reset + `
 	rootCmd.AddCommand(instruments.Cmd)
 	rootCmd.AddCommand(analytics.Cmd)
 	rootCmd.AddCommand(wallet.Cmd)
-	rootCmd.AddCommand(wscmd.Cmd)
-	rootCmd.AddCommand(dash.Cmd)
-	rootCmd.AddCommand(watchCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(update.Cmd)
+	registerPlatformCommands()
 
 	// Replace {{FUT}}/{{OPT_C}}/{{OPT_P}}/{{MAT}} tokens in help text with
 	// instrument names computed from time.Now() so examples never go stale.

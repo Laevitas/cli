@@ -1,0 +1,9 @@
+{
+  "name": "laevitas-browser-terminal",
+  "private": true,
+  "version": "0.13.0",
+  "type": "module",
+  "scripts": { "build": "node build.mjs", "test": "node --test test/*.test.js", "test:browser": "playwright test" },
+  "dependencies": { "@wallet-standard/app": "1.1.1" },
+  "devDependencies": { "esbuild": "0.28.2", "@playwright/test": "1.63.0" }
+}
