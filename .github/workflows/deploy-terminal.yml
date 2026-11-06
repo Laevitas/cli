@@ -81,5 +81,4 @@ jobs:
           path: |
             web-terminal/dist
             web-terminal/artifacts/*.png
-            web-terminal/artifacts/terminal-dns-before.json
           retention-days: 30
