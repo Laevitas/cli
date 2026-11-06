@@ -33,8 +33,8 @@ async function setup(page,{badChallenge=false,walletKind='base',sessionLifetime=
     let body={}, status=200;
     if(pathname.endsWith('/auth/challenge')) {
       const now=Date.now();
-      body={id:'11111111-1111-4111-8111-111111111111',audience:origin,address:walletAddress,kind:walletKind,network,nonce:'a'.repeat(32),token:'b'.repeat(64),issuedAt:new Date(now).toISOString(),expiresAt:new Date(now+300000).toISOString()};
-      body.message=`apiv2.laevitas.ch wants you to sign in with your ${walletKind==='base'?'Ethereum':'Solana'} account:\n${walletAddress}\n\nSign in to Laevitas Agents. This does not authorize a payment or access to a dashboard account.\n\nURI: ${origin}/api/v1/agents\nVersion: 1\nChain ID: ${walletKind==='base'?'8453':network}\nNonce: ${body.nonce}\nIssued At: ${body.issuedAt}\nExpiration Time: ${body.expiresAt}`;
+      body={id:'11111111-1111-4111-8111-111111111111',audience:new URL(page.url()).origin,apiOrigin:origin,address:walletAddress,kind:walletKind,network,nonce:'a'.repeat(32),token:'b'.repeat(64),issuedAt:new Date(now).toISOString(),expiresAt:new Date(now+300000).toISOString()};
+      body.message=`${new URL(page.url()).host} wants you to sign in with your ${walletKind==='base'?'Ethereum':'Solana'} account:\n${walletAddress}\n\nSign in to Laevitas Agents. This does not authorize a payment or access to a dashboard account.\n\nURI: ${origin}/api/v1/agents\nVersion: 1\nChain ID: ${walletKind==='base'?'8453':network}\nNonce: ${body.nonce}\nIssued At: ${body.issuedAt}\nExpiration Time: ${body.expiresAt}`;
       if(badChallenge)body.message+='\nSign a payment instead';
     } else if(pathname.endsWith('/auth/verify')) {
       body={sessionToken:token,creditToken:credit,expiresAt:new Date(Date.now()+sessionLifetime).toISOString(),account:{id:'fixture',wallet:{kind:walletKind,address:walletAddress,network}}};

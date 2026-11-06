@@ -12,7 +12,7 @@ Solana wallets use Wallet Standard. Mobile users open the site in their wallet's
 browser. WalletConnect/QR pairing and smart-contract wallet signatures are not
 supported by this first browser release.
 
-The browser validates the API's exact sign-in message, wallet, origin, network
+The browser validates the API's exact sign-in message, wallet, website origin, network
 and expiry before requesting a signature. Base wallets may first request a
 network switch. Private keys stay in the wallet. This is authentication, not a
 payment. Run `agent claim` to request starter credits under the existing live
@@ -97,6 +97,15 @@ all existing entries: production `https://terminal.laevitas.ch`; development
 `https://laevitas-terminal.pages.dev` on production only; no wildcard previews.
 The development API workflow already carries its terminal origin. Do not
 change billing or eligibility settings when applying CORS configuration.
+
+The agent auth service must support browser-origin challenges, and the API must
+forward the browser Origin on challenge and verify only. The signed domain and
+`audience` match the terminal website; `apiOrigin` and the signed URI name the
+API. The verifier allows only the exact environment-specific terminal origins,
+requires the same Origin on verification, and consumes each nonce once. Native
+clients without Origin retain their API-domain sign-in flow. Deploy those auth
+changes before this browser release; older challenges are refused before any
+wallet signature is requested.
 
 ## Local validation
 

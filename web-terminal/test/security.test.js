@@ -4,17 +4,18 @@ import { checkedChallenge } from '../src/wallet.js';
 import { parseCommand, validateArgs, safeOutput } from '../src/commands.js';
 
 const origin = 'https://apiv2.laevitas.ch';
+const browserOrigin = 'https://terminal.laevitas.ch';
 const wallet = '0x1111111111111111111111111111111111111111';
 const now = Date.parse('2026-11-06T12:00:00Z');
 function challenge() {
-  const c = { id:'11111111-1111-4111-8111-111111111111', audience:origin, address:wallet, kind:'base', network:'eip155:8453', nonce:'a'.repeat(32), token:'b'.repeat(64), issuedAt:new Date(now).toISOString(), expiresAt:new Date(now+300000).toISOString() };
-  c.message = `apiv2.laevitas.ch wants you to sign in with your Ethereum account:\n${wallet}\n\nSign in to Laevitas Agents. This does not authorize a payment or access to a dashboard account.\n\nURI: ${origin}/api/v1/agents\nVersion: 1\nChain ID: 8453\nNonce: ${c.nonce}\nIssued At: ${c.issuedAt}\nExpiration Time: ${c.expiresAt}`;
+  const c = { id:'11111111-1111-4111-8111-111111111111', audience:browserOrigin, apiOrigin:origin, address:wallet, kind:'base', network:'eip155:8453', nonce:'a'.repeat(32), token:'b'.repeat(64), issuedAt:new Date(now).toISOString(), expiresAt:new Date(now+300000).toISOString() };
+  c.message = `terminal.laevitas.ch wants you to sign in with your Ethereum account:\n${wallet}\n\nSign in to Laevitas Agents. This does not authorize a payment or access to a dashboard account.\n\nURI: ${origin}/api/v1/agents\nVersion: 1\nChain ID: 8453\nNonce: ${c.nonce}\nIssued At: ${c.issuedAt}\nExpiration Time: ${c.expiresAt}`;
   return c;
 }
 test('only the exact, fresh wallet sign-in challenge reaches a signer', () => {
-  const c = challenge(); assert.equal(checkedChallenge(c,wallet,'base',origin,now),c.message);
-  for (const change of [ {audience:'https://evil.example'}, {address:'0x2222222222222222222222222222222222222222'}, {kind:'solana'}, {network:'eip155:84532'}, {id:'invalid'}, {nonce:'invalid'}, {token:'invalid'}, {message:c.message+'\nApprove a payment'}, {issuedAt:'2026-11-06T11:55:00Z'}, {expiresAt:'2026-11-06T12:00:00Z'}, {expiresAt:'invalid'} ]) {
-    assert.throws(() => checkedChallenge({...c,...change},wallet,'base',origin,now));
+  const c = challenge(); assert.equal(checkedChallenge(c,wallet,'base',origin,browserOrigin,now),c.message);
+  for (const change of [ {audience:origin}, {apiOrigin:'https://evil.example'}, {audience:'https://evil.example'}, {address:'0x2222222222222222222222222222222222222222'}, {kind:'solana'}, {network:'eip155:84532'}, {id:'invalid'}, {nonce:'invalid'}, {token:'invalid'}, {message:c.message+'\nApprove a payment'}, {issuedAt:'2026-11-06T11:55:00Z'}, {expiresAt:'2026-11-06T12:00:00Z'}, {expiresAt:'invalid'} ]) {
+    assert.throws(() => checkedChallenge({...c,...change},wallet,'base',origin,browserOrigin,now));
   }
 });
 test('commands are argv, never a shell, and reject pasted secrets and local-only commands', () => {

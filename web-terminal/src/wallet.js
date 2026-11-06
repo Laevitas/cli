@@ -31,18 +31,18 @@ export function discoverWallets(update) {
   return () => { window.removeEventListener('eip6963:announceProvider', announce); offRegister(); offUnregister(); };
 }
 
-export function checkedChallenge(challenge, address, kind, origin, now = Date.now()) {
+export function checkedChallenge(challenge, address, kind, origin, browserOrigin, now = Date.now()) {
   const issued = Date.parse(challenge?.issuedAt), expires = Date.parse(challenge?.expiresAt);
   const matches = kind === 'base' ? challenge?.address?.toLowerCase() === address.toLowerCase() : challenge?.address === address;
   const dev = origin === 'https://apiv2.devitas.ch';
   const network = kind === 'base' ? (dev ? 'eip155:84532' : 'eip155:8453') : (dev ? 'solana:devnet' : 'solana:mainnet');
-  if (challenge?.audience !== origin || challenge.kind !== kind || !matches || challenge.network !== network ||
+  if (challenge?.audience !== browserOrigin || challenge.apiOrigin !== origin || challenge.kind !== kind || !matches || challenge.network !== network ||
       !uuid.test(challenge.id) || !/^[a-f0-9]{32}$/.test(challenge.nonce) || !/^[a-f0-9]{64}$/.test(challenge.token) ||
       !Number.isFinite(issued) || !Number.isFinite(expires) || expires <= now || expires - issued !== 300000 || Math.abs(issued - now) > 60000) {
     throw new Error('Sign-in challenge does not match this wallet, API, network or time. Nothing was signed.');
   }
   const chain = kind === 'base' ? network.split(':')[1] : network;
-  const expected = `${new URL(origin).host} wants you to sign in with your ${kind === 'base' ? 'Ethereum' : 'Solana'} account:\n${challenge.address}\n\nSign in to Laevitas Agents. This does not authorize a payment or access to a dashboard account.\n\nURI: ${origin}/api/v1/agents\nVersion: 1\nChain ID: ${chain}\nNonce: ${challenge.nonce}\nIssued At: ${challenge.issuedAt}\nExpiration Time: ${challenge.expiresAt}`;
+  const expected = `${new URL(browserOrigin).host} wants you to sign in with your ${kind === 'base' ? 'Ethereum' : 'Solana'} account:\n${challenge.address}\n\nSign in to Laevitas Agents. This does not authorize a payment or access to a dashboard account.\n\nURI: ${origin}/api/v1/agents\nVersion: 1\nChain ID: ${chain}\nNonce: ${challenge.nonce}\nIssued At: ${challenge.issuedAt}\nExpiration Time: ${challenge.expiresAt}`;
   if (challenge.message !== expected) throw new Error('Unexpected sign-in message. Nothing was signed.');
   return expected;
 }
@@ -89,7 +89,7 @@ export async function connectWallet(wallet, origin, onChange, stillCurrent) {
   try {
     if (!stillCurrent()) throw new Error('Wallet connection changed. Reconnect to continue.');
     const challenge = await agentRequest(origin, 'auth/challenge', { method: 'POST', body: { kind: wallet.kind, address } });
-    const message = new TextEncoder().encode(checkedChallenge(challenge, address, wallet.kind, origin));
+    const message = new TextEncoder().encode(checkedChallenge(challenge, address, wallet.kind, origin, location.origin));
     if (!stillCurrent()) throw new Error('Wallet connection changed. Nothing was signed.');
     let signature;
     if (wallet.kind === 'base') {
