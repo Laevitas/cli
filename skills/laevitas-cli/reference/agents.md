@@ -3,6 +3,11 @@
 Agent account commands emit `{success,data,meta}` or `{success:false,error,meta}`.
 `agent mcp` uses MCP JSONRPC over stdio instead. It is a persistent connection.
 
+From v0.13.0, [the browser terminal](https://terminal.laevitas.ch) supports the
+same REST/agent commands with Base/Solana browser-wallet sign-in and tab-only
+credentials. Payment signing, partner calls and stdio MCP still use the
+installed CLI. See [browser integration](../../../docs/browser-terminal.md).
+
 | Command | Purpose / flags |
 |---|---|
 | `agent catalog` / `agent sample` | Free discovery / fixed fictional data |

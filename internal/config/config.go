@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/laevitas/cli/internal/browser"
 )
 
 const (
@@ -28,12 +30,14 @@ const (
 
 // Config holds all CLI configuration.
 type Config struct {
-	APIKey    string `json:"api_key,omitempty"`
-	BaseURL   string `json:"base_url,omitempty"`
-	Exchange  string `json:"exchange,omitempty"`
-	Output    string `json:"output,omitempty"`
-	WalletKey string `json:"wallet_key,omitempty"` // EVM private key for x402 payments
-	Auth      string `json:"auth,omitempty"`       // "auto", "api-key", or "x402"
+	APIKey             string `json:"api_key,omitempty"`
+	BaseURL            string `json:"base_url,omitempty"`
+	Exchange           string `json:"exchange,omitempty"`
+	Output             string `json:"output,omitempty"`
+	WalletKey          string `json:"wallet_key,omitempty"` // EVM private key for x402 payments
+	Auth               string `json:"auth,omitempty"`       // "auto", "api-key", or "x402"
+	BrowserWallet      string `json:"-"`
+	BrowserCreditToken string `json:"-"`
 }
 
 // configDir returns ~/.config/laevitas/
@@ -106,6 +110,13 @@ func Load() (*Config, error) {
 		cfg.Auth = v
 	}
 
+	if browser.Enabled {
+		// These credentials exist only in the browser tab and are never serialized.
+		cfg.APIKey, cfg.WalletKey, cfg.Auth = "", "", AuthTypeCredits
+		if session, ok := browser.Current(cfg.BaseURL); ok {
+			cfg.BrowserWallet, cfg.BrowserCreditToken = session.Wallet, session.CreditToken
+		}
+	}
 	return cfg, nil
 }
 

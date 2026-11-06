@@ -1,0 +1,85 @@
+name: Deploy browser terminal
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Published latest stable tag; leave empty to resolve latest'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  deployments: write
+concurrency:
+  group: browser-terminal-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve the published CLI release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+        run: |
+          latest=$(gh api repos/Laevitas/cli/releases/latest --jq .tag_name)
+          if [[ ! "$latest" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then exit 1; fi
+          if [[ -n "$REQUESTED_TAG" && "$REQUESTED_TAG" != "$latest" ]]; then
+            echo "Refusing to deploy anything other than the latest published stable CLI."
+            exit 1
+          fi
+          echo "tag=$latest" >> "$GITHUB_OUTPUT"
+          echo "version=${latest#v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-terminal/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: web-terminal
+      - run: npm run build && npm test
+        working-directory: web-terminal
+        env:
+          TERMINAL_CLI_VERSION: ${{ steps.release.outputs.version }}
+      - run: npx playwright install --with-deps chromium && npm run test:browser
+        working-directory: web-terminal
+      - run: node scripts/terminal-pages.mjs project
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      - name: Deploy the matching browser build
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          command: pages deploy web-terminal/dist --project-name=laevitas-terminal --branch=main
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          wranglerVersion: '3.114.17'
+      - name: Configure terminal domains
+        run: node scripts/terminal-pages.mjs domains
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: terminal-${{ steps.release.outputs.tag }}
+          path: |
+            web-terminal/dist
+            web-terminal/artifacts/*.png
+            web-terminal/artifacts/terminal-dns-before.json
+          retention-days: 30

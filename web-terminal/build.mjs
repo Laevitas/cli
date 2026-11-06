@@ -1,0 +1,26 @@
+import { build } from 'esbuild';
+import { execFileSync } from 'node:child_process';
+import { mkdir, cp, readFile, writeFile, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+const root = fileURLToPath(new URL('..', import.meta.url));
+const directory = path.join(root, 'web-terminal');
+const dist = path.join(directory, 'dist');
+const version = process.env.TERMINAL_CLI_VERSION || '0.13.0-dev';
+if (!/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?$/.test(version)) throw new Error('Invalid CLI version.');
+const commit = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+await rm(dist, { recursive: true, force: true });
+await mkdir(dist, { recursive: true });
+await cp(path.join(directory, 'public'), dist, { recursive: true });
+await build({ entryPoints: [path.join(directory, 'src/app.js')], bundle: true, format: 'esm', target: 'es2022', outfile: path.join(dist, 'app.js'), minify: true, sourcemap: false });
+const goroot = execFileSync('go', ['env', 'GOROOT'], { cwd: root, encoding: 'utf8' }).trim();
+const runtime = await readFile(path.join(goroot, 'lib/wasm/wasm_exec.js'), 'utf8');
+const worker = await readFile(path.join(directory, 'src/worker.js'), 'utf8');
+await writeFile(path.join(dist, 'worker.js'), runtime + '\n' + worker.replace("import './wasm_exec.js';", ''));
+execFileSync('go', ['build', '-buildvcs=false', '-trimpath', '-ldflags', `-s -w -X github.com/laevitas/cli/internal/version.Version=${version} -X github.com/laevitas/cli/internal/version.CommitSHA=${commit} -X github.com/laevitas/cli/internal/version.BuildDate=${new Date().toISOString()}`, '-o', path.join(dist, 'laevitas.wasm'), '.'], { cwd: root, env: { ...process.env, GOOS: 'js', GOARCH: 'wasm', CGO_ENABLED: '0' }, stdio: 'inherit' });
+const sha256 = {};
+for (const file of ['laevitas.wasm', 'worker.js']) sha256[file] = createHash('sha256').update(await readFile(path.join(dist, file))).digest('hex');
+await writeFile(path.join(dist, 'build.json'), JSON.stringify({ version, commit, sha256 }) + '\n');
+console.log(`Browser CLI ${version} (${commit}) built.`);

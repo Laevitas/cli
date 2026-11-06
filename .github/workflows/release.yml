@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   packages: write
+  deployments: write
 
 jobs:
   goreleaser:
@@ -35,3 +36,11 @@ jobs:
           # to enable automatic tap formula / manifest publishing. If unset,
           # goreleaser logs a warning and skips those steps.
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+  browser-terminal:
+    needs: goreleaser
+    if: ${{ !contains(github.ref_name, '-') }}
+    uses: ./.github/workflows/deploy-terminal.yml
+    with:
+      release_tag: ${{ github.ref_name }}
+    secrets: inherit

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Run the Laevitas CLI in your browser. Connect your Web3 wallet, explore the catalog and use your API credits.">
+  <meta name="referrer" content="no-referrer"><title>Laevitas Terminal</title>
+  <link rel="stylesheet" href="/style.css"><link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header><a class="brand" href="https://www.laevitas.ch" aria-label="Laevitas home"><img src="/logo.svg" alt="Laevitas" width="32" height="32"></a><span class="title">Terminal</span><span id="version" class="badge">Loading CLI</span><span id="environment" class="badge"></span><div class="header-actions"><a href="https://cli.laevitas.ch" target="_blank" rel="noopener noreferrer">Install CLI ↗</a><button id="connect">Connect wallet</button></div></header>
+  <main>
+    <section class="intro"><div><span class="eyebrow">YOUR CLI. IN YOUR BROWSER.</span><h1>Start with a command.</h1><p>Explore market data with Laevitas. Connect your wallet to use your credits.</p></div><div class="privacy"><span class="dot"></span> Runs locally in this tab<br><span>Keys stay in your wallet.</span></div></section>
+    <nav class="shortcuts" aria-label="Suggested commands"><button data-command="agent catalog">Browse products</button><button data-command="agent sample">Try free sample</button><button data-command="agent claim">Claim starter credits</button><button data-command="agent balance">Check credits</button><button data-command="--help">Help</button></nav>
+    <section class="terminal" aria-label="Laevitas command terminal"><div class="terminal-bar"><span><span class="dot"></span> <span id="runtime-status" role="status">Loading the CLI…</span></span><div><button id="stop" disabled>Stop</button><button id="clear">Clear</button></div></div><div id="output" role="log" aria-label="Command output" aria-live="polite"></div><form id="command-form" autocomplete="off"><label for="command">laevitas <span>›</span></label><input id="command" name="command" placeholder="agent sample" aria-label="Laevitas command" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="16000" disabled><button id="run" type="submit" disabled>Run ↵</button></form></section>
+    <footer><span id="wallet-status">No wallet connected · Catalog and sample are free</span><span id="balance"></span><span id="api-origin"></span></footer>
+    <details><summary>Using agents and the installed CLI</summary><p>Browser agents can call <code>window.laevitasTerminal.run({args:["agent","catalog"]})</code> and read structured output. Wallet connection requires the owner's approval. Commands do not run from URL parameters.</p><p>This browser build supports REST market data, wallet sign-in, eligible starter claims, balance, usage, quotes and Enterprise key management. Streaming, TUI dashboards, stdio MCP, local files and payment signing use the <a href="https://cli.laevitas.ch">installed CLI</a>. Credits and subscription rules are the same.</p><p>Credentials and command history stay in tab memory. Refreshing, disconnecting or session expiry clears them. Never paste a private key or seed phrase into the terminal. Each published CLI release updates the web build; reload to load an available update.</p></details>
+  </main>
+  <dialog id="wallet-dialog" aria-labelledby="wallet-title"><div class="dialog-heading"><h2 id="wallet-title">Connect your wallet</h2><button id="close-wallet" aria-label="Close wallet selection">✕</button></div><p>Sign in with Base or Solana. This signature authorizes sign-in only.</p><div id="wallet-list"></div><p id="wallet-error" role="alert"></p><p class="hint">No wallet detected? Open this page inside your wallet's browser or install a browser wallet extension.</p></dialog>
+</body>
+</html>

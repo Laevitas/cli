@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.13.0] — 2026-11-06
+
+### Added
+
+- Browser terminal at `terminal.laevitas.ch` and `terminal.devitas.ch`, running
+  the actual Go CLI as WebAssembly with desktop/mobile layouts.
+- Base and Solana browser-wallet sign-in, tab-only credentials, existing-credit
+  REST access, eligible starter claims and Enterprise key management.
+- `window.laevitasTerminal.run({args})` for browser agents, structured command
+  discovery, and a free sample before connecting a wallet.
+- Mock-wallet browser tests for challenge validation, credits, cancellation,
+  expiry, logout, account changes and credential-safe redirects.
+
+### Changed
+
+- Each stable CLI release deploys a matching browser build after GoReleaser;
+  Homebrew, Scoop and the six native archives retain the existing release flow.
+- Browser builds omit local configuration, streaming/TUI, stdio MCP, partner
+  calls and payment signing. These remain available in the installed CLI.
+  Browser data requests use existing credits only; billing and subscriptions
+  keep their existing rules.
+
 ## [0.12.3] — 2026-11-06
 
 ### Fixed

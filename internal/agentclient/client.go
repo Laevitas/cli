@@ -24,6 +24,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/laevitas/cli/internal/browser"
 	"github.com/laevitas/cli/internal/config"
 	"github.com/laevitas/cli/internal/x402"
 )
@@ -78,6 +79,24 @@ func New(cfg *config.Config) (*Client, error) {
 	sum := sha256.Sum256([]byte(c.origin + "\n" + strings.ToLower(c.wallet)))
 	c.file = filepath.Join(filepath.Dir(path), "agent-"+hex.EncodeToString(sum[:])+".json")
 	c.state = state{Origin: c.origin, Wallet: c.wallet, Checkouts: map[string]checkout{}}
+	if browser.Enabled {
+		if session, ok := browser.Current(c.origin); ok {
+			c.wallet = session.Wallet
+			key := c.origin + "\n" + c.wallet
+			if data := browser.Load(key); len(data) != 0 {
+				_ = json.Unmarshal(data, &c.state)
+			}
+			if c.state.Origin != c.origin || c.state.Wallet != c.wallet {
+				c.state = state{Checkouts: map[string]checkout{}}
+			}
+			c.state.Origin, c.state.Wallet, c.state.Network = c.origin, c.wallet, session.Network
+			c.state.Session, c.state.ExpiresAt = session.SessionToken, session.ExpiresAt
+		}
+		if c.state.Checkouts == nil {
+			c.state.Checkouts = map[string]checkout{}
+		}
+		return c, nil
+	}
 	data, err := os.ReadFile(c.file)
 	if err == nil {
 		if json.Unmarshal(data, &c.state) != nil {
@@ -99,6 +118,10 @@ func (c *Client) save() error {
 	data, err := json.Marshal(c.state)
 	if err != nil {
 		return err
+	}
+	if browser.Enabled {
+		browser.Save(c.origin+"\n"+c.wallet, data)
+		return nil
 	}
 	return config.WritePrivateFile(c.file, data)
 }
@@ -175,6 +198,19 @@ func (c *Client) ensureSession(ctx context.Context) error {
 	return err
 }
 func (c *Client) Login(ctx context.Context) (map[string]any, error) {
+	if browser.Enabled {
+		session, err := browser.Login(ctx, c.origin)
+		if err != nil {
+			return nil, err
+		}
+		if session.Wallet != c.wallet {
+			c.state.Checkouts = map[string]checkout{}
+		}
+		c.wallet = session.Wallet
+		c.state.Origin, c.state.Wallet, c.state.Network = c.origin, c.wallet, session.Network
+		c.state.Session, c.state.ExpiresAt = session.SessionToken, session.ExpiresAt
+		return map[string]any{"account": session.Account, "expiresAt": session.ExpiresAt, "authenticated": true}, c.save()
+	}
 	if c.wallet == "" {
 		return nil, fmt.Errorf("configure a wallet with laevitas wallet init or LAEVITAS_WALLET_KEY")
 	}
@@ -251,6 +287,19 @@ func (c *Client) Usage(ctx context.Context, before string) (map[string]any, erro
 	return c.call(ctx, "GET", path, nil, true)
 }
 func (c *Client) Logout(ctx context.Context) (map[string]any, error) {
+	if browser.Enabled {
+		// Clear tab credentials even if revocation is unavailable. Never ask
+		// someone to sign in just to sign out.
+		defer browser.Clear()
+		if c.state.Session == "" || time.Until(c.state.ExpiresAt) <= 0 {
+			return map[string]any{"authenticated": false}, nil
+		}
+		data, res, err := c.request(ctx, "POST", prefix+"auth/logout", nil, map[string]string{"Authorization": "Bearer " + c.state.Session})
+		if err != nil {
+			return nil, fmt.Errorf("local session cleared; server revocation unavailable, session will expire")
+		}
+		return decode(data, res)
+	}
 	result, err := c.call(ctx, "POST", prefix+"auth/logout", nil, true)
 	if err != nil {
 		return nil, err
