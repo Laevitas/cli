@@ -69,8 +69,17 @@ jobs:
           command: pages deploy web-terminal/dist --project-name=laevitas-terminal --branch=main
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
           wranglerVersion: '3.114.17'
-      - name: Configure terminal domains
-        run: node scripts/terminal-pages.mjs domains
+      # Hosting repairs must not require a new CLI release. Application assets
+      # above still come exclusively from the published tag.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: .terminal-operations
+          sparse-checkout: scripts/terminal-pages.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Register terminal domain bindings
+        run: node .terminal-operations/scripts/terminal-pages.mjs bindings
         env:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}

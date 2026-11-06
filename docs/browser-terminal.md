@@ -84,14 +84,28 @@ that tag after fixing infrastructure. The release still uses GoReleaser for all
 six native archives, checksums, Homebrew and Scoop.
 
 Secrets: `CF_API_TOKEN` and `CF_ACCOUNT_ID` (same inherited credentials as the
-existing CLI and onboarding sites). Project deployment requires Pages Edit.
-Domain setup additionally needs Zone Read and DNS Edit on `devitas.ch` and
-`laevitas.ch`. `scripts/terminal-pages.mjs` changes only the two `terminal`
+existing CLI and onboarding sites). Project deployment and domain bindings
+require Pages Edit; routine releases do not require DNS permissions. Deployment
+uses the current hosting script from `main` while all browser assets come from
+the published release tag. A successful Pages deploy alone does not confirm
+that custom-domain DNS or TLS is active: verify both URLs separately.
+
+The separate `Configure terminal DNS` workflow inspects or configures DNS with
+`CF_DNS_API_TOKEN` (falling back to `CF_API_TOKEN`). Configuration needs Zone Read
+and DNS Edit on `devitas.ch` and `laevitas.ch`. Run the deployment first to
+register Pages bindings with the hosting token.
+DNS zones need not share the Pages account. `scripts/terminal-pages.mjs` changes only the two `terminal`
 records, keeps their prior configuration on the ephemeral deployment runner, and binds
 them to `laevitas-terminal.pages.dev`. It never changes the apex or Welcome.
 DNS record contents are excluded from public workflow artifacts. The old dev
 gateway and ingress are retained for rollback until routing has been verified;
 its cluster ingress address can restore the previous dev route if needed.
+
+If managing DNS manually, register the Pages bindings through the deployment,
+then set both `terminal` records to proxied CNAMEs targeting
+`laevitas-terminal.pages.dev`. Replace the existing dev terminal record rather
+than adding a conflicting record. Wait for HTTPS activation and verify
+`/build.json` and `agent sample` on both domains.
 
 The APIs must allow exact terminal origins in `CORS_ALLOWED_ORIGINS`, preserving
 all existing entries: production `https://terminal.laevitas.ch`; development
