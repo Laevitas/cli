@@ -37,6 +37,11 @@ See [all agent commands and flags](reference/agents.md), including `agent mcp`,
 `agent keys`, `agent partner`, `--request-id`, `--cycle`, `--before`, `--origin`,
 `--signer`, `--message`, `--context-id` and `LAEVITAS_CONFIG_DIR`.
 
+For Welcome discovery (v0.12.3+), use `agent partner inspect --origin https://agents.laevitas.ch`
+with the pinned `--signer` from [the partner instructions](../../examples/agents/partner-6022.md).
+Only its exact discovery redirects to Railway are allowed. `partner ask` uses the
+verified signed endpoint and stops at HTTP 402 without signing or paying.
+
 ## Quick start
 
 ```bash

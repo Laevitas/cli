@@ -4,7 +4,9 @@
 Your agent talks directly to Welcome at
 `https://velvet-otter-7392-prod-laevitas.up.railway.app`.
 Welcome stays there; publishing signed discovery under a Laevitas domain is not
-required. No factory API key or 6022 mint is needed.
+required. Its two public discovery paths now redirect with HTTP 307 to Welcome's
+signed Railway documents, so agents can start discovery at the Laevitas domain.
+No factory API key or 6022 mint is needed.
 
 ## Connection information
 
@@ -40,18 +42,26 @@ required. No factory API key or 6022 mint is needed.
 ## Verify discovery with the Laevitas CLI
 
 ```sh
-laevitas agent partner inspect --origin https://velvet-otter-7392-prod-laevitas.up.railway.app --signer 0x0E0ea97e037d079a36EDeb37824c1bE0E2BA0F4C
+# v0.12.3+: start at the Laevitas discovery entry point, with the pinned signer:
+laevitas agent partner inspect --origin https://agents.laevitas.ch --signer 0x0E0ea97e037d079a36EDeb37824c1bE0E2BA0F4C
 # Sends an unsigned request; stops at HTTP 402 without signing or paying:
-laevitas agent partner ask --origin https://velvet-otter-7392-prod-laevitas.up.railway.app --signer 0x0E0ea97e037d079a36EDeb37824c1bE0E2BA0F4C --message "Show me how to discover Laevitas products"
+laevitas agent partner ask --origin https://agents.laevitas.ch --signer 0x0E0ea97e037d079a36EDeb37824c1bE0E2BA0F4C --message "Show me how to discover Laevitas products"
 # For an endpoint that has returned a successful turn, continue its context:
-laevitas agent partner ask --origin https://velvet-otter-7392-prod-laevitas.up.railway.app --signer 0x0E0ea97e037d079a36EDeb37824c1bE0E2BA0F4C --context-id CONTEXT --message "What is free to try?"
+laevitas agent partner ask --origin https://agents.laevitas.ch --signer 0x0E0ea97e037d079a36EDeb37824c1bE0E2BA0F4C --context-id CONTEXT --message "What is free to try?"
 ```
+
+The original Railway `--origin` also remains supported, including by older CLI
+versions. The connection JSON above keeps the runtime's canonical URLs intact.
 
 The CLI verifies both signed documents with RFC 8785/JCS canonicalization and
 ES256K JWS using SHA-256 against the supplied expected signer. It reads the A2A
 1.0 JSONRPC URL from `supportedInterfaces` and sends `SendMessage` there. It
-refuses redirects, changed signers, cross-origin interfaces and invalid/error
-replies. Laevitas credentials are never sent to the partner.
+allows one exact HTTP 307 discovery hop from `agents.laevitas.ch` to the Railway
+origin only when `--signer` is supplied. Both documents must resolve to that same
+origin. Inspection reports `discoveryOrigin` separately from canonical `origin`
+and `endpoint`. It refuses other redirects, A2A POST redirects, changed signers,
+cross-origin interfaces and invalid/error replies. Laevitas credentials are never
+sent to the partner.
 
 `inspect` also checks the canonical 6022 registry and NFT binding on Polygon or
 Amoy at one block. `registryVerified` is true only when all checks match;

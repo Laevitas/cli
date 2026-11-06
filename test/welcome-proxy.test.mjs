@@ -25,28 +25,35 @@ test('homepage and Laevitas discovery stay available without contacting Welcome'
   assert.equal(globalThis.fetch.mock.callCount(), 0);
 });
 
-test('website discovery is an honest 404 with links to the real signed documents', async t => {
+test('public discovery redirects GET and HEAD to the exact signed documents', async t => {
   t.mock.method(globalThis, 'fetch', () => { throw new Error('website must not call upstream'); });
   for (const path of ['/.well-known/6022', '/.well-known/agent-card.json']) {
-    const response = await website.fetch(new Request(origin + path));
-    assert.equal(response.status, 404);
-    assert.equal(response.headers.get('content-type'), 'application/json');
-    assert.equal(response.headers.get('location'), null);
-    const body = await response.json();
-    assert.equal(body.error, 'not_found');
-    assert.deepEqual(body.welcome, { origin: welcome, agentCard: `${welcome}/.well-known/agent-card.json`, discovery6022: `${welcome}/.well-known/6022`, a2a: `${welcome}/api/a2a` });
-    assert.equal(body.signatures, undefined);
-    assert.equal(body.supportedInterfaces, undefined);
-    assert.doesNotMatch(body.message, /pending|must publish/i);
-    const head = await website.fetch(new Request(origin + path, { method: 'HEAD' }));
-    assert.equal(head.status, 404); assert.equal(await head.text(), '');
+    for (const method of ['GET', 'HEAD']) {
+      const response = await website.fetch(new Request(origin + path + '?next=https://untrusted.example&token=not-forwarded', { method }));
+      assert.equal(response.status, 307);
+      assert.equal(response.headers.get('location'), welcome + path);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      assert.equal(await response.text(), '');
+    }
   }
   assert.equal(globalThis.fetch.mock.callCount(), 0);
 });
 
+test('conversation paths remain explicit 404s, with no fabricated agent identity', async () => {
+  for (const path of ['/api/a2a', '/api/responses']) {
+    const response = await website.fetch(new Request(origin + path));
+    assert.equal(response.status, 404);
+    const body = await response.json();
+    assert.equal(body.error, 'not_found');
+    assert.equal(body.welcome.a2a, `${welcome}/api/a2a`);
+    assert.equal(body.signatures, undefined);
+    assert.equal(body.supportedInterfaces, undefined);
+  }
+});
+
 test('never forwards messages, signatures or credentials from the website', async t => {
   t.mock.method(globalThis, 'fetch', () => { throw new Error('website must not call upstream'); });
-  for (const path of ['/', '/skill.md', '/.well-known/agent-card.json', '/api/a2a', '/a2a', '/api/responses', '/admin', '/console', '/health']) {
+  for (const path of ['/', '/skill.md', '/.well-known/agent-card.json', '/.well-known/6022', '/api/a2a', '/a2a', '/api/responses', '/admin', '/console', '/health']) {
     const response = await website.fetch(new Request(origin + path, {
       method: 'POST', body: '{"message":"local-test-only"}', headers: {
         'content-type': 'application/json', 'payment-signature': 'fixture-only',

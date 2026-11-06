@@ -88,9 +88,9 @@ main.go → cmd/root.go → cmd/{futures,perps,options,spot,predictions,instrume
 
 `welcome-proxy/` deploys to `agents.laevitas.ch` through `deploy-welcome.yml`,
 independently of CLI binary releases. Always check `GET /` and `HEAD /` as well as
-the truthful discovery 404s after deployment. This domain is the onboarding
-website; Welcome stays at its signed Railway origin. No own-domain publication
-is required. Never proxy signatures, expose the partner's owner console or
+the exact HTTP 307 discovery redirects and POST refusal after deployment. This
+domain is the onboarding website and discovery entry point; Welcome stays at
+its signed Railway origin. Never proxy signatures, expose the partner's owner console or
 fabricate signed discovery. See `docs/welcome-domain.md`.
 
 ## Build & Run

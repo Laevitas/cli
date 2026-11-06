@@ -4,6 +4,8 @@ const PUBLIC_LINKS = {
   '/skill.md': 'https://apiv2.laevitas.ch/skill.md',
   '/.well-known/laevitas-agents.json': 'https://apiv2.laevitas.ch/api/v1/agents/catalog',
   '/.well-known/x402': 'https://apiv2.laevitas.ch/.well-known/x402',
+  '/.well-known/agent-card.json': `${WELCOME_ORIGIN}/.well-known/agent-card.json`,
+  '/.well-known/6022': `${WELCOME_ORIGIN}/.well-known/6022`,
 };
 
 /** This domain is an onboarding website. Welcome stays at its signed Railway

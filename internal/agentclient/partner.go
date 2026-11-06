@@ -38,6 +38,7 @@ type partnerCard struct {
 }
 type partner struct {
 	origin, endpoint, signer string
+	discoveryOrigin          string
 	discovery                map[string]any
 	card                     partnerCard
 	http                     *http.Client
@@ -116,32 +117,58 @@ func Verify6022(raw []byte, expectedSigner string) (string, error) {
 	return "", fmt.Errorf("6022 signature or expected signer did not match")
 }
 func inspectPartner(ctx context.Context, origin, expectedSigner string) (*partner, error) {
+	return inspectPartnerWithTransport(ctx, origin, expectedSigner, nil)
+}
+
+const laevitasDiscoveryOrigin = "https://agents.laevitas.ch"
+const laevitasWelcomeOrigin = "https://velvet-otter-7392-prod-laevitas.up.railway.app"
+
+func inspectPartnerWithTransport(ctx context.Context, origin, expectedSigner string, transport http.RoundTripper) (*partner, error) {
 	u, err := url.Parse(origin)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") ||
 		(u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost"))) {
 		return nil, fmt.Errorf("partner origin must be HTTPS without a path")
 	}
-	p := &partner{origin: u.Scheme + "://" + u.Host, http: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
-	fetch := func(path string) ([]byte, error) {
-		req, err := http.NewRequestWithContext(ctx, "GET", p.origin+path, nil)
+	p := &partner{discoveryOrigin: u.Scheme + "://" + u.Host, http: &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
+	fetch := func(path string) ([]byte, string, error) {
+		req, err := http.NewRequestWithContext(ctx, "GET", p.discoveryOrigin+path, nil)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		res, err := p.http.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("partner discovery unavailable")
+			return nil, "", fmt.Errorf("partner discovery unavailable")
+		}
+		resolvedOrigin := p.discoveryOrigin
+		if res.StatusCode == http.StatusTemporaryRedirect {
+			location := res.Header.Get("Location")
+			res.Body.Close()
+			// Only public discovery GETs may cross this fixed alias. Never carry
+			// credentials, follow another hop or apply this rule to an A2A POST.
+			if !strings.EqualFold(p.discoveryOrigin, laevitasDiscoveryOrigin) || strings.TrimSpace(expectedSigner) == "" || location != laevitasWelcomeOrigin+path {
+				return nil, "", fmt.Errorf("untrusted discovery redirect; the Laevitas alias requires its exact HTTPS destination and --signer")
+			}
+			req, err = http.NewRequestWithContext(ctx, "GET", location, nil)
+			if err != nil {
+				return nil, "", err
+			}
+			res, err = p.http.Do(req)
+			if err != nil {
+				return nil, "", fmt.Errorf("partner discovery unavailable")
+			}
+			resolvedOrigin = laevitasWelcomeOrigin
 		}
 		defer res.Body.Close()
 		if res.StatusCode != 200 {
-			return nil, fmt.Errorf("partner discovery returned HTTP %d", res.StatusCode)
+			return nil, "", fmt.Errorf("partner discovery returned HTTP %d", res.StatusCode)
 		}
 		raw, err := io.ReadAll(io.LimitReader(res.Body, 1024*1024+1))
 		if err != nil || len(raw) > 1024*1024 {
-			return nil, fmt.Errorf("partner document is incomplete or too large")
+			return nil, "", fmt.Errorf("partner document is incomplete or too large")
 		}
-		return raw, nil
+		return raw, resolvedOrigin, nil
 	}
-	raw, err := fetch("/.well-known/6022")
+	raw, resolvedOrigin, err := fetch("/.well-known/6022")
 	if err != nil {
 		return nil, err
 	}
@@ -152,10 +179,15 @@ func inspectPartner(ctx context.Context, origin, expectedSigner string) (*partne
 	if json.Unmarshal(raw, &p.discovery) != nil || p.discovery["protocol"] != "6022" || p.discovery["protocolVersion"] != "0.1" {
 		return nil, fmt.Errorf("unsupported 6022 discovery version")
 	}
-	raw, err = fetch("/.well-known/agent-card.json")
+	raw, cardOrigin, err := fetch("/.well-known/agent-card.json")
 	if err != nil {
 		return nil, err
 	}
+	if cardOrigin != resolvedOrigin {
+		return nil, fmt.Errorf("partner discovery documents resolve to different origins")
+	}
+	p.origin = resolvedOrigin
+	u, _ = url.Parse(resolvedOrigin)
 	if _, err = Verify6022(raw, p.signer); err != nil {
 		return nil, err
 	}
@@ -192,7 +224,7 @@ func InspectPartnerWithRPC(ctx context.Context, origin, signer, rpcURL string) (
 		return nil, err
 	}
 	registry := verifyPartnerRegistry(ctx, p, rpcURL)
-	return map[string]any{"origin": p.origin, "name": p.card.Name, "endpoint": p.endpoint, "signer": p.signer,
+	return map[string]any{"origin": p.origin, "discoveryOrigin": p.discoveryOrigin, "name": p.card.Name, "endpoint": p.endpoint, "signer": p.signer,
 		"signatureVerified": true, "matchesExpectedSigner": signer != "", "registryVerified": registry.Verified, "registry": registry, "liveExchangeVerified": false,
 		"ensDomain": p.discovery["ensDomain"], "paymentMethods": p.discovery["paymentMethods"], "skills": p.card.Skills,
 		"next": "Registry checks read the canonical 6022 chain directly; L1 ENS/CCIP resolution and a live A2A conversation are separate checks."}, nil

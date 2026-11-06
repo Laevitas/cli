@@ -6,11 +6,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/ethereum/go-ethereum/crypto"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // Sorted ASCII keys below are an independently specified JCS test payload.
@@ -48,7 +50,7 @@ func Test6022DetachedJWSUsesSHA256AndRejectsTampering(t *testing.T) {
 	}
 }
 func TestPartnerUsesAdvertisedInterfaceAndNeverPays(t *testing.T) {
-	for _, mode := range []string{"reply", "payment", "rpc-error"} {
+	for _, mode := range []string{"reply", "payment", "rpc-error", "redirect"} {
 		t.Run(mode, func(t *testing.T) {
 			var origin string
 			calls := 0
@@ -63,6 +65,11 @@ func TestPartnerUsesAdvertisedInterfaceAndNeverPays(t *testing.T) {
 					w.Write(signedDocument(fmt.Sprintf(`{"capabilities":{},"defaultInputModes":["text/plain"],"defaultOutputModes":["text/plain"],"description":"Test agent","name":"Example","skills":[{"description":"Echo text","id":"echo","name":"Echo","tags":[]}],"supportedInterfaces":[{"protocolBinding":"JSONRPC","protocolVersion":"1.0","url":"%s/api/custom"}],"version":"1"}`, origin), false))
 				case "/api/custom":
 					calls++
+					if mode == "redirect" {
+						w.Header().Set("Location", origin+"/not-advertised")
+						w.WriteHeader(http.StatusTemporaryRedirect)
+						return
+					}
 					var request map[string]any
 					json.NewDecoder(r.Body).Decode(&request)
 					if request["method"] != "SendMessage" {
@@ -98,9 +105,9 @@ func TestPartnerUsesAdvertisedInterfaceAndNeverPays(t *testing.T) {
 				t.Fatal("inspection overclaimed verification")
 			}
 			result, err := AskPartner(context.Background(), origin, inspected["signer"].(string), "nonce-739", "test-context")
-			if mode == "rpc-error" {
+			if mode == "rpc-error" || mode == "redirect" {
 				if err == nil {
-					t.Fatal("JSONRPC error accepted as success")
+					t.Fatal("JSONRPC error or redirect accepted as success")
 				}
 				return
 			}
@@ -109,6 +116,117 @@ func TestPartnerUsesAdvertisedInterfaceAndNeverPays(t *testing.T) {
 			}
 			if (result["delivered"] == true) != (mode == "reply") {
 				t.Fatal("incorrect delivery status", result)
+			}
+		})
+	}
+}
+
+type partnerTransportFunc func(*http.Request) (*http.Response, error)
+
+func (f partnerTransportFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestPartnerDiscoveryAliasRequiresPinnedSignerAndExactDestination(t *testing.T) {
+	discovery := signedDocument(`{"protocol":"6022","protocolVersion":"0.1"}`, false)
+	signer, err := Verify6022(discovery, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := func(endpoint string) []byte {
+		return signedDocument(fmt.Sprintf(`{"capabilities":{},"defaultInputModes":["text/plain"],"defaultOutputModes":["text/plain"],"description":"Test agent","name":"Welcome","skills":[{"description":"Echo text","id":"echo","name":"Echo","tags":[]}],"supportedInterfaces":[{"protocolBinding":"JSONRPC","protocolVersion":"1.0","url":"%s"}],"version":"1"}`, endpoint), false)
+	}
+	cases := []struct {
+		name, origin, pin, location, endpoint, wantError string
+		status, wantCalls                                int
+		secondHop, cardAtAlias, tamperedCard             bool
+	}{
+		{name: "verified alias", wantCalls: 4},
+		{name: "direct canonical origin", origin: laevitasWelcomeOrigin, wantCalls: 2},
+		{name: "missing signer", pin: "none", wantError: "requires its exact HTTPS destination and --signer", wantCalls: 1},
+		{name: "wrong signer", pin: "0x0000000000000000000000000000000000000000", wantError: "expected signer did not match", wantCalls: 2},
+		{name: "untrusted alias", origin: "https://other.example", wantError: "untrusted discovery redirect", wantCalls: 1},
+		{name: "wrong status", status: http.StatusFound, wantError: "HTTP 302", wantCalls: 1},
+		{name: "different host", location: "https://other.example/.well-known/6022", wantError: "untrusted discovery redirect", wantCalls: 1},
+		{name: "HTTP downgrade", location: strings.Replace(laevitasWelcomeOrigin, "https:", "http:", 1) + "/.well-known/6022", wantError: "untrusted discovery redirect", wantCalls: 1},
+		{name: "different path", location: laevitasWelcomeOrigin + "/api/a2a", wantError: "untrusted discovery redirect", wantCalls: 1},
+		{name: "query parameters", location: laevitasWelcomeOrigin + "/.well-known/6022?next=other", wantError: "untrusted discovery redirect", wantCalls: 1},
+		{name: "fragment", location: laevitasWelcomeOrigin + "/.well-known/6022#other", wantError: "untrusted discovery redirect", wantCalls: 1},
+		{name: "second hop", secondHop: true, wantError: "HTTP 307", wantCalls: 2},
+		{name: "mixed origins", cardAtAlias: true, wantError: "resolve to different origins", wantCalls: 3},
+		{name: "tampered card", tamperedCard: true, wantError: "expected signer did not match", wantCalls: 4},
+		{name: "cross-origin interface", endpoint: "https://other.example/api/a2a", wantError: "no supported same-origin", wantCalls: 4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			origin, pin, endpoint := tc.origin, tc.pin, tc.endpoint
+			if origin == "" {
+				origin = laevitasDiscoveryOrigin
+			}
+			if pin == "" {
+				pin = signer
+			} else if pin == "none" {
+				pin = ""
+			}
+			if endpoint == "" {
+				endpoint = laevitasWelcomeOrigin + "/api/a2a"
+			}
+			calls := 0
+			transport := partnerTransportFunc(func(req *http.Request) (*http.Response, error) {
+				calls++
+				if req.Method != "GET" || len(req.Header) != 0 || req.Body != nil {
+					t.Fatalf("discovery carried a body, credentials or unexpected method: %s", req.Method)
+				}
+				res := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Request: req}
+				raw := discovery
+				isCard := req.URL.Path == "/.well-known/agent-card.json"
+				if isCard {
+					raw = card(endpoint)
+					if tc.tamperedCard {
+						raw = []byte(strings.Replace(string(raw), `"name":"Welcome"`, `"name":"Impostor"`, 1))
+					}
+				} else if req.URL.Path != "/.well-known/6022" {
+					t.Fatalf("unexpected path: %s", req.URL.Path)
+				}
+				if req.URL.Scheme+"://"+req.URL.Host == laevitasWelcomeOrigin {
+					if tc.secondHop {
+						res.StatusCode = http.StatusTemporaryRedirect
+						res.Header.Set("Location", "https://other.example"+req.URL.Path)
+					}
+				} else if req.URL.Scheme+"://"+req.URL.Host == origin {
+					if !(isCard && tc.cardAtAlias) {
+						res.StatusCode = http.StatusTemporaryRedirect
+						if tc.status != 0 {
+							res.StatusCode = tc.status
+						}
+						location := laevitasWelcomeOrigin + req.URL.Path
+						if tc.location != "" {
+							location = tc.location
+						}
+						res.Header.Set("Location", location)
+						res.Header.Set("Set-Cookie", "session=never-forward; Secure")
+					}
+				} else {
+					t.Fatalf("contacted an untrusted destination: %s", req.URL)
+				}
+				res.Body = io.NopCloser(strings.NewReader(string(raw)))
+				return res, nil
+			})
+			p, err := inspectPartnerWithTransport(context.Background(), origin, pin, transport)
+			if calls != tc.wantCalls {
+				t.Fatalf("made %d requests, want %d", calls, tc.wantCalls)
+			}
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("want error containing %q, got %v", tc.wantError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.discoveryOrigin != origin || p.origin != laevitasWelcomeOrigin || p.endpoint != endpoint || p.signer != signer {
+				t.Fatal("discovery alias changed the signed canonical identity")
 			}
 		})
 	}
