@@ -36,6 +36,16 @@ See [working setup examples](../../../examples/agents/README.md),
 [stdio MCP configuration](../../../examples/agents/mcp.json), and
 [6022 verification boundaries](../../../examples/agents/partner-6022.md).
 
+### Welcome partner access
+
+`agents.laevitas.ch` is the onboarding website. Use the Railway origin and pinned
+expected signer in the [Welcome instructions](../../../examples/agents/partner-6022.md).
+Both discovery signatures must verify. Free access requires an x402 v2 signature
+for a supported `exact` offer with amount `"0"` on Polygon (`eip155:137`).
+`partner ask` stops at 402 without signing; use a compatible local signer that
+rejects paid offers. No factory API key, own-domain publication or 6022 mint is
+required. This does not change Laevitas REST/MCP billing or starter eligibility.
+
 ### Free starter credits
 
 Run `laevitas update` and use your existing locally configured wallet. A newly generated empty wallet does not qualify for free live-data credits; `laevitas agent sample` remains free.
