@@ -7,7 +7,7 @@ const project = 'laevitas-terminal';
 const target = `${project}.pages.dev`;
 
 export async function configure({ account, token, mode, fetcher = fetch, snapshot = async () => {} }) {
-  if (!account || !token || !['project', 'domains'].includes(mode)) throw new Error('Cloudflare account, token and project/domains mode are required.');
+  if (!account || !token || !['project', 'bindings', 'status', 'domains'].includes(mode)) throw new Error('Cloudflare account, token and project/bindings/status/domains mode are required.');
   const base = `/accounts/${encodeURIComponent(account)}/pages/projects`;
   async function api(path, method = 'GET', body, missing = false) {
     const response = await fetcher(`https://api.cloudflare.com/client/v4${path}`, {
@@ -25,12 +25,32 @@ export async function configure({ account, token, mode, fetcher = fetch, snapsho
     console.log('Terminal Pages project is ready.');
     return;
   }
+  if (mode === 'bindings') {
+    const bindings = await api(`${base}/${project}/domains`);
+    for (const name of domains) {
+      const binding = bindings.find(d => d.name === name)
+        || await api(`${base}/${project}/domains`, 'POST', { name });
+      console.log(`${name}: Pages binding ${binding.status || 'pending'}; DNS must point to ${target}.`);
+    }
+    return;
+  }
+  if (mode === 'status') {
+    for (const name of domains) {
+      const zoneName = name.slice('terminal.'.length);
+      try {
+        const zones = await api(`/zones?name=${encodeURIComponent(zoneName)}`);
+        console.log(`${zoneName}: DNS zone ${zones.some(z => z.name === zoneName) ? 'accessible' : 'not accessible'} with the configured token.`);
+      } catch (error) { console.log(error.message); }
+    }
+    return;
+  }
   // Inspect both zones before changing routing. A missing DNS permission must
   // not silently leave half the migration applied.
   const plans = [];
   for (const name of domains) {
     const zoneName = name.slice('terminal.'.length);
-    const zones = await api(`/zones?name=${encodeURIComponent(zoneName)}&account.id=${encodeURIComponent(account)}`);
+    // DNS zones may belong to a different account from the Pages project.
+    const zones = await api(`/zones?name=${encodeURIComponent(zoneName)}`);
     const zone = zones.find(z => z.name === zoneName);
     if (!zone) throw new Error(`No accessible Cloudflare zone for ${zoneName}. Zone Read and DNS Edit are needed for terminal routing.`);
     const path = `/zones/${zone.id}/dns_records`;
@@ -39,10 +59,9 @@ export async function configure({ account, token, mode, fetcher = fetch, snapsho
     plans.push({ name, path, records });
   }
   await snapshot(plans.map(({ name, records }) => ({ name, records })));
-  const bindings = await api(`${base}/${project}/domains`);
   for (const { name, path, records } of plans) {
-    if (!bindings.some(d => d.name === name)) await api(`${base}/${project}/domains`, 'POST', { name });
-    // Pages can create the CNAME itself when attaching an in-account zone.
+    // The deployment registers Pages bindings separately, so this operation
+    // can use a token limited to DNS. Re-read to avoid overwriting a conflict.
     const current = await api(`${path}?name=${encodeURIComponent(name)}`);
     if (current.length > 1 || current.some(r => r.name !== name || !['A','AAAA','CNAME'].includes(r.type))) throw new Error(`DNS changed during migration for ${name}; review before retrying.`);
     const record = current[0];
