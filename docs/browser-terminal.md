@@ -87,9 +87,11 @@ Secrets: `CF_API_TOKEN` and `CF_ACCOUNT_ID` (same inherited credentials as the
 existing CLI and onboarding sites). Project deployment requires Pages Edit.
 Domain setup additionally needs Zone Read and DNS Edit on `devitas.ch` and
 `laevitas.ch`. `scripts/terminal-pages.mjs` changes only the two `terminal`
-records, snapshots their prior configuration as a workflow artifact, and binds
+records, keeps their prior configuration on the ephemeral deployment runner, and binds
 them to `laevitas-terminal.pages.dev`. It never changes the apex or Welcome.
-The old dev gateway is retained for rollback until routing has been verified.
+DNS record contents are excluded from public workflow artifacts. The old dev
+gateway and ingress are retained for rollback until routing has been verified;
+its cluster ingress address can restore the previous dev route if needed.
 
 The APIs must allow exact terminal origins in `CORS_ALLOWED_ORIGINS`, preserving
 all existing entries: production `https://terminal.laevitas.ch`; development
