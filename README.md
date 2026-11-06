@@ -616,7 +616,11 @@ period). Manage them with `agent keys list`, `create --label NAME` and
 
 `agent mcp` connects stdio MCP clients using existing credits or an Enterprise key.
 `agent partner inspect` and `agent partner ask` support signed 6022 discovery and
-A2A messages without automatic partner payments. `LAEVITAS_AUTH=credits` prevents
+A2A messages without automatic partner payments. [Welcome connection details](examples/agents/partner-6022.md)
+use the Railway node directly: `agents.laevitas.ch` is the onboarding website.
+Welcome's free Polygon access requires a zero-amount x402 v2 signature; the CLI
+reports the challenge and does not sign it. Never automatically accept a paid
+offer. `LAEVITAS_AUTH=credits` prevents
 automatic on-chain purchases; `LAEVITAS_CONFIG_DIR` isolates local credentials.
 
 See [complete commands and flags](skills/laevitas-cli/reference/agents.md) and

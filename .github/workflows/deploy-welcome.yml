@@ -1,4 +1,4 @@
-name: Deploy Welcome domain proxy
+name: Deploy agent onboarding website
 on:
   push:
     branches: [main]
