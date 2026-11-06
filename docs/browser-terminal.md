@@ -99,11 +99,11 @@ The development API workflow already carries its terminal origin. Do not
 change billing or eligibility settings when applying CORS configuration.
 
 The agent auth service must support browser-origin challenges, and the API must
-forward the browser Origin on challenge and verify only. The signed domain and
+forward known terminal browser Origin on challenge and verify only. The signed domain and
 `audience` match the terminal website; `apiOrigin` and the signed URI name the
 API. The verifier allows only the exact environment-specific terminal origins,
 requires the same Origin on verification, and consumes each nonce once. Native
-clients without Origin retain their API-domain sign-in flow. Deploy those auth
+clients and existing dashboard clients retain their API-domain sign-in flow. Deploy those auth
 changes before this browser release; older challenges are refused before any
 wallet signature is requested.
 
