@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Versions ≤ 0.4.0 are recorded in git tag annotations only; this file starts at 0.5.0.
 
+## [0.12.3] — 2026-11-06
+
+### Fixed
+
+- Discover Welcome through `agents.laevitas.ch`: both public discovery paths now
+  return HTTP 307 to the existing signed Railway documents.
+- `agent partner inspect` and `ask` accept that exact discovery route with a
+  pinned `--signer`, verify both signatures and retain the canonical signed A2A
+  endpoint. Inspection reports `discoveryOrigin` separately from `origin`.
+  Other redirects and A2A POST redirects remain forbidden; payment challenges
+  are still reported without signing or paying.
+
+### Changed
+
+- Align Welcome onboarding and CLI instructions with signature-required free
+  access on Polygon. No factory API key, 6022 mint or runtime migration to the
+  website domain is required. Laevitas REST/MCP billing remains separate.
+
 ## [0.12.2] — 2026-11-04
 
 ### Fixed

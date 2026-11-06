@@ -38,8 +38,13 @@ See [working setup examples](../../../examples/agents/README.md),
 
 ### Welcome partner access
 
-`agents.laevitas.ch` is the onboarding website. Use the Railway origin and pinned
-expected signer in the [Welcome instructions](../../../examples/agents/partner-6022.md).
+`agents.laevitas.ch` is the onboarding website and discovery entry point. From
+v0.12.3, use `--origin https://agents.laevitas.ch` with the pinned expected signer
+in the [Welcome instructions](../../../examples/agents/partner-6022.md). Only the
+exact HTTP 307 discovery links to Railway are followed; A2A messages use the
+signed canonical endpoint and never follow redirects. Inspection distinguishes
+`discoveryOrigin` from canonical `origin` and `endpoint`. Direct Railway discovery
+continues to work with older CLI versions.
 Both discovery signatures must verify. Free access requires an x402 v2 signature
 for a supported `exact` offer with amount `"0"` on Polygon (`eip155:137`).
 `partner ask` stops at 402 without signing; use a compatible local signer that

@@ -9,7 +9,7 @@ import (
 func init() {
 	var origin, signer, message, contextID, registryRPC string
 	partner := &cobra.Command{Use: "partner", Short: "Inspect signed 6022 discovery and call its advertised A2A endpoint"}
-	partner.PersistentFlags().StringVar(&origin, "origin", "", "6022 node HTTPS origin (required)")
+	partner.PersistentFlags().StringVar(&origin, "origin", "", "6022 HTTPS origin or supported discovery alias (required)")
 	partner.PersistentFlags().StringVar(&signer, "signer", "", "EVM signer from the verified ENS/NFT identity")
 	partner.PersistentFlags().StringVar(&registryRPC, "registry-rpc", "", "Optional HTTPS RPC for read-only 6022 registry checks (chain must match)")
 	partner.AddCommand(&cobra.Command{Use: "inspect", Short: "Verify both discovery signatures without sending a message or payment", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
